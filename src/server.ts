@@ -275,18 +275,19 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     if (assignedIrisId) {
+      const irisId = assignedIrisId;
       try {
-        await recordShopifyOwnership(order, assignedIrisId);
+        await recordShopifyOwnership(order, irisId);
       } catch (error) {
-        req.log.error({ err: error, irisId: assignedIrisId }, "Shopify write failed");
+        req.log.error({ err: error, irisId }, "Shopify write failed");
         await prisma.$transaction(async (tx) => {
           await tx.artwork.update({
-            where: { iris_id: assignedIrisId },
+            where: { iris_id: irisId },
             data: { status: "shopify_failed" }
           });
           await tx.event.create({
             data: {
-              iris_id: assignedIrisId,
+              iris_id: irisId,
               type: "SHOPIFY_ERROR",
               actor: "shopify",
               payload_json: {
