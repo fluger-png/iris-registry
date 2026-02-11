@@ -81,6 +81,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-family: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color:var(--ink);
           background:var(--bg);
+          font-size:14px;
         }
         a{color:inherit;text-decoration:none;}
         .layout{
@@ -101,7 +102,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-size:14px;
         }
         .sidebar h2{
-          font-size:14px;
+          font-size:13px;
           color:var(--muted);
           font-weight:600;
           margin:16px 0 12px;
@@ -115,12 +116,13 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         }
         .nav a{
           display:block;
-          padding:12px 14px;
+          padding:10px 12px;
           border-radius:14px;
           border:1px solid var(--brand);
           color:var(--brand);
           text-align:center;
           font-weight:600;
+          font-size:12px;
           background:#fff;
         }
         .nav a.active{
@@ -128,14 +130,14 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           color:#fff;
         }
         .main{ padding:32px 28px; }
-        .page{ max-width:1080px; margin:0 auto; }
+        .page{ max-width:1040px; margin:0 auto; }
         .title-row{
           display:flex;
           align-items:center;
           justify-content:space-between;
           gap:16px;
         }
-        .title-row h1{margin:0;font-size:26px;}
+        .title-row h1{margin:0;font-size:18px;}
         .search{
           display:flex;
           align-items:center;
@@ -143,7 +145,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           background:#fff;
           border:1px solid var(--line);
           border-radius:999px;
-          padding:8px 16px;
+          padding:6px 14px;
           min-width:320px;
           box-shadow:0 6px 16px rgba(15,23,42,.06);
         }
@@ -152,11 +154,11 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           border:0;
           outline:0;
           width:100%;
-          font-size:14px;
+          font-size:12px;
           font-family:inherit;
         }
         .tabs{
-          margin:18px 0 20px;
+          margin:14px 0 18px;
           display:flex;
           gap:8px;
           justify-content:center;
@@ -165,13 +167,13 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:8px 16px;
+          padding:6px 14px;
           border-radius:999px;
           border:1px solid var(--line);
           background:#fff;
           font-weight:600;
           color:var(--muted);
-          font-size:13px;
+          font-size:12px;
           min-width:96px;
         }
         .tab.active{
@@ -186,23 +188,24 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           padding:20px;
           box-shadow:0 10px 24px rgba(15,23,42,.06);
         }
+        .card.table{ padding:0; overflow:hidden; }
         table{
           width:100%;
           border-collapse:collapse;
-          font-size:14px;
+          font-size:13px;
         }
         th, td{
-          padding:14px 12px;
+          padding:12px 12px;
           border-bottom:1px solid var(--line);
           text-align:left;
           vertical-align:middle;
         }
-        th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+        th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
         tr:last-child td{border-bottom:0;}
         .pill{
-          padding:4px 10px;
+          padding:3px 9px;
           border-radius:999px;
-          font-size:12px;
+          font-size:11px;
           font-weight:700;
           display:inline-block;
         }
@@ -213,7 +216,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           display:flex;gap:8px;align-items:center;
         }
         .btn{
-          padding:8px 14px;border-radius:10px;border:0;cursor:pointer;font-weight:600;
+          padding:7px 12px;border-radius:10px;border:0;cursor:pointer;font-weight:600;font-size:12px;
         }
         .btn.primary{background:var(--brand);color:#fff;}
         .btn.secondary{background:#fff;border:1px solid var(--brand);color:var(--brand);}
@@ -229,7 +232,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         .passport-title{
           text-align:center;
           margin:0 0 18px;
-          font-size:20px;
+          font-size:18px;
         }
         .passport dl{margin:0;display:grid;grid-template-columns:140px 1fr;row-gap:12px;column-gap:12px;font-size:14px;}
         .passport dt{color:var(--muted);}
@@ -323,7 +326,7 @@ const buildAdminHtml = (
       <a class="tab ${activeTab === "activated" ? "active" : ""}" href="/admin?status=activated">Activated</a>
       <a class="tab ${activeTab === "unactivated" ? "active" : ""}" href="/admin?status=unactivated">Unactivated</a>
     </div>
-    <div class="card">
+    <div class="card table">
       <table>
         <thead>
           <tr>
