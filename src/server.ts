@@ -81,7 +81,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-family: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color:var(--ink);
           background:var(--bg);
-          font-size:14px;
+          font-size:12px;
         }
         a{color:inherit;text-decoration:none;}
         .layout{
@@ -94,13 +94,8 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           padding:28px 16px;
           border-right:1px solid var(--line);
         }
-        .logo{
-          font-weight:700;
-          letter-spacing:.12em;
-          text-align:center;
-          margin-bottom:18px;
-          font-size:14px;
-        }
+        .logo{ text-align:center; margin-bottom:18px; }
+        .logo-img{ width:100px; height:auto; display:block; margin:0 auto; }
         .sidebar h2{
           font-size:13px;
           color:var(--muted);
@@ -129,7 +124,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           background:var(--brand);
           color:#fff;
         }
-        .main{ padding:32px 28px; }
+        .main{ padding:32px 28px; background:#fff; }
         .page{ max-width:1040px; margin:0 auto; }
         .title-row{
           display:flex;
@@ -137,7 +132,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           justify-content:space-between;
           gap:16px;
         }
-        .title-row h1{margin:0;font-size:18px;}
+        .title-row h1{margin:0;font-size:16px;}
         .search{
           display:flex;
           align-items:center;
@@ -254,7 +249,9 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
     <body>
       <div class="layout">
         <aside class="sidebar">
-          <div class="logo">IRIS<br/>NYC</div>
+          <div class="logo">
+            <img class="logo-img" src="https://irisnyc.store/cdn/shop/files/IRIS-LOGO_1500x_492d2916-f667-4e0c-9e94-1669d0309d1c.png" alt="IRIS NYC" />
+          </div>
           <h2>Admin Dashboard</h2>
           <div class="nav">
             <a class="active" href="/admin">Activities</a>
