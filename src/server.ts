@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
-import { decodeCursor, encodeCursor, parseReservationToken, verifyShopifyHmac } from "./utils.js";
+import { decodeCursor, encodeCursor, parseReservationTokens, verifyShopifyHmac } from "./utils.js";
 
 const MAX_PAGE_SIZE = 100;
 
@@ -399,18 +399,20 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const order = req.body as Record<string, unknown>;
-    const reservationToken = parseReservationToken(order);
-    if (!reservationToken) {
+    const reservationTokens = parseReservationTokens(order);
+    if (reservationTokens.length === 0) {
       reply.code(400).send({ error: "missing_reservation_token" });
       return;
     }
 
     const orderId = order.id ? String(order.id) : null;
     const customerEmail = extractCustomerEmail(order);
-    let assignedIrisId: string | null = null;
-    let generatedPin: string | null = null;
+    const failed: Array<{ token: string; error: string }> = [];
 
-    try {
+    const confirmReservation = async (reservationToken: string) => {
+      let assignedIrisId: string | null = null;
+      let generatedPin: string | null = null;
+
       await prisma.$transaction(async (tx) => {
         const reservation = await tx.reservation.findUnique({
           where: { token: reservationToken }
@@ -481,48 +483,59 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
         assignedIrisId = reservation.iris_id;
       });
+
+      if (assignedIrisId) {
+        const irisId = assignedIrisId;
+        try {
+          await recordShopifyOwnership(order, irisId);
+        } catch (error) {
+          req.log.error({ err: error, irisId }, "Shopify write failed");
+          await prisma.$transaction(async (tx) => {
+            await tx.artwork.update({
+              where: { iris_id: irisId },
+              data: { status: "shopify_failed" }
+            });
+            await tx.event.create({
+              data: {
+                iris_id: irisId,
+                type: "SHOPIFY_ERROR",
+                actor: "shopify",
+                payload_json: {
+                  reservation_token: reservationToken,
+                  order_id: orderId,
+                  error: error instanceof Error ? error.message : "unknown"
+                }
+              }
+            });
+          });
+        }
+      }
+    };
+
+    try {
+      for (const token of reservationTokens) {
+        try {
+          await confirmReservation(token);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown";
+          if (message === "reservation_expired" || message === "reservation_not_active") {
+            failed.push({ token, error: message });
+            continue;
+          }
+          throw error;
+        }
+      }
     } catch (error) {
-      if (error instanceof Error && error.message === "reservation_expired") {
-        reply.code(409).send({ error: "reservation_expired" });
-        return;
-      }
-      if (error instanceof Error && error.message === "reservation_not_active") {
-        reply.code(409).send({ error: "reservation_not_active" });
-        return;
-      }
       req.log.error({ err: error }, "Failed to confirm reservation");
       reply.code(500).send({ error: "reservation_confirm_failed" });
       return;
     }
 
-    if (assignedIrisId) {
-      const irisId = assignedIrisId;
-      try {
-        await recordShopifyOwnership(order, irisId);
-      } catch (error) {
-        req.log.error({ err: error, irisId }, "Shopify write failed");
-        await prisma.$transaction(async (tx) => {
-          await tx.artwork.update({
-            where: { iris_id: irisId },
-            data: { status: "shopify_failed" }
-          });
-          await tx.event.create({
-            data: {
-              iris_id: irisId,
-              type: "SHOPIFY_ERROR",
-              actor: "shopify",
-              payload_json: {
-                reservation_token: reservationToken,
-                order_id: orderId,
-                error: error instanceof Error ? error.message : "unknown"
-              }
-            }
-          });
-        });
-      }
+    if (failed.length > 0) {
+      req.log.warn({ failed, orderId }, "Some reservations failed to confirm");
     }
 
-    reply.send({ status: "ok" });
+    reply.send({ status: failed.length ? "partial" : "ok", failedCount: failed.length });
   });
 
   app.get("/health", async (_req, reply) => {

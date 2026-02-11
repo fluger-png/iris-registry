@@ -23,13 +23,13 @@ export const decodeCursor = (value: string): Cursor => {
   return parsed;
 };
 
-export const parseReservationToken = (order: unknown): string | null => {
+export const parseReservationTokens = (order: unknown): string[] => {
   if (!order || typeof order !== "object") {
-    return null;
+    return [];
   }
   const lineItems = (order as { line_items?: Array<Record<string, unknown>> }).line_items;
   if (!Array.isArray(lineItems)) {
-    return null;
+    return [];
   }
   const tokenKeys = new Set([
     "reservationtoken",
@@ -37,6 +37,7 @@ export const parseReservationToken = (order: unknown): string | null => {
     "iris_reservation_token",
     "iris-reservation-token"
   ]);
+  const tokens: string[] = [];
   for (const item of lineItems) {
     const properties = item.properties as Array<{ name?: string; value?: string }> | undefined;
     if (!Array.isArray(properties)) {
@@ -51,10 +52,10 @@ export const parseReservationToken = (order: unknown): string | null => {
       if (tokenKeys.has(normalized)) {
         const value = prop?.value?.toString().trim();
         if (value) {
-          return value;
+          tokens.push(value);
         }
       }
     }
   }
-  return null;
+  return Array.from(new Set(tokens));
 };
