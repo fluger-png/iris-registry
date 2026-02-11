@@ -1065,7 +1065,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const query = req.query as { status?: string; q?: string };
     const statusParam = query.status?.toLowerCase() ?? "all";
-    const statuses =
+    const statuses: Prisma.ArtworkStatus[] =
       statusParam === "activated"
         ? ["activated"]
         : statusParam === "unactivated"
