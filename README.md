@@ -40,6 +40,10 @@ npm run dev
   - Body: `{ iris_id, pin, actor_email? }`
   - Marks artwork as activated and logs an event.
 
+- `POST /apps/iris/activate-verify`
+  - Body: `{ iris_id, pin, email }`
+  - Verifies PIN, activates artwork, and sends Shopify invite if needed.
+
 - `GET /apps/iris/seen-archive?limit=&cursor=`
   - Returns activated artworks with cursor pagination.
 

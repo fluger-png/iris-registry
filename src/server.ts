@@ -52,6 +52,7 @@ const buildAdminHtml = (items: Array<{
   assigned_customer_email: string | null;
   activated_at: Date | null;
   image_url: string | null;
+  pin_code: string | null;
 }>) => {
   const rows = items
     .map((item) => {
@@ -65,6 +66,7 @@ const buildAdminHtml = (items: Array<{
           <td>${item.assigned_customer_email ?? "-"}</td>
           <td>${item.assigned_order_id ?? "-"}</td>
           <td>${item.activated_at ? new Date(item.activated_at).toISOString() : "-"}</td>
+          <td>${item.pin_code ?? "-"}</td>
           <td>${imageCell}</td>
           <td>
             <form method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
@@ -104,6 +106,7 @@ const buildAdminHtml = (items: Array<{
             <th>Customer Email</th>
             <th>Order ID</th>
             <th>Activated At</th>
+            <th>PIN</th>
             <th>Image</th>
             <th>Upload</th>
           </tr>
@@ -129,8 +132,97 @@ const extractCustomerEmail = (order: Record<string, unknown>): string | null => 
   return null;
 };
 
+const shopifyGraphQL = async (query: string, variables: Record<string, unknown>) => {
+  const url = `https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/graphql.json`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": env.shopifyAdminToken,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`GraphQL HTTP ${res.status}: ${text}`);
+  }
+  const json = JSON.parse(text) as { errors?: unknown; data?: unknown };
+  if (json.errors) {
+    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
+  }
+  return json.data as Record<string, any>;
+};
+
+const shopifyFindCustomerIdByEmail = async (email: string): Promise<string | null> => {
+  const q = `
+    query ($q: String!) {
+      customers(first: 1, query: $q) {
+        edges { node { id email } }
+      }
+    }
+  `;
+  const data = await shopifyGraphQL(q, { q: `email:${email}` });
+  const edge = data?.customers?.edges?.[0];
+  return edge?.node?.id ?? null;
+};
+
+const shopifyCreateCustomer = async (email: string): Promise<string> => {
+  const m = `
+    mutation ($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer { id email }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await shopifyGraphQL(m, { input: { email } });
+  const errs = data?.customerCreate?.userErrors;
+  if (errs && errs.length) {
+    throw new Error(`customerCreate: ${JSON.stringify(errs)}`);
+  }
+  return data.customerCreate.customer.id as string;
+};
+
+const shopifyGetLegacyId = async (customerId: string): Promise<number | null> => {
+  const q = `query ($id: ID!) { customer(id: $id) { legacyResourceId } }`;
+  const data = await shopifyGraphQL(q, { id: customerId });
+  return data?.customer?.legacyResourceId ?? null;
+};
+
+const shopifySendInviteBestEffort = async (legacyId: number): Promise<void> => {
+  const url = `https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/customers/${legacyId}/send_invite.json`;
+  await fetch(url, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": env.shopifyAdminToken,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ customer_invite: {} })
+  });
+};
+
+const ensureShopifyCustomerInvite = async (email: string): Promise<void> => {
+  const existingId = await shopifyFindCustomerIdByEmail(email);
+  if (existingId) {
+    return;
+  }
+  const createdId = await shopifyCreateCustomer(email);
+  const legacyId = await shopifyGetLegacyId(createdId);
+  if (!legacyId) return;
+  try {
+    await shopifySendInviteBestEffort(legacyId);
+  } catch {
+    // ignore invite failures
+  }
+};
+
 const recordShopifyOwnership = async (_order: Record<string, unknown>, _irisId: string): Promise<void> => {
-  // TODO: integrate Shopify write (metafield/tag/note). Keep as no-op for MVP.
+  // Placeholder for future Shopify updates (metafields/tags).
+};
+
+const generatePin = (): string => {
+  const value = crypto.randomInt(0, 1_000_000);
+  return value.toString().padStart(6, "0");
 };
 
 const releaseExpiredReservations = async (app: FastifyInstance): Promise<void> => {
@@ -316,6 +408,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const orderId = order.id ? String(order.id) : null;
     const customerEmail = extractCustomerEmail(order);
     let assignedIrisId: string | null = null;
+    let generatedPin: string | null = null;
 
     try {
       await prisma.$transaction(async (tx) => {
@@ -340,12 +433,23 @@ export const createServer = async (): Promise<FastifyInstance> => {
           data: { status: "confirmed" }
         });
 
+        const artwork = await tx.artwork.findUnique({
+          where: { iris_id: reservation.iris_id }
+        });
+
+        const pinCode = artwork?.pin_code ?? generatePin();
+        generatedPin = artwork?.pin_code ? null : pinCode;
+
         await tx.artwork.update({
           where: { iris_id: reservation.iris_id },
           data: {
             status: "assigned",
             assigned_order_id: orderId,
-            assigned_customer_email: customerEmail
+            assigned_customer_email: customerEmail,
+            pin_code: pinCode,
+            pin_last4: pinCode.slice(-4),
+            pin_attempts: 0,
+            pin_locked_until: null
           }
         });
 
@@ -361,6 +465,19 @@ export const createServer = async (): Promise<FastifyInstance> => {
             }
           }
         });
+
+        if (generatedPin) {
+          await tx.event.create({
+            data: {
+              iris_id: reservation.iris_id,
+              type: "pin_generated",
+              actor: "system",
+              payload_json: {
+                pin_last4: pinCode.slice(-4)
+              }
+            }
+          });
+        }
 
         assignedIrisId = reservation.iris_id;
       });
@@ -460,6 +577,119 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
   });
 
+  const handleActivateVerify = async (req: any, reply: any) => {
+    const body = req.body as { iris_id?: string; pin?: string; email?: string };
+    const irisId = body?.iris_id?.toUpperCase().trim();
+    const pin = body?.pin?.trim();
+    const email = body?.email?.trim().toLowerCase();
+
+    if (!irisId || !pin || !email) {
+      sendJson(reply, 400, { error: "missing_required_fields" });
+      return;
+    }
+
+    const MAX_ATTEMPTS = 5;
+    const LOCK_MINUTES = 60;
+
+    try {
+      const artwork = await prisma.artwork.findUnique({ where: { iris_id: irisId } });
+      if (!artwork) {
+        sendJson(reply, 404, { error: "iris_not_found" });
+        return;
+      }
+
+      if (artwork.status === "activated") {
+        sendJson(reply, 409, { error: "already_activated" });
+        return;
+      }
+
+      if (artwork.status !== "assigned") {
+        sendJson(reply, 409, { error: "not_assigned" });
+        return;
+      }
+
+      if (!artwork.pin_code) {
+        sendJson(reply, 409, { error: "pin_not_set" });
+        return;
+      }
+
+      if (artwork.pin_locked_until && artwork.pin_locked_until > new Date()) {
+        sendJson(reply, 429, { error: "too_many_attempts", retry_at: artwork.pin_locked_until });
+        return;
+      }
+
+      if (artwork.pin_code !== pin) {
+        const nextAttempts = (artwork.pin_attempts ?? 0) + 1;
+        const lockUntil =
+          nextAttempts >= MAX_ATTEMPTS
+            ? new Date(Date.now() + LOCK_MINUTES * 60 * 1000)
+            : null;
+
+        await prisma.$transaction(async (tx) => {
+          await tx.artwork.update({
+            where: { iris_id: irisId },
+            data: {
+              pin_attempts: nextAttempts,
+              pin_locked_until: lockUntil
+            }
+          });
+          await tx.event.create({
+            data: {
+              iris_id: irisId,
+              type: "activation_failed",
+              actor: email,
+              payload_json: {
+                reason: "invalid_pin",
+                attempts: nextAttempts,
+                locked_until: lockUntil
+              }
+            }
+          });
+        });
+
+        sendJson(reply, 401, { error: "invalid_pin" });
+        return;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.artwork.update({
+          where: { iris_id: irisId },
+          data: {
+            status: "activated",
+            activated_at: new Date(),
+            assigned_customer_email: artwork.assigned_customer_email ?? email,
+            pin_attempts: 0,
+            pin_locked_until: null
+          }
+        });
+        await tx.event.create({
+          data: {
+            iris_id: irisId,
+            type: "activated",
+            actor: email,
+            payload_json: {
+              actor_email: email
+            }
+          }
+        });
+      });
+
+      try {
+        await ensureShopifyCustomerInvite(email);
+      } catch (inviteErr) {
+        req.log.error({ err: inviteErr, email }, "Shopify invite failed");
+      }
+
+      sendJson(reply, 200, { status: "ok" });
+    } catch (error) {
+      req.log.error({ err: error }, "Activation verify failed");
+      sendJson(reply, 500, { error: "activation_failed" });
+    }
+  };
+
+  app.post("/activate-verify", handleActivateVerify);
+  app.post("/apps/iris/activate-verify", handleActivateVerify);
+
   app.get("/apps/iris/seen-archive", async (req, reply) => {
     const query = req.query as { limit?: string; cursor?: string };
     const limit = parseLimit(query.limit, 20);
@@ -558,7 +788,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
             assigned_order_id: item.assigned_order_id,
             assigned_customer_email: item.assigned_customer_email,
             activated_at: item.activated_at,
-            image_url: item.image_url
+            image_url: item.image_url,
+            pin_code: item.pin_code
           }))
         )
       );

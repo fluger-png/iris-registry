@@ -26,6 +26,10 @@ model Artwork {
   status                  ArtworkStatus
   rarity_code             String?
   image_url               String?
+  pin_code                String?
+  pin_last4               String?
+  pin_attempts            Int?            @default(0)
+  pin_locked_until        DateTime?
   assigned_order_id       String?
   assigned_customer_email String?
   activated_at            DateTime?

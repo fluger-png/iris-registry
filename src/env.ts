@@ -23,5 +23,8 @@ export const env = {
   r2AccessKeyId: required("R2_ACCESS_KEY_ID"),
   r2SecretAccessKey: required("R2_SECRET_ACCESS_KEY"),
   r2Bucket: required("R2_BUCKET"),
-  r2PublicBaseUrl: required("R2_PUBLIC_BASE_URL")
+  r2PublicBaseUrl: required("R2_PUBLIC_BASE_URL"),
+  shopifyAdminToken: required("SHOPIFY_ADMIN_TOKEN"),
+  shopifyShopDomain: required("SHOPIFY_SHOP_DOMAIN"),
+  shopifyApiVersion: process.env.SHOPIFY_API_VERSION ?? "2024-10"
 };
