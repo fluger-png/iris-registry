@@ -66,7 +66,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap');
         :root {
-          --bg:#F3F4F9;
+          --bg:#F4F5FB;
           --card:#FFFFFF;
           --ink:#0B0F1A;
           --muted:#6B7280;
@@ -85,12 +85,12 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         a{color:inherit;text-decoration:none;}
         .layout{
           display:grid;
-          grid-template-columns:260px 1fr;
+          grid-template-columns:220px 1fr;
           min-height:100vh;
         }
         .sidebar{
           background:#EEF0F7;
-          padding:28px 20px;
+          padding:28px 16px;
           border-right:1px solid var(--line);
         }
         .logo{
@@ -116,7 +116,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         .nav a{
           display:block;
           padding:12px 14px;
-          border-radius:12px;
+          border-radius:14px;
           border:1px solid var(--brand);
           color:var(--brand);
           text-align:center;
@@ -127,9 +127,8 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           background:var(--brand);
           color:#fff;
         }
-        .main{
-          padding:32px 40px;
-        }
+        .main{ padding:32px 28px; }
+        .page{ max-width:1080px; margin:0 auto; }
         .title-row{
           display:flex;
           align-items:center;
@@ -144,7 +143,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           background:#fff;
           border:1px solid var(--line);
           border-radius:999px;
-          padding:8px 14px;
+          padding:8px 16px;
           min-width:320px;
           box-shadow:0 6px 16px rgba(15,23,42,.06);
         }
@@ -160,18 +159,20 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           margin:18px 0 20px;
           display:flex;
           gap:8px;
+          justify-content:center;
         }
         .tab{
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:8px 14px;
-          border-radius:10px;
+          padding:8px 16px;
+          border-radius:999px;
           border:1px solid var(--line);
           background:#fff;
           font-weight:600;
           color:var(--muted);
           font-size:13px;
+          min-width:96px;
         }
         .tab.active{
           background:var(--brand);
@@ -191,7 +192,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-size:14px;
         }
         th, td{
-          padding:14px 10px;
+          padding:14px 12px;
           border-bottom:1px solid var(--line);
           text-align:left;
           vertical-align:middle;
@@ -237,6 +238,14 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           border:1px dashed #CBD5F5;border-radius:14px;padding:16px;text-align:center;background:#F8FAFF;
         }
         .image-box img{width:100%;border-radius:10px;object-fit:cover;}
+        @media (max-width: 900px){
+          .layout{ grid-template-columns:1fr; }
+          .sidebar{ border-right:0; border-bottom:1px solid var(--line); }
+          .main{ padding:20px; }
+          .passport{ grid-template-columns:1fr; }
+          .search{ min-width:0; width:100%; }
+          .title-row{ flex-direction:column; align-items:stretch; }
+        }
       </style>
     </head>
     <body>
@@ -251,7 +260,9 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           </div>
         </aside>
         <main class="main">
-          ${body}
+          <div class="page">
+            ${body}
+          </div>
         </main>
       </div>
     </body>
@@ -345,6 +356,9 @@ const buildAdminDetailHtml = (item: {
   image_url: string | null;
   pin_code: string | null;
 }) => {
+  const displayId = item.iris_id.toUpperCase().startsWith("IRIS-")
+    ? item.iris_id.replace(/^IRIS-/i, "#")
+    : item.iris_id;
   const imageBox = item.image_url
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
     : `<div class="muted">Upload Image</div>`;
@@ -356,9 +370,9 @@ const buildAdminDetailHtml = (item: {
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" />
       </form>
     </div>
-    <div class="card passport">
+    <div class="card passport" style="max-width:760px;margin:0 auto;">
       <div>
-        <h2>IRIS ${item.iris_id}</h2>
+        <h2>IRIS ${displayId}</h2>
         <dl>
           <dt>Status</dt><dd>${statusPill(item.status)}</dd>
           <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
