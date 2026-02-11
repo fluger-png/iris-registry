@@ -1,7 +1,7 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { Prisma } from "@prisma/client";
+import { Prisma, ArtworkStatus } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -1065,7 +1065,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const query = req.query as { status?: string; q?: string };
     const statusParam = query.status?.toLowerCase() ?? "all";
-    const statuses: Prisma.ArtworkStatus[] =
+    const statuses: ArtworkStatus[] =
       statusParam === "activated"
         ? ["activated"]
         : statusParam === "unactivated"
