@@ -45,34 +45,236 @@ const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
   return true;
 };
 
-const buildAdminHtml = (items: Array<{
-  iris_id: string;
-  status: string;
-  assigned_order_id: string | null;
-  assigned_customer_email: string | null;
-  activated_at: Date | null;
-  image_url: string | null;
-  pin_code: string | null;
-}>) => {
+const statusPill = (status: string) => {
+  const key = status.toLowerCase();
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    activated: { bg: "#DCFCE7", fg: "#166534", label: "Activated" },
+    assigned: { bg: "#FEF3C7", fg: "#92400E", label: "Assigned" },
+    shopify_failed: { bg: "#FEE2E2", fg: "#991B1B", label: "Shopify Failed" }
+  };
+  const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: status };
+  return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
+};
+
+const buildAdminShell = (title: string, body: string, searchValue: string, activeTab: string) => {
+  const tab = (key: string, label: string) =>
+    `<a class="tab ${activeTab === key ? "active" : ""}" href="/admin${key !== "all" ? `?status=${key}` : ""}">${label}</a>`;
+  const search = searchValue ? searchValue.replace(/"/g, "&quot;") : "";
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${title}</title>
+      <style>
+        :root {
+          --bg:#F5F6FA;
+          --card:#FFFFFF;
+          --ink:#0F172A;
+          --muted:#64748B;
+          --brand:#4C5BD4;
+          --brand-dark:#3E4AB8;
+          --line:#E5E7EB;
+          --pill:#EEF2FF;
+        }
+        *{box-sizing:border-box;}
+        body{
+          margin:0;
+          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          color:var(--ink);
+          background:var(--bg);
+        }
+        a{color:inherit;text-decoration:none;}
+        .layout{
+          display:grid;
+          grid-template-columns:260px 1fr;
+          min-height:100vh;
+        }
+        .sidebar{
+          background:#F1F3F8;
+          padding:28px 20px;
+          border-right:1px solid var(--line);
+        }
+        .logo{
+          font-weight:700;
+          letter-spacing:.12em;
+          text-align:center;
+          margin-bottom:28px;
+        }
+        .nav{
+          display:flex;
+          flex-direction:column;
+          gap:10px;
+          margin-top:24px;
+        }
+        .nav a{
+          display:block;
+          padding:12px 14px;
+          border-radius:12px;
+          border:1px solid var(--brand);
+          color:var(--brand);
+          text-align:center;
+          font-weight:600;
+          background:#fff;
+        }
+        .nav a.active{
+          background:var(--brand);
+          color:#fff;
+        }
+        .main{
+          padding:32px 40px;
+        }
+        .title-row{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:16px;
+        }
+        .title-row h1{margin:0;font-size:26px;}
+        .search{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          background:#fff;
+          border:1px solid var(--line);
+          border-radius:999px;
+          padding:8px 14px;
+          min-width:320px;
+        }
+        .search input{
+          border:0;
+          outline:0;
+          width:100%;
+          font-size:14px;
+        }
+        .tabs{
+          margin:18px 0 20px;
+          display:flex;
+          gap:8px;
+        }
+        .tab{
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          padding:8px 14px;
+          border-radius:10px;
+          border:1px solid var(--line);
+          background:#fff;
+          font-weight:600;
+          color:var(--muted);
+          font-size:13px;
+        }
+        .tab.active{
+          background:var(--brand);
+          border-color:var(--brand);
+          color:#fff;
+        }
+        .card{
+          background:var(--card);
+          border-radius:18px;
+          border:1px solid var(--line);
+          padding:20px;
+          box-shadow:0 10px 24px rgba(15,23,42,.06);
+        }
+        table{
+          width:100%;
+          border-collapse:collapse;
+          font-size:14px;
+        }
+        th, td{
+          padding:14px 10px;
+          border-bottom:1px solid var(--line);
+          text-align:left;
+          vertical-align:middle;
+        }
+        th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+        tr:last-child td{border-bottom:0;}
+        .pill{
+          padding:4px 10px;
+          border-radius:999px;
+          font-size:12px;
+          font-weight:700;
+          display:inline-block;
+        }
+        .thumb{
+          width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--line);
+        }
+        .upload-form{
+          display:flex;gap:8px;align-items:center;
+        }
+        .btn{
+          padding:8px 14px;border-radius:10px;border:0;cursor:pointer;font-weight:600;
+        }
+        .btn.primary{background:var(--brand);color:#fff;}
+        .btn.secondary{background:#fff;border:1px solid var(--brand);color:var(--brand);}
+        .muted{color:var(--muted);font-size:12px;}
+        .iris-link{color:var(--brand);font-weight:700;}
+        .passport{
+          display:grid;
+          grid-template-columns:1fr 260px;
+          gap:24px;
+          align-items:start;
+        }
+        .passport h2{margin:0 0 12px;}
+        .passport dl{margin:0;display:grid;grid-template-columns:140px 1fr;row-gap:12px;column-gap:12px;font-size:14px;}
+        .passport dt{color:var(--muted);}
+        .passport dd{margin:0;font-weight:600;}
+        .image-box{
+          border:1px dashed #CBD5F5;border-radius:14px;padding:16px;text-align:center;background:#F8FAFF;
+        }
+        .image-box img{width:100%;border-radius:10px;object-fit:cover;}
+      </style>
+    </head>
+    <body>
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="logo">IRIS<br/>NYC</div>
+          <div class="nav">
+            <a class="active" href="/admin">Activities</a>
+            <a href="/admin">All IRISes (Soon)</a>
+            <a href="/admin/logout">Log Out</a>
+          </div>
+        </aside>
+        <main class="main">
+          ${body}
+        </main>
+      </div>
+    </body>
+  </html>`;
+};
+
+const buildAdminHtml = (
+  items: Array<{
+    iris_id: string;
+    status: string;
+    assigned_order_id: string | null;
+    assigned_customer_email: string | null;
+    activated_at: Date | null;
+    image_url: string | null;
+    pin_code: string | null;
+  }>,
+  searchValue: string,
+  activeTab: string
+) => {
   const rows = items
     .map((item) => {
       const imageCell = item.image_url
-        ? `<img src="${item.image_url}" alt="${item.iris_id}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;" />`
-        : "-";
+        ? `<img class="thumb" src="${item.image_url}" alt="${item.iris_id}" />`
+        : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#94A3B8;">—</div>`;
       return `
         <tr>
-          <td>${item.iris_id}</td>
-          <td>${item.status}</td>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
+          <td>${statusPill(item.status)}</td>
           <td>${item.assigned_customer_email ?? "-"}</td>
           <td>${item.assigned_order_id ?? "-"}</td>
-          <td>${item.activated_at ? new Date(item.activated_at).toISOString() : "-"}</td>
+          <td>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
           <td>${imageCell}</td>
           <td>
-            <form method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
+            <form class="upload-form" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
               <input type="hidden" name="iris_id" value="${item.iris_id}" />
               <input type="file" name="image" accept="image/*" required />
-              <button type="submit">Upload</button>
+              <button class="btn secondary" type="submit">Upload</button>
             </form>
           </td>
         </tr>
@@ -80,24 +282,21 @@ const buildAdminHtml = (items: Array<{
     })
     .join("");
 
-  return `<!doctype html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>IRIS Admin</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 24px; background:#f7f7f7; }
-        h1 { margin: 0 0 16px; }
-        table { width: 100%; border-collapse: collapse; background: #fff; }
-        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
-        th { background: #fafafa; }
-        form { display: flex; gap: 8px; align-items: center; }
-        button { padding: 6px 10px; }
-      </style>
-    </head>
-    <body>
-      <h1>IRIS Sold Registry</h1>
+  const statusHidden = activeTab !== "all" ? `<input type="hidden" name="status" value="${activeTab}" />` : "";
+  const body = `
+    <div class="title-row">
+      <h1>Activities</h1>
+      <form class="search" method="GET" action="/admin">
+        ${statusHidden}
+        <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
+      </form>
+    </div>
+    <div class="tabs">
+      <a class="tab ${activeTab === "all" ? "active" : ""}" href="/admin">All</a>
+      <a class="tab ${activeTab === "activated" ? "active" : ""}" href="/admin?status=activated">Activated</a>
+      <a class="tab ${activeTab === "unactivated" ? "active" : ""}" href="/admin?status=unactivated">Unactivated</a>
+    </div>
+    <div class="card">
       <table>
         <thead>
           <tr>
@@ -112,11 +311,62 @@ const buildAdminHtml = (items: Array<{
           </tr>
         </thead>
         <tbody>
-          ${rows || "<tr><td colspan='7'>No records</td></tr>"}
+          ${rows || "<tr><td colspan='8'>No records</td></tr>"}
         </tbody>
       </table>
-    </body>
-  </html>`;
+    </div>
+  `;
+  return buildAdminShell("IRIS Admin", body, searchValue, activeTab);
+};
+
+const buildAdminDetailHtml = (item: {
+  iris_id: string;
+  status: string;
+  assigned_order_id: string | null;
+  assigned_customer_email: string | null;
+  activated_at: Date | null;
+  created_at: Date;
+  image_url: string | null;
+  pin_code: string | null;
+}) => {
+  const imageBox = item.image_url
+    ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
+    : `<div class="muted">Upload Image</div>`;
+  const body = `
+    <div class="title-row">
+      <h1>IRIS Passport</h1>
+      <form class="search" method="GET" action="/admin">
+        <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" />
+      </form>
+    </div>
+    <div class="card passport">
+      <div>
+        <h2>IRIS ${item.iris_id}</h2>
+        <dl>
+          <dt>Status</dt><dd>${statusPill(item.status)}</dd>
+          <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
+          <dt>Order ID</dt><dd>${item.assigned_order_id ?? "-"}</dd>
+          <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
+          <dt>Activation Date</dt><dd>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</dd>
+          <dt>Owner</dt><dd>${item.assigned_customer_email ?? "-"}</dd>
+        </dl>
+        <div style="margin-top:16px;">
+          <a class="btn primary" href="/admin">Back to the list</a>
+        </div>
+      </div>
+      <div>
+        <div class="image-box">
+          ${imageBox}
+        </div>
+        <form class="upload-form" style="margin-top:12px;justify-content:center;" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
+          <input type="hidden" name="iris_id" value="${item.iris_id}" />
+          <input type="file" name="image" accept="image/*" required />
+          <button class="btn secondary" type="submit">Upload</button>
+        </form>
+      </div>
+    </div>
+  `;
+  return buildAdminShell(`IRIS ${item.iris_id}`, body, "", "all");
 };
 
 const extractCustomerEmail = (order: Record<string, unknown>): string | null => {
@@ -782,10 +1032,30 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
+    const query = req.query as { status?: string; q?: string };
+    const statusParam = query.status?.toLowerCase() ?? "all";
+    const statuses =
+      statusParam === "activated"
+        ? ["activated"]
+        : statusParam === "unactivated"
+          ? ["assigned", "shopify_failed"]
+          : ["assigned", "activated", "shopify_failed"];
+
+    const where: Prisma.ArtworkWhereInput = {
+      status: { in: statuses }
+    };
+
+    const q = query.q?.trim();
+    if (q) {
+      where.OR = [
+        { iris_id: { contains: q, mode: "insensitive" } },
+        { assigned_order_id: { contains: q, mode: "insensitive" } },
+        { assigned_customer_email: { contains: q, mode: "insensitive" } }
+      ];
+    }
+
     const items = await prisma.artwork.findMany({
-      where: {
-        status: { in: ["assigned", "activated", "shopify_failed"] }
-      },
+      where,
       orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
       take: 500
     });
@@ -803,9 +1073,51 @@ export const createServer = async (): Promise<FastifyInstance> => {
             activated_at: item.activated_at,
             image_url: item.image_url,
             pin_code: item.pin_code
-          }))
+          })),
+          q ?? "",
+          statusParam
         )
       );
+  });
+
+  app.get("/admin/iris/:irisId", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+    const params = req.params as { irisId: string };
+    const irisId = sanitizeIrisId(params.irisId);
+    if (!irisId) {
+      reply.code(400).send("Invalid iris_id");
+      return;
+    }
+    const item = await prisma.artwork.findUnique({
+      where: { iris_id: irisId }
+    });
+    if (!item) {
+      reply.code(404).send("Not found");
+      return;
+    }
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildAdminDetailHtml({
+          iris_id: item.iris_id,
+          status: item.status,
+          assigned_order_id: item.assigned_order_id,
+          assigned_customer_email: item.assigned_customer_email,
+          activated_at: item.activated_at,
+          created_at: item.created_at,
+          image_url: item.image_url,
+          pin_code: item.pin_code
+        })
+      );
+  });
+
+  app.get("/admin/logout", async (_req, reply) => {
+    reply
+      .code(401)
+      .header("WWW-Authenticate", 'Basic realm="IRIS Admin"')
+      .send("Logged out");
   });
 
   app.post("/admin/iris/upload", async (req, reply) => {
