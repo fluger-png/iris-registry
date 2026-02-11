@@ -56,10 +56,7 @@ const statusPill = (status: string) => {
   return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
 };
 
-const buildAdminShell = (title: string, body: string, searchValue: string, activeTab: string) => {
-  const tab = (key: string, label: string) =>
-    `<a class="tab ${activeTab === key ? "active" : ""}" href="/admin${key !== "all" ? `?status=${key}` : ""}">${label}</a>`;
-  const search = searchValue ? searchValue.replace(/"/g, "&quot;") : "";
+const buildAdminShell = (title: string, body: string, _searchValue: string, activeTab: string) => {
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -67,20 +64,21 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>${title}</title>
       <style>
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap');
         :root {
-          --bg:#F5F6FA;
+          --bg:#F3F4F9;
           --card:#FFFFFF;
-          --ink:#0F172A;
-          --muted:#64748B;
-          --brand:#4C5BD4;
+          --ink:#0B0F1A;
+          --muted:#6B7280;
+          --brand:#5160D8;
           --brand-dark:#3E4AB8;
-          --line:#E5E7EB;
+          --line:#E6E8F2;
           --pill:#EEF2FF;
         }
         *{box-sizing:border-box;}
         body{
           margin:0;
-          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-family: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color:var(--ink);
           background:var(--bg);
         }
@@ -91,7 +89,7 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
           min-height:100vh;
         }
         .sidebar{
-          background:#F1F3F8;
+          background:#EEF0F7;
           padding:28px 20px;
           border-right:1px solid var(--line);
         }
@@ -99,7 +97,15 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
           font-weight:700;
           letter-spacing:.12em;
           text-align:center;
-          margin-bottom:28px;
+          margin-bottom:18px;
+          font-size:14px;
+        }
+        .sidebar h2{
+          font-size:14px;
+          color:var(--muted);
+          font-weight:600;
+          margin:16px 0 12px;
+          text-align:center;
         }
         .nav{
           display:flex;
@@ -140,12 +146,15 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
           border-radius:999px;
           padding:8px 14px;
           min-width:320px;
+          box-shadow:0 6px 16px rgba(15,23,42,.06);
         }
+        .search svg{width:16px;height:16px;color:#9CA3AF;}
         .search input{
           border:0;
           outline:0;
           width:100%;
           font-size:14px;
+          font-family:inherit;
         }
         .tabs{
           margin:18px 0 20px;
@@ -216,6 +225,11 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
           align-items:start;
         }
         .passport h2{margin:0 0 12px;}
+        .passport-title{
+          text-align:center;
+          margin:0 0 18px;
+          font-size:20px;
+        }
         .passport dl{margin:0;display:grid;grid-template-columns:140px 1fr;row-gap:12px;column-gap:12px;font-size:14px;}
         .passport dt{color:var(--muted);}
         .passport dd{margin:0;font-weight:600;}
@@ -229,6 +243,7 @@ const buildAdminShell = (title: string, body: string, searchValue: string, activ
       <div class="layout">
         <aside class="sidebar">
           <div class="logo">IRIS<br/>NYC</div>
+          <h2>Admin Dashboard</h2>
           <div class="nav">
             <a class="active" href="/admin">Activities</a>
             <a href="/admin">All IRISes (Soon)</a>
@@ -288,6 +303,7 @@ const buildAdminHtml = (
       <h1>Activities</h1>
       <form class="search" method="GET" action="/admin">
         ${statusHidden}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
       </form>
     </div>
@@ -333,9 +349,10 @@ const buildAdminDetailHtml = (item: {
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
     : `<div class="muted">Upload Image</div>`;
   const body = `
-    <div class="title-row">
-      <h1>IRIS Passport</h1>
+    <div class="passport-title">IRIS Passport</div>
+    <div class="title-row" style="justify-content:center;margin-bottom:18px;">
       <form class="search" method="GET" action="/admin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" />
       </form>
     </div>
