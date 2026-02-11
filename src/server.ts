@@ -90,7 +90,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           min-height:100vh;
         }
         .sidebar{
-          background:#EEF0F7;
+          background:#FFFFFF;
           padding:28px 16px;
           border-right:1px solid var(--line);
         }
@@ -124,7 +124,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           background:var(--brand);
           color:#fff;
         }
-        .main{ padding:32px 28px; background:#fff; }
+        .main{ padding:32px 28px; background:transparent; }
         .page{ max-width:1040px; margin:0 auto; }
         .title-row{
           display:flex;
