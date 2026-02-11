@@ -1,6 +1,10 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { Prisma } from "@prisma/client";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import crypto from "node:crypto";
+import path from "node:path";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseReservationToken, verifyShopifyHmac } from "./utils.js";
@@ -13,6 +17,103 @@ const parseLimit = (value: unknown, fallback: number): number => {
     return fallback;
   }
   return Math.min(parsed, MAX_PAGE_SIZE);
+};
+
+const r2 = new S3Client({
+  region: "auto",
+  endpoint: `https://${env.r2AccountId}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: env.r2AccessKeyId,
+    secretAccessKey: env.r2SecretAccessKey
+  }
+});
+
+const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+
+const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Basic ")) {
+    reply.code(401).header("WWW-Authenticate", 'Basic realm="IRIS Admin"').send("Unauthorized");
+    return false;
+  }
+  const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
+  const [user, pass] = decoded.split(":");
+  if (user !== env.adminBasicUser || pass !== env.adminBasicPass) {
+    reply.code(401).header("WWW-Authenticate", 'Basic realm="IRIS Admin"').send("Unauthorized");
+    return false;
+  }
+  return true;
+};
+
+const buildAdminHtml = (items: Array<{
+  iris_id: string;
+  status: string;
+  assigned_order_id: string | null;
+  assigned_customer_email: string | null;
+  activated_at: Date | null;
+  image_url: string | null;
+}>) => {
+  const rows = items
+    .map((item) => {
+      const imageCell = item.image_url
+        ? `<img src="${item.image_url}" alt="${item.iris_id}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;" />`
+        : "-";
+      return `
+        <tr>
+          <td>${item.iris_id}</td>
+          <td>${item.status}</td>
+          <td>${item.assigned_customer_email ?? "-"}</td>
+          <td>${item.assigned_order_id ?? "-"}</td>
+          <td>${item.activated_at ? new Date(item.activated_at).toISOString() : "-"}</td>
+          <td>${imageCell}</td>
+          <td>
+            <form method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
+              <input type="hidden" name="iris_id" value="${item.iris_id}" />
+              <input type="file" name="image" accept="image/*" required />
+              <button type="submit">Upload</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>IRIS Admin</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 24px; background:#f7f7f7; }
+        h1 { margin: 0 0 16px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+        th { background: #fafafa; }
+        form { display: flex; gap: 8px; align-items: center; }
+        button { padding: 6px 10px; }
+      </style>
+    </head>
+    <body>
+      <h1>IRIS Sold Registry</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>IRIS ID</th>
+            <th>Status</th>
+            <th>Customer Email</th>
+            <th>Order ID</th>
+            <th>Activated At</th>
+            <th>Image</th>
+            <th>Upload</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || "<tr><td colspan='7'>No records</td></tr>"}
+        </tbody>
+      </table>
+    </body>
+  </html>`;
 };
 
 const extractCustomerEmail = (order: Record<string, unknown>): string | null => {
@@ -86,6 +187,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
     reply.code(status).type("application/json; charset=utf-8").send(payload);
 
   await app.register(cors, { origin: true });
+  await app.register(multipart, {
+    limits: { fileSize: 10 * 1024 * 1024 }
+  });
 
   app.addContentTypeParser(
     "application/json",
@@ -329,7 +433,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         where: { iris_id: body.iris_id },
         data: {
           status: "activated",
-          activated_at: new Date()
+          activated_at: new Date(),
+          assigned_customer_email: body.actor_email ? body.actor_email : undefined
         }
       });
 
@@ -429,6 +534,84 @@ export const createServer = async (): Promise<FastifyInstance> => {
         activated_at: item.activated_at
       }))
     });
+  });
+
+  app.get("/admin", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const items = await prisma.artwork.findMany({
+      where: {
+        status: { in: ["assigned", "activated", "shopify_failed"] }
+      },
+      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+      take: 500
+    });
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildAdminHtml(
+          items.map((item) => ({
+            iris_id: item.iris_id,
+            status: item.status,
+            assigned_order_id: item.assigned_order_id,
+            assigned_customer_email: item.assigned_customer_email,
+            activated_at: item.activated_at,
+            image_url: item.image_url
+          }))
+        )
+      );
+  });
+
+  app.post("/admin/iris/upload", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const data = await (req as any).file();
+    if (!data) {
+      reply.code(400).send("Missing file");
+      return;
+    }
+
+    const irisIdRaw = data.fields?.iris_id?.value;
+    if (!irisIdRaw || typeof irisIdRaw !== "string") {
+      reply.code(400).send("Missing iris_id");
+      return;
+    }
+
+    const irisId = sanitizeIrisId(irisIdRaw);
+    if (!irisId) {
+      reply.code(400).send("Invalid iris_id");
+      return;
+    }
+
+    const ext = path.extname(data.filename || "").toLowerCase() || ".jpg";
+    const objectKey = `iris/${irisId}/${Date.now()}-${crypto.randomUUID()}${ext}`;
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of data.file) {
+      chunks.push(chunk as Buffer);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    await r2.send(
+      new PutObjectCommand({
+        Bucket: env.r2Bucket,
+        Key: objectKey,
+        Body: buffer,
+        ContentType: data.mimetype || "application/octet-stream"
+      })
+    );
+
+    const publicBase = env.r2PublicBaseUrl.replace(/\/$/, "");
+    const imageUrl = `${publicBase}/${objectKey}`;
+
+    await prisma.artwork.update({
+      where: { iris_id: irisId },
+      data: { image_url: imageUrl }
+    });
+
+    reply.redirect(303, "/admin");
   });
 
   app.setErrorHandler((error, _req, reply) => {

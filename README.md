@@ -52,6 +52,11 @@ npm run dev
 - Ownership is granted only after activation (NFC flow assumed validated).
 - Schema is designed to be extendable (marketplace not implemented).
 
+## Admin
+
+- Admin UI: `GET /admin` (Basic Auth required).
+- Upload IRIS image via the admin table (stored in Cloudflare R2 and saved to `image_url`).
+
 ## Local Development Checklist
 
 - `npm install`
