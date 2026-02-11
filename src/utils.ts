@@ -31,6 +31,12 @@ export const parseReservationToken = (order: unknown): string | null => {
   if (!Array.isArray(lineItems)) {
     return null;
   }
+  const tokenKeys = new Set([
+    "reservationtoken",
+    "reservation_token",
+    "iris_reservation_token",
+    "iris-reservation-token"
+  ]);
   for (const item of lineItems) {
     const properties = item.properties as Array<{ name?: string; value?: string }> | undefined;
     if (!Array.isArray(properties)) {
@@ -41,7 +47,8 @@ export const parseReservationToken = (order: unknown): string | null => {
       if (!name) {
         continue;
       }
-      if (name === "reservationToken" || name === "reservation_token") {
+      const normalized = name.toLowerCase();
+      if (tokenKeys.has(normalized)) {
         const value = prop?.value?.toString().trim();
         if (value) {
           return value;
