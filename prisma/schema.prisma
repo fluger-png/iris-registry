@@ -32,6 +32,7 @@ model Artwork {
   pin_locked_until        DateTime?
   assigned_order_id       String?
   assigned_customer_email String?
+  owner_email             String?
   activated_at            DateTime?
   created_at              DateTime        @default(now())
   updated_at              DateTime        @updatedAt
@@ -41,6 +42,7 @@ model Artwork {
 
   @@index([status])
   @@index([assigned_customer_email])
+  @@index([owner_email])
   @@index([activated_at])
 }
 

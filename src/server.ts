@@ -275,6 +275,7 @@ const buildAdminHtml = (
     status: string;
     assigned_order_id: string | null;
     assigned_customer_email: string | null;
+    owner_email: string | null;
     activated_at: Date | null;
     image_url: string | null;
     pin_code: string | null;
@@ -292,6 +293,7 @@ const buildAdminHtml = (
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.assigned_customer_email ?? "-"}</td>
+          <td>${item.owner_email ?? "-"}</td>
           <td>${item.assigned_order_id ?? "-"}</td>
           <td>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
@@ -330,6 +332,7 @@ const buildAdminHtml = (
             <th>IRIS ID</th>
             <th>Status</th>
             <th>Customer Email</th>
+            <th>Owner Email</th>
             <th>Order ID</th>
             <th>Activated At</th>
             <th>PIN</th>
@@ -338,7 +341,7 @@ const buildAdminHtml = (
           </tr>
         </thead>
         <tbody>
-          ${rows || "<tr><td colspan='8'>No records</td></tr>"}
+          ${rows || "<tr><td colspan='9'>No records</td></tr>"}
         </tbody>
       </table>
     </div>
@@ -351,6 +354,7 @@ const buildAdminDetailHtml = (item: {
   status: string;
   assigned_order_id: string | null;
   assigned_customer_email: string | null;
+  owner_email: string | null;
   activated_at: Date | null;
   created_at: Date;
   image_url: string | null;
@@ -379,7 +383,8 @@ const buildAdminDetailHtml = (item: {
           <dt>Order ID</dt><dd>${item.assigned_order_id ?? "-"}</dd>
           <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
           <dt>Activation Date</dt><dd>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</dd>
-          <dt>Owner</dt><dd>${item.assigned_customer_email ?? "-"}</dd>
+          <dt>Buyer</dt><dd>${item.assigned_customer_email ?? "-"}</dd>
+          <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
         </dl>
         <div style="margin-top:16px;">
           <a class="btn primary" href="/admin">Back to the list</a>
@@ -951,7 +956,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           data: {
             status: "activated",
             activated_at: new Date(),
-            assigned_customer_email: artwork.assigned_customer_email ?? email,
+            owner_email: email,
             pin_attempts: 0,
             pin_locked_until: null
           }
@@ -1045,7 +1050,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const items = await prisma.artwork.findMany({
       where: {
         status: "activated",
-        assigned_customer_email: query.email
+        OR: [
+          { owner_email: query.email },
+          { owner_email: null, assigned_customer_email: query.email }
+        ]
       },
       orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }]
     });
@@ -1127,6 +1135,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             status: item.status,
             assigned_order_id: item.assigned_order_id,
             assigned_customer_email: item.assigned_customer_email,
+            owner_email: item.owner_email,
             activated_at: item.activated_at,
             image_url: item.image_url,
             pin_code: item.pin_code
@@ -1162,6 +1171,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           status: item.status,
           assigned_order_id: item.assigned_order_id,
           assigned_customer_email: item.assigned_customer_email,
+          owner_email: item.owner_email,
           activated_at: item.activated_at,
           created_at: item.created_at,
           image_url: item.image_url,
