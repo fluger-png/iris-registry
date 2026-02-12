@@ -30,6 +30,14 @@ const r2 = new S3Client({
 
 const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
 
+const formatDate = (value: Date): string => {
+  const d = new Date(value);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  return `${mm}.${dd}.${yy}`;
+};
+
 const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Basic ")) {
@@ -48,8 +56,8 @@ const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
 const statusPill = (status: string) => {
   const key = status.toLowerCase();
   const map: Record<string, { bg: string; fg: string; label: string }> = {
-    activated: { bg: "#DCFCE7", fg: "#166534", label: "Activated" },
-    assigned: { bg: "#FEF3C7", fg: "#92400E", label: "Assigned" },
+    activated: { bg: "#DAFFE9", fg: "#33CC70", label: "Activated" },
+    assigned: { bg: "#FFF9D5", fg: "#D8C029", label: "Assigned" },
     shopify_failed: { bg: "#FEE2E2", fg: "#991B1B", label: "Shopify Failed" }
   };
   const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: status };
@@ -64,9 +72,9 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>${title}</title>
       <style>
-        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700&display=swap');
         :root {
-          --bg:#F4F5FB;
+          --bg:#E6E6E6;
           --card:#FFFFFF;
           --ink:#0B0F1A;
           --muted:#6B7280;
@@ -78,7 +86,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         *{box-sizing:border-box;}
         body{
           margin:0;
-          font-family: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-family: 'Lato', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color:var(--ink);
           background:var(--bg);
           font-size:12px;
@@ -125,7 +133,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           color:#fff;
         }
         .main{ padding:32px 28px; background:transparent; }
-        .page{ max-width:1040px; margin:0 auto; }
+        .page{ max-width:1100px; margin:0 auto; }
         .title-row{
           display:flex;
           align-items:center;
@@ -183,11 +191,11 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           padding:20px;
           box-shadow:0 10px 24px rgba(15,23,42,.06);
         }
-        .card.table{ padding:0; overflow:hidden; }
+        .card.table{ padding:0; overflow:hidden; max-width:1100px; margin:0 auto; }
         table{
           width:100%;
           border-collapse:collapse;
-          font-size:13px;
+          font-size:12px;
         }
         th, td{
           padding:12px 12px;
@@ -195,18 +203,46 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           text-align:left;
           vertical-align:middle;
         }
-        th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+        th{color:var(--ink);font-weight:600;font-size:14px;letter-spacing:0;}
         tr:last-child td{border-bottom:0;}
         .pill{
           padding:3px 9px;
           border-radius:999px;
-          font-size:11px;
+          font-size:12px;
           font-weight:700;
           display:inline-block;
         }
         .thumb{
-          width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--line);
+          width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--line);
         }
+        .file-input{
+          position:absolute;
+          opacity:0;
+          width:0;
+          height:0;
+          pointer-events:none;
+        }
+        .file-link{
+          font-size:10px;
+          color:#5E81F4;
+          cursor:pointer;
+          text-decoration:none;
+        }
+        .file-link:hover{ text-decoration:underline; }
+        .upload-form{ display:flex; gap:10px; align-items:center; }
+        .btn{
+          width:80px;
+          height:20px;
+          padding:0;
+          border-radius:8px;
+          border:0;
+          cursor:pointer;
+          font-weight:600;
+          font-size:10px;
+          line-height:20px;
+        }
+        .btn.primary{background:#5E81F4;color:#fff;}
+        .btn.secondary{background:#fff;border:1px solid #5E81F4;color:#5E81F4;}
         .upload-form{
           display:flex;gap:8px;align-items:center;
         }
@@ -288,6 +324,7 @@ const buildAdminHtml = (
       const imageCell = item.image_url
         ? `<img class="thumb" src="${item.image_url}" alt="${item.iris_id}" />`
         : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#94A3B8;">—</div>`;
+      const fileId = `file-${item.iris_id}`;
       return `
         <tr>
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
@@ -295,14 +332,15 @@ const buildAdminHtml = (
           <td>${item.assigned_customer_email ?? "-"}</td>
           <td>${item.owner_email ?? "-"}</td>
           <td>${item.assigned_order_id ?? "-"}</td>
-          <td>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</td>
+          <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
           <td>${imageCell}</td>
           <td>
             <form class="upload-form" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
               <input type="hidden" name="iris_id" value="${item.iris_id}" />
-              <input type="file" name="image" accept="image/*" required />
-              <button class="btn secondary" type="submit">Upload</button>
+              <input class="file-input" id="${fileId}" type="file" name="image" accept="image/*" required />
+              <label class="file-link" for="${fileId}">Choose File</label>
+              <button class="btn primary" type="submit">Upload</button>
             </form>
           </td>
         </tr>
