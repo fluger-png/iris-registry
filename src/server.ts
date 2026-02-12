@@ -240,6 +240,10 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-weight:600;
           font-size:10px;
           line-height:20px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          text-align:center;
         }
         .btn.primary{background:#5E81F4;color:#fff;}
         .btn.secondary{background:#fff;border:1px solid #5E81F4;color:#5E81F4;}
