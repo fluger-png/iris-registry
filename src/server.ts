@@ -1060,6 +1060,32 @@ export const createServer = async (): Promise<FastifyInstance> => {
     });
   });
 
+  app.get("/apps/iris/iris/:irisId", async (req, reply) => {
+    const params = req.params as { irisId: string };
+    const irisId = sanitizeIrisId(params.irisId);
+    if (!irisId) {
+      sendJson(reply, 400, { error: "invalid_iris_id" });
+      return;
+    }
+
+    const item = await prisma.artwork.findUnique({
+      where: { iris_id: irisId }
+    });
+
+    if (!item || item.status !== "activated") {
+      sendJson(reply, 404, { error: "not_found" });
+      return;
+    }
+
+    sendJson(reply, 200, {
+      iris_id: item.iris_id,
+      image_url: item.image_url,
+      rarity_code: item.rarity_code,
+      activated_at: item.activated_at,
+      status: item.status
+    });
+  });
+
   app.get("/admin", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
