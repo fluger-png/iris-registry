@@ -74,11 +74,11 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700&display=swap');
         :root {
-          --bg:#E6E6E6;
+          --bg:#F2F2F7;
           --card:#FFFFFF;
           --ink:#0B0F1A;
           --muted:#6B7280;
-          --brand:#5160D8;
+          --brand:#5E81F4;
           --brand-dark:#3E4AB8;
           --line:#E6E8F2;
           --pill:#EEF2FF;
@@ -94,7 +94,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
         a{color:inherit;text-decoration:none;}
         .layout{
           display:grid;
-          grid-template-columns:220px 1fr;
+          grid-template-columns:300px 1fr;
           min-height:100vh;
         }
         .sidebar{
@@ -229,7 +229,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           text-decoration:none;
         }
         .file-link:hover{ text-decoration:underline; }
-        .upload-form{ display:flex; gap:10px; align-items:center; }
+        .upload-form{ display:flex; gap:10px; align-items:center; flex-wrap:nowrap; }
         .btn{
           width:80px;
           height:20px;
