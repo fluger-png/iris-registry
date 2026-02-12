@@ -227,8 +227,23 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           color:#5E81F4;
           cursor:pointer;
           text-decoration:none;
+          white-space:nowrap;
         }
         .file-link:hover{ text-decoration:underline; }
+        .file-name{
+          font-size:10px;
+          color:#5E81F4;
+          white-space:nowrap;
+        }
+        .file-clear{
+          background:transparent;
+          border:0;
+          color:#5E81F4;
+          font-size:12px;
+          cursor:pointer;
+          padding:0 2px;
+          line-height:1;
+        }
         .upload-form{ display:flex; gap:10px; align-items:center; flex-wrap:nowrap; }
         .btn{
           width:80px;
@@ -239,11 +254,12 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           cursor:pointer;
           font-weight:600;
           font-size:10px;
-          line-height:20px;
-          display:flex;
+          line-height:1;
+          display:inline-flex;
           align-items:center;
           justify-content:center;
           text-align:center;
+          box-sizing:border-box;
         }
         .btn.primary{background:#5E81F4;color:#fff;}
         .btn.secondary{background:#fff;border:1px solid #5E81F4;color:#5E81F4;}
@@ -305,6 +321,41 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           </div>
         </main>
       </div>
+      <script>
+        (function () {
+          document.querySelectorAll('.upload-form').forEach(function (form) {
+            var input = form.querySelector('.file-input');
+            var link = form.querySelector('.file-link');
+            var name = form.querySelector('[data-file-name]');
+            var clear = form.querySelector('[data-file-clear]');
+            var upload = form.querySelector('[data-upload-btn]');
+            if (!input || !link || !name || !clear || !upload) return;
+
+            function update() {
+              if (input.files && input.files.length > 0) {
+                name.textContent = input.files[0].name;
+                name.hidden = false;
+                clear.hidden = false;
+                upload.hidden = false;
+                link.hidden = true;
+              } else {
+                name.textContent = '';
+                name.hidden = true;
+                clear.hidden = true;
+                upload.hidden = true;
+                link.hidden = false;
+              }
+            }
+
+            input.addEventListener('change', update);
+            clear.addEventListener('click', function () {
+              input.value = '';
+              update();
+            });
+            update();
+          });
+        })();
+      </script>
     </body>
   </html>`;
 };
@@ -344,7 +395,9 @@ const buildAdminHtml = (
               <input type="hidden" name="iris_id" value="${item.iris_id}" />
               <input class="file-input" id="${fileId}" type="file" name="image" accept="image/*" required />
               <label class="file-link" for="${fileId}">Choose File</label>
-              <button class="btn primary" type="submit">Upload</button>
+              <span class="file-name" data-file-name hidden></span>
+              <button class="file-clear" type="button" data-file-clear hidden>×</button>
+              <button class="btn primary" type="submit" data-upload-btn hidden>Upload</button>
             </form>
           </td>
         </tr>
@@ -438,8 +491,11 @@ const buildAdminDetailHtml = (item: {
         </div>
         <form class="upload-form" style="margin-top:12px;justify-content:center;" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
           <input type="hidden" name="iris_id" value="${item.iris_id}" />
-          <input type="file" name="image" accept="image/*" required />
-          <button class="btn secondary" type="submit">Upload</button>
+          <input class="file-input" id="file-detail-${item.iris_id}" type="file" name="image" accept="image/*" required />
+          <label class="file-link" for="file-detail-${item.iris_id}">Choose File</label>
+          <span class="file-name" data-file-name hidden></span>
+          <button class="file-clear" type="button" data-file-clear hidden>×</button>
+          <button class="btn primary" type="submit" data-upload-btn hidden>Upload</button>
         </form>
       </div>
     </div>
