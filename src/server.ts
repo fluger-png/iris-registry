@@ -790,6 +790,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const orderId = order.id ? String(order.id) : null;
+    const orderName = typeof order.name === "string" ? order.name : null;
+    const orderNumber =
+      typeof order.order_number === "number" || typeof order.order_number === "string"
+        ? String(order.order_number)
+        : null;
+    const orderNumberDisplay = orderName ?? orderNumber ?? orderId;
     const customerEmail = extractCustomerEmail(order);
     const failed: Array<{ token: string; error: string }> = [];
 
@@ -830,7 +836,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           where: { iris_id: reservation.iris_id },
           data: {
             status: "assigned",
-            assigned_order_id: orderId,
+            assigned_order_id: orderNumberDisplay,
             assigned_customer_email: customerEmail,
             pin_code: pinCode,
             pin_last4: pinCode.slice(-4),
@@ -847,6 +853,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             payload_json: {
               reservation_token: reservationToken,
               order_id: orderId,
+              order_number: orderNumberDisplay,
               customer_email: customerEmail
             }
           }
