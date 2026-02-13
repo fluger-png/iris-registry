@@ -428,7 +428,7 @@ const buildAdminHtml = (
             <th>Status</th>
             <th>Customer Email</th>
             <th>Owner Email</th>
-            <th>Order ID</th>
+            <th>Order Number</th>
             <th>Activated At</th>
             <th>PIN</th>
             <th>Image</th>
@@ -475,7 +475,7 @@ const buildAdminDetailHtml = (item: {
         <dl>
           <dt>Status</dt><dd>${statusPill(item.status)}</dd>
           <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
-          <dt>Order ID</dt><dd>${item.assigned_order_id ?? "-"}</dd>
+          <dt>Order Number</dt><dd>${item.assigned_order_id ?? "-"}</dd>
           <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
           <dt>Activation Date</dt><dd>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</dd>
           <dt>Buyer</dt><dd>${item.assigned_customer_email ?? "-"}</dd>
