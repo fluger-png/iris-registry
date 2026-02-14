@@ -40,7 +40,18 @@ const formatDate = (value: Date): string => {
   return `${mm}.${dd}.${yy}`;
 };
 
-const publicProofHtmlTemplate = fs.readFileSync(new URL("./verify.html", import.meta.url), "utf8");
+const publicProofHtmlTemplate = (() => {
+  const distPath = path.join(process.cwd(), "dist", "verify.html");
+  const srcPath = path.join(process.cwd(), "src", "verify.html");
+  if (fs.existsSync(distPath)) {
+    return fs.readFileSync(distPath, "utf8");
+  }
+  if (fs.existsSync(srcPath)) {
+    return fs.readFileSync(srcPath, "utf8");
+  }
+  console.warn("verify.html not found in dist/ or src/");
+  return "<!doctype html><html><head><meta charset=\"utf-8\" /><title>IRIS Proof</title></head><body>Proof page unavailable.</body></html>";
+})();
 
 const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
   const auth = req.headers.authorization;
