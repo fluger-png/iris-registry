@@ -8,6 +8,8 @@ import path from "node:path";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseReservationTokens, verifyShopifyHmac } from "./utils.js";
+import { computeLeaf, verifyMerkleProof } from "./rarity.js";
+import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
 
@@ -37,6 +39,8 @@ const formatDate = (value: Date): string => {
   const yy = String(d.getUTCFullYear()).slice(-2);
   return `${mm}.${dd}.${yy}`;
 };
+
+const publicProofHtmlTemplate = fs.readFileSync(new URL("./verify.html", import.meta.url), "utf8");
 
 const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
   const auth = req.headers.authorization;
@@ -474,6 +478,7 @@ const buildAdminDetailHtml = (item: {
         <h2>IRIS ${displayId}</h2>
         <dl>
           <dt>Status</dt><dd>${statusPill(item.status)}</dd>
+          <dt>Rarity</dt><dd>${item.rarity_code ?? "-"}</dd>
           <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
           <dt>Order Number</dt><dd>${item.assigned_order_id ?? "-"}</dd>
           <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
@@ -1055,6 +1060,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         return;
       }
 
+      const proofToken = artwork.proof_token ?? crypto.randomUUID();
+
       await prisma.$transaction(async (tx) => {
         await tx.artwork.update({
           where: { iris_id: irisId },
@@ -1062,6 +1069,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             status: "activated",
             activated_at: new Date(),
             owner_email: email,
+            proof_token: proofToken,
             pin_attempts: 0,
             pin_locked_until: null
           }
@@ -1163,18 +1171,39 @@ export const createServer = async (): Promise<FastifyInstance> => {
       orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }]
     });
 
+    const generatedTokens = new Map<string, string>();
+    const missing = items.filter((item) => !item.proof_token);
+    if (missing.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        for (const item of missing) {
+          const token = crypto.randomUUID();
+          await tx.artwork.update({
+            where: { iris_id: item.iris_id },
+            data: { proof_token: token }
+          });
+          generatedTokens.set(item.iris_id, token);
+        }
+      });
+    }
+
     sendJson(reply, 200, {
       items: items.map((item) => ({
         iris_id: item.iris_id,
         image_url: item.image_url,
         rarity_code: item.rarity_code,
-        activated_at: item.activated_at
+        activated_at: item.activated_at,
+        passport_url: (item.proof_token ?? generatedTokens.get(item.iris_id))
+          ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(
+              item.proof_token ?? generatedTokens.get(item.iris_id) ?? ""
+            )}`
+          : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
       }))
     });
   });
 
   app.get("/apps/iris/iris/:irisId", async (req, reply) => {
     const params = req.params as { irisId: string };
+    const query = req.query as { token?: string };
     const irisId = sanitizeIrisId(params.irisId);
     if (!irisId) {
       sendJson(reply, 400, { error: "invalid_iris_id" });
@@ -1190,12 +1219,58 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
 
+    const tokenOk = !!query.token && item.proof_token === query.token;
+    const proofPath = tokenOk ? `/apps/iris/proof/${item.iris_id}?token=${encodeURIComponent(query.token!)}` : null;
     sendJson(reply, 200, {
       iris_id: item.iris_id,
       image_url: item.image_url,
-      rarity_code: item.rarity_code,
+      rarity_code: tokenOk ? item.rarity_code : null,
       activated_at: item.activated_at,
-      status: item.status
+      status: item.status,
+      proof_url: proofPath
+    });
+  });
+
+  app.get("/apps/iris/verify", async (_req, reply) => {
+    const latest = await prisma.event.findFirst({
+      where: { type: "rarity_merkle_root" },
+      orderBy: { created_at: "desc" }
+    });
+    const root = (latest?.payload_json as any)?.root ?? "pending";
+    const html = publicProofHtmlTemplate.replace("{{ROOT}}", root);
+    reply.code(200).type("text/html; charset=utf-8").send(html);
+  });
+
+  app.get("/apps/iris/proof/:irisId", async (req, reply) => {
+    const params = req.params as { irisId: string };
+    const query = req.query as { token?: string };
+    const irisId = sanitizeIrisId(params.irisId);
+    if (!irisId) {
+      sendJson(reply, 400, { error: "invalid_iris_id" });
+      return;
+    }
+    const item = await prisma.artwork.findUnique({ where: { iris_id: irisId } });
+    if (
+      !item ||
+      item.status !== "activated" ||
+      !item.rarity_code ||
+      !item.rarity_proof ||
+      !query.token ||
+      item.proof_token !== query.token
+    ) {
+      sendJson(reply, 404, { error: "not_found" });
+      return;
+    }
+    const proof = item.rarity_proof as { nonce: string; proof: string[]; root: string };
+    const leaf = computeLeaf(item.iris_id, item.rarity_code as any, proof.nonce);
+    const ok = verifyMerkleProof(leaf, proof.proof, proof.root);
+    sendJson(reply, 200, {
+      iris_id: item.iris_id,
+      rarity_code: item.rarity_code,
+      root: proof.root,
+      proof: proof.proof,
+      nonce: proof.nonce,
+      valid: ok
     });
   });
 

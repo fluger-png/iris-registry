@@ -61,6 +61,32 @@ npm run dev
 - Admin UI: `GET /admin` (Basic Auth required).
 - Upload IRIS image via the admin table (stored in Cloudflare R2 and saved to `image_url`).
 
+## Rarity Commitment (Merkle Proof)
+
+We pre-assign rarity to all 10,000 IRIS using a deterministic seed and publish a Merkle root.
+
+1. Seed 10,000 artworks first (set `SEED_COUNT=10000`).
+2. Run the rarity commit script with a secret seed:
+
+```bash
+RARITY_SEED="your-secret-seed" npm run rarity:commit
+```
+
+This will:
+- Populate `rarity_code` and `rarity_proof` for each IRIS.
+- Store the Merkle root in events (`rarity_merkle_root`).
+- Generate `rarity-release.generated.md` and `rarity-root.json` locally.
+
+Public proof page:
+- `GET /apps/iris/verify` shows the current Merkle root.
+
+Owner proof:
+- Each activated owner gets a unique proof link from their IRIS passport (tokenized).
+
+Publish the root:
+- Create a GitHub Release and paste the contents of `rarity-release.generated.md`.
+- Attach `rarity-root.json` as a release asset.
+
 ## Local Development Checklist
 
 - `npm install`

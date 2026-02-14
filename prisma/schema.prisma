@@ -25,6 +25,8 @@ model Artwork {
   iris_id                 String          @id
   status                  ArtworkStatus
   rarity_code             String?
+  rarity_proof            Json?
+  proof_token             String?         @unique
   image_url               String?
   pin_code                String?
   pin_last4               String?
