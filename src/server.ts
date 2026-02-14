@@ -451,6 +451,7 @@ const buildAdminHtml = (
 const buildAdminDetailHtml = (item: {
   iris_id: string;
   status: string;
+  rarity_code: string | null;
   assigned_order_id: string | null;
   assigned_customer_email: string | null;
   owner_email: string | null;
@@ -1349,6 +1350,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildAdminDetailHtml({
           iris_id: item.iris_id,
           status: item.status,
+          rarity_code: item.rarity_code,
           assigned_order_id: item.assigned_order_id,
           assigned_customer_email: item.assigned_customer_email,
           owner_email: item.owner_email,

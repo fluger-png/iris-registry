@@ -80,8 +80,12 @@ export const shuffleWithSeed = <T>(list: T[], seed: string): T[] => {
   return out;
 };
 
-export const buildRarityAssignments = (seed: string): Array<{ irisId: string; rarity: RarityCode; nonce: string; leaf: string }>
-=> {
+export const buildRarityAssignments = (seed: string): Array<{
+  irisId: string;
+  rarity: RarityCode;
+  nonce: string;
+  leaf: string;
+}> => {
   const ids: string[] = [];
   for (let i = 1; i <= 10000; i += 1) {
     ids.push(`IRIS-${String(i).padStart(4, "0")}`);
