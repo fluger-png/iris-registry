@@ -1276,14 +1276,62 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const proof = item.rarity_proof as { nonce: string; proof: string[]; root: string };
     const leaf = computeLeaf(item.iris_id, item.rarity_code as any, proof.nonce);
     const ok = verifyMerkleProof(leaf, proof.proof, proof.root);
-    sendJson(reply, 200, {
+    const payload = {
       iris_id: item.iris_id,
       rarity_code: item.rarity_code,
       root: proof.root,
       proof: proof.proof,
       nonce: proof.nonce,
       valid: ok
-    });
+    };
+
+    const accept = String(req.headers.accept ?? "");
+    if (accept.includes("text/html")) {
+      const html = `<!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>IRIS Proof ${item.iris_id}</title>
+            <style>
+              body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #111; }
+              .page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+              .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; }
+              h1 { margin: 0 0 12px; }
+              .label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+              .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+              .grid { display: grid; gap: 12px; }
+              .btn { display: inline-block; padding: 10px 14px; background: #5E81F4; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; }
+              pre { background: #f3f4f6; padding: 12px; border-radius: 10px; overflow: auto; }
+            </style>
+          </head>
+          <body>
+            <div class="page">
+              <div class="card">
+                <h1>IRIS Proof</h1>
+                <div class="grid">
+                  <div><div class="label">IRIS ID</div><div class="mono">${payload.iris_id}</div></div>
+                  <div><div class="label">Rarity</div><div>${payload.rarity_code}</div></div>
+                  <div><div class="label">Merkle Root</div><div class="mono">${payload.root}</div></div>
+                  <div><div class="label">Nonce</div><div class="mono">${payload.nonce}</div></div>
+                  <div><div class="label">Valid</div><div>${payload.valid ? "true" : "false"}</div></div>
+                </div>
+                <p style="margin-top:16px;">Proof array (sibling hashes):</p>
+                <pre class="mono">${JSON.stringify(payload.proof, null, 2)}</pre>
+                <p style="margin-top:16px;">Raw JSON:</p>
+                <pre class="mono">${JSON.stringify(payload, null, 2)}</pre>
+                <div style="margin-top:16px;">
+                  <a class="btn" href="/apps/iris/verify">Rarity Root Page</a>
+                </div>
+              </div>
+            </div>
+          </body>
+        </html>`;
+      reply.code(200).type("text/html; charset=utf-8").send(html);
+      return;
+    }
+
+    sendJson(reply, 200, payload);
   });
 
   app.get("/admin", async (req, reply) => {
