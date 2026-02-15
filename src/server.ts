@@ -205,6 +205,24 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           border-color:var(--brand);
           color:#fff;
         }
+        .pagination{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          margin-top:16px;
+          font-size:12px;
+        }
+        .page-link{
+          color:var(--brand);
+          text-decoration:none;
+          padding:6px 10px;
+          border:1px solid var(--line);
+          border-radius:8px;
+          background:#fff;
+          font-weight:600;
+        }
+        .page-link.disabled{pointer-events:none;opacity:0.4;}
+        .page-info{color:var(--muted);}
         .card{
           background:var(--card);
           border-radius:18px;
@@ -393,7 +411,10 @@ const buildAdminHtml = (
     pin_code: string | null;
   }>,
   searchValue: string,
-  activeTab: string
+  activeTab: string,
+  page: number,
+  hasPrev: boolean,
+  hasNext: boolean
 ) => {
   const rows = items
     .map((item) => {
@@ -427,6 +448,15 @@ const buildAdminHtml = (
     .join("");
 
   const statusHidden = activeTab !== "all" ? `<input type="hidden" name="status" value="${activeTab}" />` : "";
+  const baseParams = [
+    activeTab !== "all" ? `status=${encodeURIComponent(activeTab)}` : "",
+    searchValue ? `q=${encodeURIComponent(searchValue)}` : ""
+  ].filter(Boolean);
+  const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
+  const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
+  const prevHref = hasPrev ? `/admin?${prevParams}` : "#";
+  const nextHref = hasNext ? `/admin?${nextParams}` : "#";
+
   const body = `
     <div class="title-row">
       <h1>Activities</h1>
@@ -461,6 +491,11 @@ const buildAdminHtml = (
         </tbody>
       </table>
     </div>
+    <div class="pagination">
+      <a class="page-link ${hasPrev ? "" : "disabled"}" href="${prevHref}">Prev</a>
+      <span class="page-info">Page ${page}</span>
+      <a class="page-link ${hasNext ? "" : "disabled"}" href="${nextHref}">Next</a>
+    </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, activeTab);
 };
@@ -476,7 +511,10 @@ const buildAdminAllHtml = (
     pin_code: string | null;
     rarity_code: string | null;
   }>,
-  searchValue: string
+  searchValue: string,
+  page: number,
+  hasPrev: boolean,
+  hasNext: boolean
 ) => {
   const rows = items
     .map((item) => {
@@ -509,6 +547,12 @@ const buildAdminAllHtml = (
     })
     .join("");
 
+  const baseParams = [searchValue ? `q=${encodeURIComponent(searchValue)}` : ""].filter(Boolean);
+  const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
+  const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
+  const prevHref = hasPrev ? `/admin/all?${prevParams}` : "#";
+  const nextHref = hasNext ? `/admin/all?${nextParams}` : "#";
+
   const body = `
     <div class="title-row">
       <h1>All IRISes</h1>
@@ -536,6 +580,11 @@ const buildAdminAllHtml = (
           ${rows || "<tr><td colspan='9'>No records</td></tr>"}
         </tbody>
       </table>
+    </div>
+    <div class="pagination">
+      <a class="page-link ${hasPrev ? "" : "disabled"}" href="${prevHref}">Prev</a>
+      <span class="page-info">Page ${page}</span>
+      <a class="page-link ${hasNext ? "" : "disabled"}" href="${nextHref}">Next</a>
     </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, "all-iris");
@@ -1419,7 +1468,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const query = req.query as { status?: string; q?: string };
+    const query = req.query as { status?: string; q?: string; page?: string };
     const statusParam = query.status?.toLowerCase() ?? "all";
     const statuses: ArtworkStatus[] =
       statusParam === "activated"
@@ -1441,18 +1490,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
       ];
     }
 
+    const page = Math.max(1, Number(query.page ?? 1));
+    const take = 20;
+    const skip = (page - 1) * take;
+
     const items = await prisma.artwork.findMany({
       where,
       orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-      take: 500
+      skip,
+      take: take + 1
     });
+
+    const hasNext = items.length > take;
+    const slice = hasNext ? items.slice(0, take) : items;
+    const hasPrev = page > 1;
 
     reply
       .code(200)
       .type("text/html; charset=utf-8")
       .send(
         buildAdminHtml(
-          items.map((item) => ({
+          slice.map((item) => ({
             iris_id: item.iris_id,
             status: item.status,
             assigned_order_id: item.assigned_order_id,
@@ -1463,7 +1521,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
             pin_code: item.pin_code
           })),
           q ?? "",
-          statusParam
+          statusParam,
+          page,
+          hasPrev,
+          hasNext
         )
       );
   });
@@ -1471,9 +1532,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin/all", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const query = req.query as { q?: string };
+    const query = req.query as { q?: string; page?: string };
     const q = query.q?.trim();
-    const where: Prisma.ArtworkWhereInput = {};
+    const where: Prisma.ArtworkWhereInput = {
+      status: { in: ["assigned", "activated", "shopify_failed"] }
+    };
 
     if (q) {
       where.OR = [
@@ -1483,17 +1546,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
       ];
     }
 
+    const page = Math.max(1, Number(query.page ?? 1));
+    const take = 20;
+    const skip = (page - 1) * take;
+
     const items = await prisma.artwork.findMany({
       where,
-      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }]
+      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+      skip,
+      take: take + 1
     });
+
+    const hasNext = items.length > take;
+    const slice = hasNext ? items.slice(0, take) : items;
+    const hasPrev = page > 1;
 
     reply
       .code(200)
       .type("text/html; charset=utf-8")
       .send(
         buildAdminAllHtml(
-          items.map((item) => ({
+          slice.map((item) => ({
             iris_id: item.iris_id,
             status: item.status,
             assigned_order_id: item.assigned_order_id,
@@ -1503,7 +1576,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
             pin_code: item.pin_code,
             rarity_code: item.rarity_code
           })),
-          q ?? ""
+          q ?? "",
+          page,
+          hasPrev,
+          hasNext
         )
       );
   });
