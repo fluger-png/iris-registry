@@ -405,8 +405,7 @@ const buildAdminHtml = (
     status: string;
     assigned_order_id: string | null;
     assigned_customer_email: string | null;
-    owner_email: string | null;
-    activated_at: Date | null;
+    order_date: Date | null;
     image_url: string | null;
     pin_code: string | null;
   }>,
@@ -427,9 +426,8 @@ const buildAdminHtml = (
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.assigned_customer_email ?? "-"}</td>
-          <td>${item.owner_email ?? "-"}</td>
           <td>${item.assigned_order_id ?? "-"}</td>
-          <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
+          <td>${item.order_date ? formatDate(item.order_date) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
           <td>${imageCell}</td>
           <td>
@@ -478,9 +476,8 @@ const buildAdminHtml = (
             <th>IRIS ID</th>
             <th>Status</th>
             <th>Customer Email</th>
-            <th>Owner Email</th>
             <th>Order Number</th>
-            <th>Activated At</th>
+            <th>Order Date</th>
             <th>PIN</th>
             <th>Image</th>
             <th>Upload</th>
@@ -504,7 +501,6 @@ const buildAdminAllHtml = (
   items: Array<{
     iris_id: string;
     status: string;
-    assigned_order_id: string | null;
     owner_email: string | null;
     activated_at: Date | null;
     image_url: string | null;
@@ -512,6 +508,7 @@ const buildAdminAllHtml = (
     rarity_code: string | null;
   }>,
   searchValue: string,
+  statusParam: string,
   page: number,
   hasPrev: boolean,
   hasNext: boolean
@@ -527,7 +524,6 @@ const buildAdminAllHtml = (
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.owner_email ?? "-"}</td>
-          <td>${item.assigned_order_id ?? "-"}</td>
           <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
           <td>${item.rarity_code ?? "-"}</td>
@@ -547,7 +543,11 @@ const buildAdminAllHtml = (
     })
     .join("");
 
-  const baseParams = [searchValue ? `q=${encodeURIComponent(searchValue)}` : ""].filter(Boolean);
+  const statusHidden = statusParam !== "all" ? `<input type="hidden" name="status" value="${statusParam}" />` : "";
+  const baseParams = [
+    statusParam !== "all" ? `status=${encodeURIComponent(statusParam)}` : "",
+    searchValue ? `q=${encodeURIComponent(searchValue)}` : ""
+  ].filter(Boolean);
   const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
   const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
   const prevHref = hasPrev ? `/admin/all?${prevParams}` : "#";
@@ -557,9 +557,15 @@ const buildAdminAllHtml = (
     <div class="title-row">
       <h1>All IRISes</h1>
       <form class="search" method="GET" action="/admin/all">
+        ${statusHidden}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
       </form>
+    </div>
+    <div class="tabs">
+      <a class="tab ${statusParam === "all" ? "active" : ""}" href="/admin/all">All</a>
+      <a class="tab ${statusParam === "activated" ? "active" : ""}" href="/admin/all?status=activated">Activated</a>
+      <a class="tab ${statusParam === "unactivated" ? "active" : ""}" href="/admin/all?status=unactivated">Unactivated</a>
     </div>
     <div class="card table">
       <table>
@@ -568,7 +574,6 @@ const buildAdminAllHtml = (
             <th>IRIS ID</th>
             <th>Status</th>
             <th>Owner Email</th>
-            <th>Order Number</th>
             <th>Activated At</th>
             <th>PIN</th>
             <th>Rarity</th>
@@ -1501,6 +1506,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
       take: take + 1
     });
 
+    const orderEvents = await prisma.event.findMany({
+      where: { iris_id: { in: items.map((i) => i.iris_id) }, type: "assigned" },
+      orderBy: { created_at: "desc" }
+    });
+    const orderDateById = new Map<string, Date>();
+    for (const ev of orderEvents) {
+      if (!orderDateById.has(ev.iris_id)) {
+        orderDateById.set(ev.iris_id, ev.created_at);
+      }
+    }
+
     const hasNext = items.length > take;
     const slice = hasNext ? items.slice(0, take) : items;
     const hasPrev = page > 1;
@@ -1515,8 +1531,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             status: item.status,
             assigned_order_id: item.assigned_order_id,
             assigned_customer_email: item.assigned_customer_email,
-            owner_email: item.owner_email,
-            activated_at: item.activated_at,
+            order_date: orderDateById.get(item.iris_id) ?? null,
             image_url: item.image_url,
             pin_code: item.pin_code
           })),
@@ -1532,10 +1547,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin/all", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const query = req.query as { q?: string; page?: string };
+    const query = req.query as { q?: string; page?: string; status?: string };
     const q = query.q?.trim();
+    const statusParam = query.status?.toLowerCase() ?? "all";
+    const statuses: ArtworkStatus[] =
+      statusParam === "activated"
+        ? ["activated"]
+        : statusParam === "unactivated"
+          ? ["assigned", "shopify_failed"]
+          : ["assigned", "activated", "shopify_failed"];
     const where: Prisma.ArtworkWhereInput = {
-      status: { in: ["assigned", "activated", "shopify_failed"] }
+      status: { in: statuses }
     };
 
     if (q) {
@@ -1569,7 +1591,6 @@ export const createServer = async (): Promise<FastifyInstance> => {
           slice.map((item) => ({
             iris_id: item.iris_id,
             status: item.status,
-            assigned_order_id: item.assigned_order_id,
             owner_email: item.owner_email,
             activated_at: item.activated_at,
             image_url: item.image_url,
@@ -1577,6 +1598,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             rarity_code: item.rarity_code
           })),
           q ?? "",
+          statusParam,
           page,
           hasPrev,
           hasNext
