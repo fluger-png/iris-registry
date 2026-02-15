@@ -80,6 +80,12 @@ const statusPill = (status: string) => {
 };
 
 const buildAdminShell = (title: string, body: string, _searchValue: string, activeTab: string) => {
+  const activitiesActive =
+    activeTab === "activities" ||
+    activeTab === "all" ||
+    activeTab === "activated" ||
+    activeTab === "unactivated";
+  const allActive = activeTab === "all-iris";
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -325,8 +331,8 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           </div>
           <h2>Admin Dashboard</h2>
           <div class="nav">
-            <a class="active" href="/admin">Activities</a>
-            <a href="/admin">All IRISes (Soon)</a>
+            <a class="${activitiesActive ? "active" : ""}" href="/admin">Activities</a>
+            <a class="${allActive ? "active" : ""}" href="/admin/all">All IRISes</a>
             <a href="/admin/logout">Log Out</a>
           </div>
         </aside>
@@ -457,6 +463,82 @@ const buildAdminHtml = (
     </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, activeTab);
+};
+
+const buildAdminAllHtml = (
+  items: Array<{
+    iris_id: string;
+    status: string;
+    assigned_order_id: string | null;
+    owner_email: string | null;
+    activated_at: Date | null;
+    image_url: string | null;
+    pin_code: string | null;
+    rarity_code: string | null;
+  }>,
+  searchValue: string
+) => {
+  const rows = items
+    .map((item) => {
+      const imageCell = item.image_url
+        ? `<img class="thumb" src="${item.image_url}" alt="${item.iris_id}" />`
+        : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#94A3B8;">—</div>`;
+      const fileId = `file-${item.iris_id}`;
+      return `
+        <tr>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
+          <td>${statusPill(item.status)}</td>
+          <td>${item.owner_email ?? "-"}</td>
+          <td>${item.assigned_order_id ?? "-"}</td>
+          <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
+          <td>${item.pin_code ?? "-"}</td>
+          <td>${item.rarity_code ?? "-"}</td>
+          <td>${imageCell}</td>
+          <td>
+            <form class="upload-form" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
+              <input type="hidden" name="iris_id" value="${item.iris_id}" />
+              <input class="file-input" id="${fileId}" type="file" name="image" accept="image/*" required />
+              <label class="file-link" for="${fileId}">Choose File</label>
+              <span class="file-name" data-file-name hidden></span>
+              <button class="file-clear" type="button" data-file-clear hidden>×</button>
+              <button class="btn primary" type="submit" data-upload-btn hidden>Upload</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const body = `
+    <div class="title-row">
+      <h1>All IRISes</h1>
+      <form class="search" method="GET" action="/admin/all">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
+        <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
+      </form>
+    </div>
+    <div class="card table">
+      <table>
+        <thead>
+          <tr>
+            <th>IRIS ID</th>
+            <th>Status</th>
+            <th>Owner Email</th>
+            <th>Order Number</th>
+            <th>Activated At</th>
+            <th>PIN</th>
+            <th>Rarity</th>
+            <th>Image</th>
+            <th>Upload</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || "<tr><td colspan='9'>No records</td></tr>"}
+        </tbody>
+      </table>
+    </div>
+  `;
+  return buildAdminShell("IRIS Admin", body, searchValue, "all-iris");
 };
 
 const buildAdminDetailHtml = (item: {
@@ -1382,6 +1464,46 @@ export const createServer = async (): Promise<FastifyInstance> => {
           })),
           q ?? "",
           statusParam
+        )
+      );
+  });
+
+  app.get("/admin/all", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const query = req.query as { q?: string };
+    const q = query.q?.trim();
+    const where: Prisma.ArtworkWhereInput = {};
+
+    if (q) {
+      where.OR = [
+        { iris_id: { contains: q, mode: "insensitive" } },
+        { assigned_order_id: { contains: q, mode: "insensitive" } },
+        { owner_email: { contains: q, mode: "insensitive" } }
+      ];
+    }
+
+    const items = await prisma.artwork.findMany({
+      where,
+      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }]
+    });
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildAdminAllHtml(
+          items.map((item) => ({
+            iris_id: item.iris_id,
+            status: item.status,
+            assigned_order_id: item.assigned_order_id,
+            owner_email: item.owner_email,
+            activated_at: item.activated_at,
+            image_url: item.image_url,
+            pin_code: item.pin_code,
+            rarity_code: item.rarity_code
+          })),
+          q ?? ""
         )
       );
   });
