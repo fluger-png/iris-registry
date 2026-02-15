@@ -1253,8 +1253,23 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.post("/apps/iris/activate-verify", handleActivateVerify);
 
   app.get("/apps/iris/seen-archive", async (req, reply) => {
-    const query = req.query as { limit?: string; cursor?: string };
+    const query = req.query as { limit?: string; cursor?: string; rarity?: string };
     const limit = parseLimit(query.limit, 20);
+
+    const rarityParam = query.rarity?.trim();
+    const rarityKey = rarityParam ? rarityParam.toLowerCase().replace(/\s+/g, " ") : "";
+    const rarityMap: Record<string, string> = {
+      common: "Common",
+      uncommon: "Uncommon",
+      rare: "Rare",
+      "ultra rare": "Ultra Rare",
+      "artist edition": "Artist Edition"
+    };
+    const rarityCode = rarityKey && rarityKey !== "all" ? rarityMap[rarityKey] : null;
+    if (rarityKey && rarityKey !== "all" && !rarityCode) {
+      reply.code(400).send({ error: "invalid_rarity" });
+      return;
+    }
 
     let cursorFilter = {};
     if (query.cursor) {
@@ -1277,6 +1292,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       where: {
         status: "activated",
         activated_at: { not: null },
+        ...(rarityCode ? { rarity_code: rarityCode } : {}),
         ...cursorFilter
       },
       orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }],
