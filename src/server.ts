@@ -12,6 +12,8 @@ import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
+const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+let goldCache: { price: number; ts: number } | null = null;
 
 const parseLimit = (value: unknown, fallback: number): number => {
   const parsed = Number(value);
@@ -1387,6 +1389,44 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const root = (latest?.payload_json as any)?.root ?? "pending";
     const html = publicProofHtmlTemplate.replace("{{ROOT}}", root);
     reply.code(200).type("text/html; charset=utf-8").send(html);
+  });
+
+  app.get("/apps/iris/gold-price", async (_req, reply) => {
+    if (!env.goldApiKey) {
+      sendJson(reply, 503, { error: "gold_api_key_missing" });
+      return;
+    }
+
+    const now = Date.now();
+    if (goldCache && now - goldCache.ts < GOLD_CACHE_TTL_MS) {
+      sendJson(reply, 200, { price_usd_g: goldCache.price, updated_at: new Date(goldCache.ts).toISOString() });
+      return;
+    }
+
+    try {
+      const res = await fetch("https://www.goldapi.io/api/XAU/USD", {
+        headers: {
+          "x-access-token": env.goldApiKey,
+          "Content-Type": "application/json"
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`goldapi_bad_status_${res.status}`);
+      }
+      const data = (await res.json()) as { price_gram_24k?: number; price?: number };
+      let perGram = data.price_gram_24k;
+      if (!perGram && data.price) {
+        perGram = data.price / 31.1034768;
+      }
+      if (!perGram || !Number.isFinite(perGram)) {
+        throw new Error("goldapi_missing_price");
+      }
+      goldCache = { price: perGram, ts: now };
+      sendJson(reply, 200, { price_usd_g: perGram, updated_at: new Date(now).toISOString() });
+    } catch (err) {
+      app.log.error({ err }, "Gold API fetch failed");
+      sendJson(reply, 502, { error: "gold_api_failed" });
+    }
   });
 
   app.get("/apps/iris/proof/:irisId", async (req, reply) => {
