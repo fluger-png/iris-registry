@@ -1236,7 +1236,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     sendJson(reply, 200, {
       iris_id: item.iris_id,
       image_url: item.image_url,
-      rarity_code: tokenOk ? item.rarity_code : null,
+      rarity_code: item.rarity_code,
       activated_at: item.activated_at,
       status: item.status,
       proof_url: proofPath
