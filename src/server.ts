@@ -729,10 +729,10 @@ const buildActivationLogsHtml = (
   const displayId = item.iris_id.toUpperCase().startsWith("IRIS-")
     ? item.iris_id.replace(/^IRIS-/i, "#")
     : item.iris_id;
-  const activationToken = item.activation_token ? item.activation_token : null;
-  const activationLink = activationToken
-    ? `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}-${activationToken}`
-    : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
+    const activationToken = item.activation_token ? item.activation_token : null;
+    const activationLink = activationToken
+      ? `${env.baseStorefrontUrl}/pages/activate?token=${activationToken}`
+      : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
   const imageBox = item.image_url
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
     : `<div class="muted">Upload Image</div>`;
@@ -775,7 +775,7 @@ const buildActivationLogsHtml = (
           <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
         </dl>
         <div style="margin-top:16px;">
-          <a class="btn primary" href="/admin">Back to the list</a>
+          <a class="btn primary" href="/admin">Back</a>
         </div>
       </div>
       <div>
@@ -1298,7 +1298,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const pin = body?.pin?.trim();
     const email = body?.email?.trim().toLowerCase();
 
-    if (!irisId || !pin || !email) {
+    if ((!irisId && !token) || !pin || !email) {
       sendJson(reply, 400, { error: "missing_required_fields" });
       return;
     }
@@ -1307,7 +1307,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const LOCK_MINUTES = 60;
 
     try {
-      const artwork = await prisma.artwork.findUnique({ where: { iris_id: irisId } });
+      let artwork = irisId ? await prisma.artwork.findUnique({ where: { iris_id: irisId } }) : null;
+      if (!artwork && token) {
+        artwork = await prisma.artwork.findUnique({ where: { activation_token: token } });
+        if (artwork) {
+          irisId = artwork.iris_id;
+        }
+      }
       if (!artwork) {
         sendJson(reply, 404, { error: "iris_not_found" });
         return;
@@ -1439,6 +1445,24 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/apps/iris/activate-verify", redirectToActivatePage);
   app.post("/activate-verify", handleActivateVerify);
   app.post("/apps/iris/activate-verify", handleActivateVerify);
+
+  app.get("/apps/iris/activation-info", async (req, reply) => {
+    const query = req.query as { token?: string };
+    const token = query?.token?.trim();
+    if (!token) {
+      reply.code(400).send({ error: "missing_token" });
+      return;
+    }
+    const artwork = await prisma.artwork.findUnique({
+      where: { activation_token: token },
+      select: { iris_id: true }
+    });
+    if (!artwork) {
+      reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    reply.send({ iris_id: artwork.iris_id });
+  });
 
   app.get("/apps/iris/seen-archive", async (req, reply) => {
     const query = req.query as { limit?: string; cursor?: string; rarity?: string };
