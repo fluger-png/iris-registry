@@ -1,11 +1,11 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
-import formbody from "@fastify/formbody";
 import multipart from "@fastify/multipart";
 import { Prisma, ArtworkStatus } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import path from "node:path";
+import querystring from "node:querystring";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseReservationTokens, verifyShopifyHmac } from "./utils.js";
@@ -831,7 +831,6 @@ export const createServer = async (): Promise<FastifyInstance> => {
     reply.code(status).type("application/json; charset=utf-8").send(payload);
 
   await app.register(cors, { origin: true });
-  await app.register(formbody);
   await app.register(multipart, {
     limits: { fileSize: 10 * 1024 * 1024 }
   });
@@ -851,6 +850,16 @@ export const createServer = async (): Promise<FastifyInstance> => {
       } catch (error) {
         done(error as Error, undefined);
       }
+    }
+  );
+
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "buffer" },
+    (req, body, done) => {
+      req.rawBody = body as Buffer;
+      const text = body ? (body as Buffer).toString("utf8") : "";
+      done(null, querystring.parse(text));
     }
   );
 
