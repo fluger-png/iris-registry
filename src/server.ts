@@ -43,6 +43,16 @@ const formatDate = (value: Date): string => {
   return `${mm}.${dd}.${yy}`;
 };
 
+const formatDateTime = (value: Date): string => {
+  const d = new Date(value);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const min = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${mm}.${dd}.${yy} ${hh}:${min}`;
+};
+
 const publicProofHtmlTemplate = (() => {
   const distPath = path.join(process.cwd(), "dist", "verify.html");
   const srcPath = path.join(process.cwd(), "src", "verify.html");
@@ -82,6 +92,17 @@ const statusPill = (status: string) => {
   return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
 };
 
+const activationPill = (type: string) => {
+  const key = type.toLowerCase();
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    activated: { bg: "#DAFFE9", fg: "#33CC70", label: "Success" },
+    activation_failed: { bg: "#FFF4D6", fg: "#D9822B", label: "Failed" },
+    activation_blocked: { bg: "#FEE2E2", fg: "#991B1B", label: "Blocked" }
+  };
+  const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: type };
+  return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
+};
+
 const buildAdminShell = (title: string, body: string, _searchValue: string, activeTab: string) => {
   const activitiesActive =
     activeTab === "activities" ||
@@ -89,6 +110,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
     activeTab === "activated" ||
     activeTab === "unactivated";
   const allActive = activeTab === "all-iris";
+  const logsActive = activeTab === "activation-logs";
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -354,6 +376,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           <div class="nav">
             <a class="${activitiesActive ? "active" : ""}" href="/admin">Activities</a>
             <a class="${allActive ? "active" : ""}" href="/admin/all">All IRISes</a>
+            <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
             <a href="/admin/logout">Log Out</a>
           </div>
         </aside>
@@ -599,6 +622,55 @@ const buildAdminAllHtml = (
     </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, "all-iris");
+};
+
+const buildActivationLogsHtml = (
+  items: Array<{ iris_id: string; type: string; created_at: Date }>,
+  page: number,
+  hasPrev: boolean,
+  hasNext: boolean
+) => {
+  const rows = items
+    .map((item) => {
+      return `
+        <tr>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
+          <td>${formatDateTime(item.created_at)}</td>
+          <td>${activationPill(item.type)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const prevHref = hasPrev ? `/admin/activation-logs?page=${page - 1}` : "#";
+  const nextHref = hasNext ? `/admin/activation-logs?page=${page + 1}` : "#";
+
+  const body = `
+    <div class="title-row">
+      <h1>Activation Logs</h1>
+    </div>
+    <div class="card table">
+      <table>
+        <thead>
+          <tr>
+            <th>IRIS ID</th>
+            <th>Date &amp; Time</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || "<tr><td colspan='3'>No records</td></tr>"}
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <a class="page-link ${hasPrev ? "" : "disabled"}" href="${prevHref}">Prev</a>
+      <span class="page-info">Page ${page}</span>
+      <a class="page-link ${hasNext ? "" : "disabled"}" href="${nextHref}">Next</a>
+    </div>
+  `;
+
+  return buildAdminShell("IRIS Admin", body, "", "activation-logs");
 };
 
 const buildAdminDetailHtml = (item: {
@@ -1170,7 +1242,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
 
-    const MAX_ATTEMPTS = 5;
+    const MAX_ATTEMPTS = 4;
     const LOCK_MINUTES = 60;
 
     try {
@@ -1196,6 +1268,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
 
       if (artwork.pin_locked_until && artwork.pin_locked_until > new Date()) {
+        await prisma.event.create({
+          data: {
+            iris_id: irisId,
+            type: "activation_blocked",
+            actor: email,
+            payload_json: {
+              reason: "locked_until",
+              locked_until: artwork.pin_locked_until
+            }
+          }
+        });
         sendJson(reply, 429, { error: "too_many_attempts", retry_at: artwork.pin_locked_until });
         return;
       }
@@ -1218,10 +1301,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
           await tx.event.create({
             data: {
               iris_id: irisId,
-              type: "activation_failed",
+              type: lockUntil ? "activation_blocked" : "activation_failed",
               actor: email,
               payload_json: {
-                reason: "invalid_pin",
+                reason: lockUntil ? "max_attempts" : "invalid_pin",
                 attempts: nextAttempts,
                 locked_until: lockUntil
               }
@@ -1229,7 +1312,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
           });
         });
 
-        sendJson(reply, 401, { error: "invalid_pin" });
+        if (lockUntil) {
+          sendJson(reply, 429, { error: "too_many_attempts", retry_at: lockUntil });
+        } else {
+          sendJson(reply, 401, { error: "invalid_pin" });
+        }
         return;
       }
 
@@ -1680,6 +1767,41 @@ export const createServer = async (): Promise<FastifyInstance> => {
           })),
           q ?? "",
           statusParam,
+          page,
+          hasPrev,
+          hasNext
+        )
+      );
+  });
+
+  app.get("/admin/activation-logs", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const page = Math.max(1, Number((req.query as { page?: string })?.page ?? 1));
+    const take = 20;
+    const skip = (page - 1) * take;
+
+    const items = await prisma.event.findMany({
+      where: { type: { in: ["activated", "activation_failed", "activation_blocked"] } },
+      orderBy: { created_at: "desc" },
+      skip,
+      take: take + 1
+    });
+
+    const hasNext = items.length > take;
+    const slice = hasNext ? items.slice(0, take) : items;
+    const hasPrev = page > 1;
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildActivationLogsHtml(
+          slice.map((item) => ({
+            iris_id: item.iris_id,
+            type: item.type,
+            created_at: item.created_at
+          })),
           page,
           hasPrev,
           hasNext
