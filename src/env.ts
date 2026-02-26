@@ -15,6 +15,7 @@ export const env = {
   shopifyWebhookSecret: required("SHOPIFY_WEBHOOK_SECRET"),
   port: Number(process.env.PORT ?? 3000),
   baseUrl: process.env.BASE_URL ?? "http://localhost:3000",
+  baseStorefrontUrl: process.env.STOREFRONT_URL ?? "https://irisnyc.store",
   reservationTtlMinutes: Number(process.env.RESERVATION_TTL_MINUTES ?? 20),
   releaseIntervalMinutes: Number(process.env.RELEASE_INTERVAL_MINUTES ?? 2),
   adminBasicUser: required("ADMIN_BASIC_USER"),

@@ -35,6 +35,8 @@ const r2 = new S3Client({
 
 const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
 
+const generateActivationToken = (): string => crypto.randomBytes(16).toString("hex");
+
 const formatDate = (value: Date): string => {
   const d = new Date(value);
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -309,6 +311,26 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           line-height:1;
         }
         .upload-form{ display:flex; gap:10px; align-items:center; flex-wrap:nowrap; }
+        .copy-row{
+          display:flex;
+          align-items:center;
+          gap:8px;
+          flex-wrap:wrap;
+        }
+        .copy-input{
+          width:min(420px, 100%);
+          padding:6px 8px;
+          border:1px solid var(--line);
+          border-radius:8px;
+          font-size:12px;
+          color:var(--ink);
+        }
+        .copy-btn{
+          width:auto;
+          height:auto;
+          padding:6px 10px;
+          line-height:1;
+        }
         .btn{
           width:80px;
           height:20px;
@@ -418,6 +440,23 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
               update();
             });
             update();
+          });
+
+          document.querySelectorAll('[data-copy-link]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              var text = btn.getAttribute('data-copy-link') || '';
+              if (!text) return;
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text);
+              } else {
+                var temp = document.createElement('textarea');
+                temp.value = text;
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                document.body.removeChild(temp);
+              }
+            });
           });
         })();
       </script>
@@ -673,7 +712,7 @@ const buildActivationLogsHtml = (
   return buildAdminShell("IRIS Admin", body, "", "activation-logs");
 };
 
-const buildAdminDetailHtml = (item: {
+  const buildAdminDetailHtml = (item: {
   iris_id: string;
   status: string;
   rarity_code: string | null;
@@ -685,10 +724,15 @@ const buildAdminDetailHtml = (item: {
   created_at: Date;
   image_url: string | null;
   pin_code: string | null;
+  activation_token: string | null;
 }) => {
   const displayId = item.iris_id.toUpperCase().startsWith("IRIS-")
     ? item.iris_id.replace(/^IRIS-/i, "#")
     : item.iris_id;
+  const activationToken = item.activation_token ? item.activation_token : null;
+  const activationLink = activationToken
+    ? `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}-${activationToken}`
+    : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
   const imageBox = item.image_url
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
     : `<div class="muted">Upload Image</div>`;
@@ -715,6 +759,15 @@ const buildAdminDetailHtml = (item: {
           </dd>
           <dt>Rarity</dt><dd>${item.rarity_code ?? "-"}</dd>
           <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
+          <dt>Activation Link</dt>
+          <dd>
+            <div class="copy-row">
+              <input class="copy-input" type="text" readonly value="${activationLink}" />
+              <button class="btn secondary copy-btn" type="button" data-copy-link="${activationLink}" aria-label="Copy activation link">
+                Copy link
+              </button>
+            </div>
+          </dd>
           <dt>Order Number</dt><dd>${item.assigned_order_id ?? "-"}</dd>
           <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
           <dt>Activation Date</dt><dd>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</dd>
@@ -1080,6 +1133,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         });
 
         const pinCode = artwork?.pin_code ?? generatePin();
+        const activationToken = artwork?.activation_token ?? generateActivationToken();
         generatedPin = artwork?.pin_code ? null : pinCode;
 
         await tx.artwork.update({
@@ -1090,6 +1144,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             assigned_customer_email: customerEmail,
             pin_code: pinCode,
             pin_last4: pinCode.slice(-4),
+            activation_token: activationToken,
             pin_attempts: 0,
             pin_locked_until: null
           }
@@ -1232,8 +1287,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   const handleActivateVerify = async (req: any, reply: any) => {
-    const body = req.body as { iris_id?: string; pin?: string; email?: string };
-    const irisId = body?.iris_id?.toUpperCase().trim();
+    const body = req.body as { iris_id?: string; pin?: string; email?: string; token?: string };
+    let irisId = body?.iris_id?.toUpperCase().trim() ?? "";
+    let token = body?.token?.trim() ?? "";
+    const tokenMatch = irisId.match(/^IRIS-\d{4}-(.+)$/i);
+    if (tokenMatch) {
+      irisId = irisId.slice(0, 9);
+      if (!token) token = tokenMatch[1];
+    }
     const pin = body?.pin?.trim();
     const email = body?.email?.trim().toLowerCase();
 
@@ -1265,6 +1326,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
       if (!artwork.pin_code) {
         sendJson(reply, 409, { error: "pin_not_set" });
         return;
+      }
+
+      if (artwork.activation_token) {
+        if (!token || token !== artwork.activation_token) {
+          sendJson(reply, 403, { error: "invalid_activation_link" });
+          return;
+        }
       }
 
       if (artwork.pin_locked_until && artwork.pin_locked_until > new Date()) {
@@ -1827,12 +1895,18 @@ export const createServer = async (): Promise<FastifyInstance> => {
       reply.code(400).send("Invalid iris_id");
       return;
     }
-    const item = await prisma.artwork.findUnique({
+    let item = await prisma.artwork.findUnique({
       where: { iris_id: irisId }
     });
     if (!item) {
       reply.code(404).send("Not found");
       return;
+    }
+    if (!item.activation_token) {
+      item = await prisma.artwork.update({
+        where: { iris_id: irisId },
+        data: { activation_token: generateActivationToken() }
+      });
     }
 
     reply
@@ -1850,7 +1924,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
           activated_at: item.activated_at,
           created_at: item.created_at,
           image_url: item.image_url,
-          pin_code: item.pin_code
+          pin_code: item.pin_code,
+          activation_token: item.activation_token
         })
       );
   });
