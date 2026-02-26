@@ -1778,10 +1778,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
     const weightRaw = body.weight_grams?.trim();
-    const weight = weightRaw ? Number(weightRaw) : null;
-    if (weightRaw && (!Number.isFinite(weight) || weight < 0)) {
-      reply.code(400).send("Invalid weight");
-      return;
+    let weight: number | null = null;
+    if (weightRaw) {
+      const parsed = Number(weightRaw);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        reply.code(400).send("Invalid weight");
+        return;
+      }
+      weight = parsed;
     }
     await prisma.artwork.update({
       where: { iris_id: irisId },
