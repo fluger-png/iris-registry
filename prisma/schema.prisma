@@ -28,6 +28,7 @@ model Artwork {
   rarity_proof            Json?
   proof_token             String?         @unique
   image_url               String?
+  weight_grams            Float?
   pin_code                String?
   pin_last4               String?
   pin_attempts            Int?            @default(0)

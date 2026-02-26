@@ -507,6 +507,7 @@ const buildAdminAllHtml = (
     activated_at: Date | null;
     image_url: string | null;
     pin_code: string | null;
+    weight_grams: number | null;
     rarity_code: string | null;
   }>,
   searchValue: string,
@@ -528,6 +529,7 @@ const buildAdminAllHtml = (
           <td>${item.owner_email ?? "-"}</td>
           <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
+          <td>${item.weight_grams != null ? item.weight_grams.toFixed(2) : "-"}</td>
           <td>${item.rarity_code ?? "-"}</td>
           <td>${imageCell}</td>
           <td>
@@ -578,6 +580,7 @@ const buildAdminAllHtml = (
             <th>Owner Email</th>
             <th>Activated At</th>
             <th>PIN</th>
+            <th>Weight (g)</th>
             <th>Rarity</th>
             <th>Image</th>
             <th>Upload</th>
@@ -601,6 +604,7 @@ const buildAdminDetailHtml = (item: {
   iris_id: string;
   status: string;
   rarity_code: string | null;
+  weight_grams: number | null;
   assigned_order_id: string | null;
   assigned_customer_email: string | null;
   owner_email: string | null;
@@ -628,6 +632,14 @@ const buildAdminDetailHtml = (item: {
         <h2>IRIS ${displayId}</h2>
         <dl>
           <dt>Status</dt><dd>${statusPill(item.status)}</dd>
+          <dt>Weight (g)</dt>
+          <dd>
+            <form method="POST" action="/admin/iris/weight" style="display:flex;gap:8px;align-items:center;">
+              <input type="hidden" name="iris_id" value="${item.iris_id}" />
+              <input name="weight_grams" type="number" step="0.01" min="0" value="${item.weight_grams ?? ""}" style="width:120px;padding:6px 8px;border:1px solid #e5e7eb;border-radius:8px;" />
+              <button class="btn secondary" type="submit">Save</button>
+            </form>
+          </dd>
           <dt>Rarity</dt><dd>${item.rarity_code ?? "-"}</dd>
           <dt>Pin</dt><dd>${item.pin_code ?? "-"}</dd>
           <dt>Order Number</dt><dd>${item.assigned_order_id ?? "-"}</dd>
@@ -1391,6 +1403,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       iris_id: item.iris_id,
       image_url: item.image_url,
       rarity_code: item.rarity_code,
+      weight_grams: item.weight_grams,
       activated_at: item.activated_at,
       status: item.status,
       proof_url: proofPath
@@ -1651,6 +1664,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             activated_at: item.activated_at,
             image_url: item.image_url,
             pin_code: item.pin_code,
+            weight_grams: item.weight_grams,
             rarity_code: item.rarity_code
           })),
           q ?? "",
@@ -1686,6 +1700,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           iris_id: item.iris_id,
           status: item.status,
           rarity_code: item.rarity_code,
+          weight_grams: item.weight_grams,
           assigned_order_id: item.assigned_order_id,
           assigned_customer_email: item.assigned_customer_email,
           owner_email: item.owner_email,
@@ -1752,6 +1767,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
     });
 
     reply.redirect(303, "/admin");
+  });
+
+  app.post("/admin/iris/weight", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+    const body = req.body as { iris_id?: string; weight_grams?: string };
+    const irisId = body.iris_id ? sanitizeIrisId(body.iris_id) : "";
+    if (!irisId) {
+      reply.code(400).send("Missing iris_id");
+      return;
+    }
+    const weightRaw = body.weight_grams?.trim();
+    const weight = weightRaw ? Number(weightRaw) : null;
+    if (weightRaw && (!Number.isFinite(weight) || weight < 0)) {
+      reply.code(400).send("Invalid weight");
+      return;
+    }
+    await prisma.artwork.update({
+      where: { iris_id: irisId },
+      data: { weight_grams: weight }
+    });
+    reply.redirect(303, `/admin/iris/${encodeURIComponent(irisId)}`);
   });
 
   app.setErrorHandler((error, _req, reply) => {
