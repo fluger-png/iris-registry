@@ -1359,6 +1359,16 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
   };
 
+  const redirectToActivatePage = (req: any, reply: any) => {
+    const query = req.query as { iris?: string; iris_id?: string };
+    const irisRaw = query?.iris_id ?? query?.iris ?? "";
+    const irisId = irisRaw ? sanitizeIrisId(String(irisRaw)) : "";
+    const target = irisId ? `/pages/activate?iris=${encodeURIComponent(irisId)}` : "/pages/activate";
+    reply.redirect(302, target);
+  };
+
+  app.get("/activate-verify", redirectToActivatePage);
+  app.get("/apps/iris/activate-verify", redirectToActivatePage);
   app.post("/activate-verify", handleActivateVerify);
   app.post("/apps/iris/activate-verify", handleActivateVerify);
 
