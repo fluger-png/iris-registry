@@ -1470,6 +1470,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const rarityParam = query.rarity?.trim();
     const rarityKey = rarityParam ? rarityParam.toLowerCase().replace(/\s+/g, " ") : "";
+    const statusFilter: ArtworkStatus | null = rarityKey === "activated" ? "activated" : null;
     const rarityMap: Record<string, string> = {
       common: "Common",
       uncommon: "Uncommon",
@@ -1478,7 +1479,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       "artist edition": "Artist Edition"
     };
     const rarityCode = rarityKey && rarityKey !== "all" ? rarityMap[rarityKey] : null;
-    if (rarityKey && rarityKey !== "all" && !rarityCode) {
+    if (rarityKey && rarityKey !== "all" && !rarityCode && !statusFilter) {
       reply.code(400).send({ error: "invalid_rarity" });
       return;
     }
@@ -1500,15 +1501,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     }
 
+    const where: Prisma.ArtworkWhereInput = statusFilter
+      ? { status: "activated", activated_at: { not: null } }
+      : {
+          OR: [
+            { status: "activated", activated_at: { not: null } },
+            { status: "assigned", assigned_order_id: { not: null } }
+          ]
+        };
+    if (rarityCode) {
+      where.rarity_code = rarityCode;
+    }
+    Object.assign(where, cursorFilter);
+
     const items = await prisma.artwork.findMany({
-      where: {
-        OR: [
-          { status: "activated", activated_at: { not: null } },
-          { status: "assigned", assigned_order_id: { not: null } }
-        ],
-        ...(rarityCode ? { rarity_code: rarityCode } : {}),
-        ...cursorFilter
-      },
+      where,
       orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
       take: limit + 1
     });
@@ -1525,9 +1532,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
     sendJson(reply, 200, {
       items: slice.map((item) => ({
         iris_id: item.iris_id,
+        status: item.status,
         image_url: item.image_url,
         rarity_code: item.rarity_code,
-        activated_at: item.activated_at
+        activated_at: item.activated_at,
+        weight_grams: item.weight_grams
       })),
       nextCursor
     });
