@@ -1470,7 +1470,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const rarityParam = query.rarity?.trim();
     const rarityKey = rarityParam ? rarityParam.toLowerCase().replace(/\s+/g, " ") : "";
-    const statusFilter: ArtworkStatus | null = rarityKey === "activated" ? "activated" : null;
+    const statusFilter: ArtworkStatus | null = null;
     const rarityMap: Record<string, string> = {
       common: "Common",
       uncommon: "Uncommon",
@@ -1479,7 +1479,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       "artist edition": "Artist Edition"
     };
     const rarityCode = rarityKey && rarityKey !== "all" ? rarityMap[rarityKey] : null;
-    if (rarityKey && rarityKey !== "all" && !rarityCode && !statusFilter) {
+    if (rarityKey && rarityKey !== "all" && !rarityCode) {
       reply.code(400).send({ error: "invalid_rarity" });
       return;
     }
@@ -1501,17 +1501,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     }
 
-    const where: Prisma.ArtworkWhereInput = statusFilter
-      ? { status: "activated", activated_at: { not: null } }
-      : {
-          OR: [
-            { status: "activated", activated_at: { not: null } },
-            {
-              status: "assigned",
-              AND: [{ assigned_order_id: { not: null } }, { assigned_order_id: { not: "" } }]
-            }
-          ]
-        };
+    const where: Prisma.ArtworkWhereInput = { status: "activated", activated_at: { not: null } };
     if (rarityCode) {
       where.rarity_code = rarityCode;
     }
