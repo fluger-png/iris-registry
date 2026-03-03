@@ -1506,7 +1506,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       : {
           OR: [
             { status: "activated", activated_at: { not: null } },
-            { status: "assigned" }
+            { status: "assigned", assigned_order_id: { not: null } }
           ]
         };
     if (rarityCode) {
