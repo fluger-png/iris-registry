@@ -10,14 +10,14 @@ export const verifyShopifyHmac = (rawBody: Buffer, secret: string, receivedHmac:
   return crypto.timingSafeEqual(safeReceived, safeDigest);
 };
 
-export type Cursor = { activatedAt: string; irisId: string };
+export type Cursor = { sortAt: string; irisId: string };
 
 export const encodeCursor = (cursor: Cursor): string =>
   Buffer.from(JSON.stringify(cursor)).toString("base64url");
 
 export const decodeCursor = (value: string): Cursor => {
   const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Cursor;
-  if (!parsed?.activatedAt || !parsed?.irisId) {
+  if (!parsed?.sortAt || !parsed?.irisId) {
     throw new Error("Invalid cursor");
   }
   return parsed;
