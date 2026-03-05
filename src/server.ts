@@ -1436,7 +1436,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
     const artwork = await prisma.artwork.findUnique({
       where: { activation_token: token },
-      select: { iris_id: true, image_url: true }
+      select: {
+        iris_id: true,
+        image_url: true,
+        status: true,
+        activated_at: true,
+        rarity_code: true,
+        weight_grams: true
+      }
     });
     if (!artwork) {
       reply.code(404).send({ error: "not_found" });
