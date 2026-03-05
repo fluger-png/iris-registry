@@ -279,7 +279,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           display:inline-block;
         }
         .thumb{
-          width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--line);
+          width:60px;height:60px;border-radius:0;object-fit:cover;border:1px solid var(--line);
         }
         .file-input{
           position:absolute;
@@ -396,8 +396,8 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           </div>
           <h2>Admin Dashboard</h2>
           <div class="nav">
-            <a class="${activitiesActive ? "active" : ""}" href="/admin">Activities</a>
-            <a class="${allActive ? "active" : ""}" href="/admin/all">All IRISes</a>
+            <a class="${allActive ? "active" : ""}" href="/admin">IRIS Archive</a>
+            <a class="${activitiesActive ? "active" : ""}" href="/admin/activities">Activities</a>
             <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
             <a href="/admin/logout">Log Out</a>
           </div>
@@ -482,29 +482,13 @@ const buildAdminHtml = (
 ) => {
   const rows = items
     .map((item) => {
-      const imageCell = item.image_url
-        ? `<img class="thumb" src="${item.image_url}" alt="${item.iris_id}" />`
-        : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#94A3B8;">—</div>`;
-      const fileId = `file-${item.iris_id}`;
       return `
         <tr>
+          <td>${item.assigned_order_id ?? "-"}</td>
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.assigned_customer_email ?? "-"}</td>
-          <td>${item.assigned_order_id ?? "-"}</td>
           <td>${item.order_date ? formatDate(item.order_date) : "-"}</td>
-          <td>${item.pin_code ?? "-"}</td>
-          <td>${imageCell}</td>
-          <td>
-            <form class="upload-form" method="POST" action="/admin/iris/upload" enctype="multipart/form-data">
-              <input type="hidden" name="iris_id" value="${item.iris_id}" />
-              <input class="file-input" id="${fileId}" type="file" name="image" accept="image/*" required />
-              <label class="file-link" for="${fileId}">Choose File</label>
-              <span class="file-name" data-file-name hidden></span>
-              <button class="file-clear" type="button" data-file-clear hidden>×</button>
-              <button class="btn primary" type="submit" data-upload-btn hidden>Upload</button>
-            </form>
-          </td>
         </tr>
       `;
     })
@@ -517,39 +501,36 @@ const buildAdminHtml = (
   ].filter(Boolean);
   const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
   const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
-  const prevHref = hasPrev ? `/admin?${prevParams}` : "#";
-  const nextHref = hasNext ? `/admin?${nextParams}` : "#";
+  const prevHref = hasPrev ? `/admin/activities?${prevParams}` : "#";
+  const nextHref = hasNext ? `/admin/activities?${nextParams}` : "#";
 
   const body = `
     <div class="title-row">
       <h1>Activities</h1>
-      <form class="search" method="GET" action="/admin">
+      <form class="search" method="GET" action="/admin/activities">
         ${statusHidden}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
       </form>
     </div>
     <div class="tabs">
-      <a class="tab ${activeTab === "all" ? "active" : ""}" href="/admin">All</a>
-      <a class="tab ${activeTab === "activated" ? "active" : ""}" href="/admin?status=activated">Activated</a>
-      <a class="tab ${activeTab === "unactivated" ? "active" : ""}" href="/admin?status=unactivated">Unactivated</a>
+      <a class="tab ${activeTab === "all" ? "active" : ""}" href="/admin/activities">All</a>
+      <a class="tab ${activeTab === "activated" ? "active" : ""}" href="/admin/activities?status=activated">Activated</a>
+      <a class="tab ${activeTab === "unactivated" ? "active" : ""}" href="/admin/activities?status=unactivated">Unactivated</a>
     </div>
     <div class="card table">
       <table>
         <thead>
           <tr>
+            <th>Order Number</th>
             <th>IRIS ID</th>
             <th>Status</th>
             <th>Customer Email</th>
-            <th>Order Number</th>
             <th>Order Date</th>
-            <th>PIN</th>
-            <th>Image</th>
-            <th>Upload</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || "<tr><td colspan='9'>No records</td></tr>"}
+          ${rows || "<tr><td colspan='5'>No records</td></tr>"}
         </tbody>
       </table>
     </div>
@@ -617,22 +598,22 @@ const buildAdminAllHtml = (
   ].filter(Boolean);
   const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
   const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
-  const prevHref = hasPrev ? `/admin/all?${prevParams}` : "#";
-  const nextHref = hasNext ? `/admin/all?${nextParams}` : "#";
+  const prevHref = hasPrev ? `/admin?${prevParams}` : "#";
+  const nextHref = hasNext ? `/admin?${nextParams}` : "#";
 
   const body = `
     <div class="title-row">
-      <h1>All IRISes</h1>
-      <form class="search" method="GET" action="/admin/all">
+      <h1>IRIS Archive</h1>
+      <form class="search" method="GET" action="/admin">
         ${statusHidden}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
       </form>
     </div>
     <div class="tabs">
-      <a class="tab ${statusParam === "all" ? "active" : ""}" href="/admin/all">All</a>
-      <a class="tab ${statusParam === "activated" ? "active" : ""}" href="/admin/all?status=activated">Activated</a>
-      <a class="tab ${statusParam === "unactivated" ? "active" : ""}" href="/admin/all?status=unactivated">Unactivated</a>
+      <a class="tab ${statusParam === "all" ? "active" : ""}" href="/admin">All</a>
+      <a class="tab ${statusParam === "activated" ? "active" : ""}" href="/admin?status=activated">Activated</a>
+      <a class="tab ${statusParam === "unactivated" ? "active" : ""}" href="/admin?status=unactivated">Unactivated</a>
     </div>
     <div class="card table">
       <table>
@@ -1746,6 +1727,69 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
+    const query = req.query as { q?: string; page?: string; status?: string };
+    const q = query.q?.trim();
+    const statusParam = query.status?.toLowerCase() ?? "all";
+    const statuses: ArtworkStatus[] =
+      statusParam === "activated"
+        ? ["activated"]
+        : statusParam === "unactivated"
+          ? ["assigned", "shopify_failed"]
+          : ["assigned", "activated", "shopify_failed"];
+    const where: Prisma.ArtworkWhereInput = {
+      status: { in: statuses }
+    };
+
+    if (q) {
+      where.OR = [
+        { iris_id: { contains: q, mode: "insensitive" } },
+        { assigned_order_id: { contains: q, mode: "insensitive" } },
+        { owner_email: { contains: q, mode: "insensitive" } }
+      ];
+    }
+
+    const page = Math.max(1, Number(query.page ?? 1));
+    const take = 20;
+    const skip = (page - 1) * take;
+
+    const items = await prisma.artwork.findMany({
+      where,
+      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+      skip,
+      take: take + 1
+    });
+
+    const hasNext = items.length > take;
+    const slice = hasNext ? items.slice(0, take) : items;
+    const hasPrev = page > 1;
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildAdminAllHtml(
+          slice.map((item) => ({
+            iris_id: item.iris_id,
+            status: item.status,
+            owner_email: item.owner_email,
+            activated_at: item.activated_at,
+            image_url: item.image_url,
+            pin_code: item.pin_code,
+            weight_grams: item.weight_grams,
+            rarity_code: item.rarity_code
+          })),
+          q ?? "",
+          statusParam,
+          page,
+          hasPrev,
+          hasNext
+        )
+      );
+  });
+
+  app.get("/admin/activities", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
     const query = req.query as { status?: string; q?: string; page?: string };
     const statusParam = query.status?.toLowerCase() ?? "all";
     const statuses: ArtworkStatus[] =
@@ -1817,67 +1861,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       );
   });
 
-  app.get("/admin/all", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return;
-
-    const query = req.query as { q?: string; page?: string; status?: string };
-    const q = query.q?.trim();
-    const statusParam = query.status?.toLowerCase() ?? "all";
-    const statuses: ArtworkStatus[] =
-      statusParam === "activated"
-        ? ["activated"]
-        : statusParam === "unactivated"
-          ? ["assigned", "shopify_failed"]
-          : ["assigned", "activated", "shopify_failed"];
-    const where: Prisma.ArtworkWhereInput = {
-      status: { in: statuses }
-    };
-
-    if (q) {
-      where.OR = [
-        { iris_id: { contains: q, mode: "insensitive" } },
-        { assigned_order_id: { contains: q, mode: "insensitive" } },
-        { owner_email: { contains: q, mode: "insensitive" } }
-      ];
-    }
-
-    const page = Math.max(1, Number(query.page ?? 1));
-    const take = 20;
-    const skip = (page - 1) * take;
-
-    const items = await prisma.artwork.findMany({
-      where,
-      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-      skip,
-      take: take + 1
-    });
-
-    const hasNext = items.length > take;
-    const slice = hasNext ? items.slice(0, take) : items;
-    const hasPrev = page > 1;
-
-    reply
-      .code(200)
-      .type("text/html; charset=utf-8")
-      .send(
-        buildAdminAllHtml(
-          slice.map((item) => ({
-            iris_id: item.iris_id,
-            status: item.status,
-            owner_email: item.owner_email,
-            activated_at: item.activated_at,
-            image_url: item.image_url,
-            pin_code: item.pin_code,
-            weight_grams: item.weight_grams,
-            rarity_code: item.rarity_code
-          })),
-          q ?? "",
-          statusParam,
-          page,
-          hasPrev,
-          hasNext
-        )
-      );
+  app.get("/admin/all", async (_req, reply) => {
+    reply.redirect(302, "/admin");
   });
 
   app.get("/admin/activation-logs", async (req, reply) => {
@@ -2012,7 +1997,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
       data: { image_url: imageUrl }
     });
 
-    reply.redirect(303, "/admin");
+    const referer = (req.headers.referer || req.headers.referrer || "") as string;
+    if (referer.includes(`/admin/iris/${irisId}`)) {
+      reply.redirect(303, referer);
+      return;
+    }
+    reply.redirect(303, `/admin/iris/${encodeURIComponent(irisId)}`);
   });
 
   app.post("/admin/iris/weight", async (req, reply) => {
