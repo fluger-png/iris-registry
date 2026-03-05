@@ -1449,7 +1449,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
       reply.code(404).send({ error: "not_found" });
       return;
     }
-    reply.send({ iris_id: artwork.iris_id, image_url: artwork.image_url });
+    reply.send({
+      iris_id: artwork.iris_id,
+      image_url: artwork.image_url,
+      status: artwork.status,
+      activated_at: artwork.activated_at,
+      rarity_code: artwork.rarity_code,
+      weight_grams: artwork.weight_grams
+    });
   });
 
   app.get("/apps/iris/seen-archive", async (req, reply) => {
