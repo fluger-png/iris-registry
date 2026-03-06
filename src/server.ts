@@ -37,21 +37,37 @@ const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[
 
 const generateActivationToken = (): string => crypto.randomBytes(16).toString("hex");
 
+const dateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: env.adminTimezone,
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit"
+});
+const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: env.adminTimezone,
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false
+});
+
 const formatDate = (value: Date): string => {
-  const d = new Date(value);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const yy = String(d.getUTCFullYear()).slice(-2);
+  const parts = dateFormatter.formatToParts(new Date(value));
+  const mm = parts.find((p) => p.type === "month")?.value ?? "00";
+  const dd = parts.find((p) => p.type === "day")?.value ?? "00";
+  const yy = parts.find((p) => p.type === "year")?.value ?? "00";
   return `${mm}.${dd}.${yy}`;
 };
 
 const formatDateTime = (value: Date): string => {
-  const d = new Date(value);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const yy = String(d.getUTCFullYear()).slice(-2);
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
+  const parts = dateTimeFormatter.formatToParts(new Date(value));
+  const mm = parts.find((p) => p.type === "month")?.value ?? "00";
+  const dd = parts.find((p) => p.type === "day")?.value ?? "00";
+  const yy = parts.find((p) => p.type === "year")?.value ?? "00";
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const min = parts.find((p) => p.type === "minute")?.value ?? "00";
   return `${mm}.${dd}.${yy} ${hh}:${min}`;
 };
 

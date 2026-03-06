@@ -28,5 +28,6 @@ export const env = {
   shopifyAdminToken: required("SHOPIFY_ADMIN_TOKEN"),
   shopifyShopDomain: required("SHOPIFY_SHOP_DOMAIN"),
   shopifyApiVersion: process.env.SHOPIFY_API_VERSION ?? "2024-10",
-  goldApiKey: process.env.GOLDAPI_KEY ?? ""
+  goldApiKey: process.env.GOLDAPI_KEY ?? "",
+  adminTimezone: process.env.ADMIN_TIMEZONE ?? "America/New_York"
 };
