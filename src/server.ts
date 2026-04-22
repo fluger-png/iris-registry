@@ -1518,11 +1518,20 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
     Object.assign(where, cursorFilter);
 
-    const items = await prisma.artwork.findMany({
-      where,
-      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-      take: limit + 1
-    });
+    const [items, totalCount] = await Promise.all([
+      prisma.artwork.findMany({
+        where,
+        orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+        take: limit + 1
+      }),
+      prisma.artwork.count({
+        where: {
+          status: "activated",
+          activated_at: { not: null },
+          ...(rarityCode ? { rarity_code: rarityCode } : {})
+        }
+      })
+    ]);
 
     const hasMore = items.length > limit;
     const slice = hasMore ? items.slice(0, limit) : items;
@@ -1542,7 +1551,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         activated_at: item.activated_at,
         weight_grams: item.weight_grams
       })),
-      nextCursor
+      nextCursor,
+      total_count: totalCount
     });
   });
 
