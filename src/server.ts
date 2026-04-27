@@ -1749,17 +1749,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const collectionSlug = query.collection?.trim() ? normalizeCollectionSlug(query.collection) : null;
-    let collectionId: string | null = null;
+    let collectionMeta: { id: string; slug: string; name: string; edition_size: number; artworks_count: number; status: string } | null = null;
     if (collectionSlug) {
       const collection = await prisma.collection.findUnique({
         where: { slug: collectionSlug },
-        select: { id: true }
+        select: { id: true, slug: true, name: true, edition_size: true, artworks_count: true, status: true }
       });
       if (!collection) {
         reply.code(404).send({ error: "collection_not_found" });
         return;
       }
-      collectionId = collection.id;
+      collectionMeta = collection;
     }
 
     let cursorFilter = {};
@@ -1783,8 +1783,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (rarityCode) {
       where.rarity_code = rarityCode;
     }
-    if (collectionId) {
-      where.collection_id = collectionId;
+    if (collectionMeta) {
+      where.collection_id = collectionMeta.id;
     }
     Object.assign(where, cursorFilter);
 
@@ -1806,7 +1806,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         where: {
           status: "activated",
           activated_at: { not: null },
-          ...(collectionId ? { collection_id: collectionId } : {}),
+          ...(collectionMeta ? { collection_id: collectionMeta.id } : {}),
           ...(rarityCode ? { rarity_code: rarityCode } : {})
         }
       })
@@ -1832,7 +1832,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         collection: item.collection
       })),
       nextCursor,
-      total_count: totalCount
+      total_count: totalCount,
+      collection: collectionMeta
     });
   });
 

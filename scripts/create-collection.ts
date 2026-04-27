@@ -44,6 +44,7 @@ const shopifyProductId = getArg("--shopify-product-id");
 const shopifyHandle = getArg("--shopify-handle");
 const defaultPriceCents = getArg("--default-price-cents");
 const startIndex = numberArg("--start-index", 1);
+const explicitRarityCode = getArg("--rarity-code");
 
 const validStatuses = new Set(["draft", "active", "sold_out", "archived"]);
 if (!validStatuses.has(status)) {
@@ -51,6 +52,8 @@ if (!validStatuses.has(status)) {
 }
 
 const zeroPad = Math.max(4, String(startIndex + editionSize - 1).length);
+const defaultRarityCode =
+  explicitRarityCode ?? (editionSize <= 100 ? "Artist Edition" : null);
 
 const run = async () => {
   const collection = await prisma.collection.upsert({
@@ -81,7 +84,8 @@ const run = async () => {
   const data = Array.from({ length: editionSize }, (_, index) => ({
     iris_id: `${prefix}-${String(startIndex + index).padStart(zeroPad, "0")}`,
     status: "available" as const,
-    collection_id: collection.id
+    collection_id: collection.id,
+    rarity_code: defaultRarityCode
   }));
 
   await prisma.artwork.createMany({
@@ -94,11 +98,21 @@ const run = async () => {
       iris_id: { in: data.map((item) => item.iris_id) },
       collection_id: null
     },
-    data: { collection_id: collection.id }
+    data: {
+      collection_id: collection.id,
+      ...(defaultRarityCode ? { rarity_code: defaultRarityCode } : {})
+    }
   });
 
+  if (defaultRarityCode) {
+    await prisma.artwork.updateMany({
+      where: { collection_id: collection.id, rarity_code: null },
+      data: { rarity_code: defaultRarityCode }
+    });
+  }
+
   console.log(
-    `Collection ${collection.name} (${collection.slug}) ready. Linked ${editionSize} artworks with prefix ${prefix}.`
+    `Collection ${collection.name} (${collection.slug}) ready. Linked ${editionSize} artworks with prefix ${prefix}${defaultRarityCode ? ` and default rarity "${defaultRarityCode}"` : ""}.`
   );
 };
 
