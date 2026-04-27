@@ -912,6 +912,18 @@ type CollectionLookupInput = {
   productHandle?: string | null;
 };
 
+const CORE_COLLECTION_SLUG = "iris-the-unseen-edition";
+const CORE_COLLECTION_ALIASES = new Set([
+  CORE_COLLECTION_SLUG,
+  "iris-collection",
+  "iris"
+]);
+
+const isCoreCollectionAlias = (value: string | null | undefined): boolean => {
+  if (!value) return false;
+  return CORE_COLLECTION_ALIASES.has(normalizeCollectionSlug(value));
+};
+
 const resolveCollection = async (input: CollectionLookupInput) => {
   const where: Prisma.CollectionWhereInput[] = [];
   if (input.collectionId) {
@@ -936,14 +948,30 @@ const resolveCollection = async (input: CollectionLookupInput) => {
   });
 };
 
+type ArtworkPoolScope =
+  | { mode: "any" }
+  | { mode: "core" }
+  | { mode: "collection"; collectionId: string };
+
 const pickAvailableArtwork = async (
   tx: Prisma.TransactionClient,
-  collectionId: string | null
+  scope: ArtworkPoolScope
 ): Promise<string | null> => {
-  if (collectionId) {
+  if (scope.mode === "collection") {
     const rows = await tx.$queryRaw<{ iris_id: string }[]>`
       SELECT "iris_id" FROM "Artwork"
-      WHERE "status" = 'available' AND "collection_id" = ${collectionId}
+      WHERE "status" = 'available' AND "collection_id" = ${scope.collectionId}
+      ORDER BY random()
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `;
+    return rows[0]?.iris_id ?? null;
+  }
+
+  if (scope.mode === "core") {
+    const rows = await tx.$queryRaw<{ iris_id: string }[]>`
+      SELECT "iris_id" FROM "Artwork"
+      WHERE "status" = 'available' AND "collection_id" IS NULL
       ORDER BY random()
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -1097,14 +1125,23 @@ export const createServer = async (): Promise<FastifyInstance> => {
       productId,
       productHandle
     });
+    const coreCollectionRequested = [
+      collectionSlug,
+      productHandle
+    ].some((value) => isCoreCollectionAlias(value));
 
-    if ((collectionSlug || collectionId || productId || productHandle) && !collection) {
+    if ((collectionSlug || collectionId || productId || productHandle) && !collection && !coreCollectionRequested) {
       sendJson(reply, 404, { error: "collection_not_found" });
       return;
     }
 
     const reservation = await prisma.$transaction(async (tx) => {
-      const irisId = await pickAvailableArtwork(tx, collection?.id ?? null);
+      const poolScope: ArtworkPoolScope = collection
+        ? { mode: "collection", collectionId: collection.id }
+        : coreCollectionRequested
+          ? { mode: "core" }
+          : { mode: "any" };
+      const irisId = await pickAvailableArtwork(tx, poolScope);
       if (!irisId) {
         return null;
       }
@@ -1337,7 +1374,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
       let generatedPin: string | null = null;
 
       await prisma.$transaction(async (tx) => {
-        const irisId = await pickAvailableArtwork(tx, collection.id);
+        const irisId = await pickAvailableArtwork(tx, {
+          mode: "collection",
+          collectionId: collection.id
+        });
         if (!irisId) {
           throw new Error(`no_available_artwork:${collection.slug}`);
         }
@@ -1749,8 +1789,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const collectionSlug = query.collection?.trim() ? normalizeCollectionSlug(query.collection) : null;
+    const coreCollectionRequested = isCoreCollectionAlias(collectionSlug);
     let collectionMeta: { id: string; slug: string; name: string; edition_size: number; artworks_count: number; status: string } | null = null;
-    if (collectionSlug) {
+    if (collectionSlug && !coreCollectionRequested) {
       const collection = await prisma.collection.findUnique({
         where: { slug: collectionSlug },
         select: { id: true, slug: true, name: true, edition_size: true, artworks_count: true, status: true }
@@ -1760,6 +1801,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
         return;
       }
       collectionMeta = collection;
+    } else if (coreCollectionRequested) {
+      collectionMeta = {
+        id: "core",
+        slug: CORE_COLLECTION_SLUG,
+        name: "IRIS Collection",
+        edition_size: 10_000,
+        artworks_count: 10_000,
+        status: "active"
+      };
     }
 
     let cursorFilter = {};
@@ -1783,7 +1833,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (rarityCode) {
       where.rarity_code = rarityCode;
     }
-    if (collectionMeta) {
+    if (collectionMeta && coreCollectionRequested) {
+      where.collection_id = null;
+    } else if (collectionMeta) {
       where.collection_id = collectionMeta.id;
     }
     Object.assign(where, cursorFilter);
@@ -1806,7 +1858,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         where: {
           status: "activated",
           activated_at: { not: null },
-          ...(collectionMeta ? { collection_id: collectionMeta.id } : {}),
+          ...(coreCollectionRequested ? { collection_id: null } : collectionMeta ? { collection_id: collectionMeta.id } : {}),
           ...(rarityCode ? { rarity_code: rarityCode } : {})
         }
       })
