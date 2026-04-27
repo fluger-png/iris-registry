@@ -59,3 +59,56 @@ export const parseReservationTokens = (order: unknown): string[] => {
   }
   return Array.from(new Set(tokens));
 };
+
+export type ShopifyLineItemSummary = {
+  productId: string | null;
+  handle: string | null;
+  quantity: number;
+  reservationTokens: string[];
+};
+
+export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] => {
+  if (!order || typeof order !== "object") {
+    return [];
+  }
+  const lineItems = (order as { line_items?: Array<Record<string, unknown>> }).line_items;
+  if (!Array.isArray(lineItems)) {
+    return [];
+  }
+  const tokenKeys = new Set([
+    "reservationtoken",
+    "reservation_token",
+    "iris_reservation_token",
+    "iris-reservation-token"
+  ]);
+
+  return lineItems.map((item) => {
+    const rawQuantity = Number(item.quantity ?? 1);
+    const properties = item.properties as Array<{ name?: string; value?: string }> | undefined;
+    const reservationTokens: string[] = [];
+    if (Array.isArray(properties)) {
+      for (const prop of properties) {
+        const name = prop?.name?.toString().trim().toLowerCase();
+        if (!name || !tokenKeys.has(name)) {
+          continue;
+        }
+        const value = prop?.value?.toString().trim();
+        if (value) {
+          reservationTokens.push(value);
+        }
+      }
+    }
+
+    const productId =
+      typeof item.product_id === "number" || typeof item.product_id === "string"
+        ? String(item.product_id)
+        : null;
+    const handle = typeof item.handle === "string" && item.handle.trim() ? item.handle.trim() : null;
+    return {
+      productId,
+      handle,
+      quantity: Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1,
+      reservationTokens: Array.from(new Set(reservationTokens))
+    };
+  });
+};

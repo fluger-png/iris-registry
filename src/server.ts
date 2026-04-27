@@ -8,7 +8,7 @@ import path from "node:path";
 import querystring from "node:querystring";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
-import { decodeCursor, encodeCursor, parseReservationTokens, verifyShopifyHmac } from "./utils.js";
+import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } from "./utils.js";
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import fs from "node:fs";
 
@@ -34,6 +34,12 @@ const r2 = new S3Client({
 });
 
 const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+const normalizeCollectionSlug = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 const generateActivationToken = (): string => crypto.randomBytes(16).toString("hex");
 
@@ -899,6 +905,62 @@ const generatePin = (): string => {
   return value.toString().padStart(6, "0");
 };
 
+type CollectionLookupInput = {
+  collectionSlug?: string | null;
+  collectionId?: string | null;
+  productId?: string | null;
+  productHandle?: string | null;
+};
+
+const resolveCollection = async (input: CollectionLookupInput) => {
+  const where: Prisma.CollectionWhereInput[] = [];
+  if (input.collectionId) {
+    where.push({ id: input.collectionId });
+  }
+  if (input.collectionSlug) {
+    where.push({ slug: normalizeCollectionSlug(input.collectionSlug) });
+  }
+  if (input.productId) {
+    where.push({ shopify_product_id: input.productId });
+  }
+  if (input.productHandle) {
+    where.push({ shopify_handle: input.productHandle.trim() });
+  }
+
+  if (where.length === 0) {
+    return null;
+  }
+
+  return prisma.collection.findFirst({
+    where: where.length === 1 ? where[0] : { OR: where }
+  });
+};
+
+const pickAvailableArtwork = async (
+  tx: Prisma.TransactionClient,
+  collectionId: string | null
+): Promise<string | null> => {
+  if (collectionId) {
+    const rows = await tx.$queryRaw<{ iris_id: string }[]>`
+      SELECT "iris_id" FROM "Artwork"
+      WHERE "status" = 'available' AND "collection_id" = ${collectionId}
+      ORDER BY random()
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `;
+    return rows[0]?.iris_id ?? null;
+  }
+
+  const rows = await tx.$queryRaw<{ iris_id: string }[]>`
+    SELECT "iris_id" FROM "Artwork"
+    WHERE "status" = 'available'
+    ORDER BY random()
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+  `;
+  return rows[0]?.iris_id ?? null;
+};
+
 const releaseExpiredReservations = async (app: FastifyInstance): Promise<void> => {
   const now = new Date();
   const expired = await prisma.reservation.findMany({
@@ -986,20 +1048,67 @@ export const createServer = async (): Promise<FastifyInstance> => {
   );
 
   app.post("/apps/iris/reserve-random", async (req, reply) => {
-    const reservation = await prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{ iris_id: string }[]>`
-        SELECT "iris_id" FROM "Artwork"
-        WHERE "status" = 'available'
-        ORDER BY random()
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      `;
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const query = (req.query as Record<string, unknown> | null) ?? {};
+    const collectionSlug =
+      typeof body.collection_slug === "string"
+        ? body.collection_slug
+        : typeof body.collectionSlug === "string"
+          ? body.collectionSlug
+          : typeof query.collection_slug === "string"
+            ? query.collection_slug
+            : typeof query.collectionSlug === "string"
+              ? query.collectionSlug
+              : null;
+    const collectionId =
+      typeof body.collection_id === "string"
+        ? body.collection_id
+        : typeof body.collectionId === "string"
+          ? body.collectionId
+          : typeof query.collection_id === "string"
+            ? query.collection_id
+            : typeof query.collectionId === "string"
+              ? query.collectionId
+              : null;
+    const productId =
+      typeof body.product_id === "string"
+        ? body.product_id
+        : typeof body.productId === "string"
+          ? body.productId
+          : typeof query.product_id === "string"
+            ? query.product_id
+            : typeof query.productId === "string"
+              ? query.productId
+              : null;
+    const productHandle =
+      typeof body.product_handle === "string"
+        ? body.product_handle
+        : typeof body.productHandle === "string"
+          ? body.productHandle
+          : typeof query.product_handle === "string"
+            ? query.product_handle
+            : typeof query.productHandle === "string"
+              ? query.productHandle
+              : null;
 
-      if (rows.length === 0) {
+    const collection = await resolveCollection({
+      collectionId,
+      collectionSlug,
+      productId,
+      productHandle
+    });
+
+    if ((collectionSlug || collectionId || productId || productHandle) && !collection) {
+      sendJson(reply, 404, { error: "collection_not_found" });
+      return;
+    }
+
+    const reservation = await prisma.$transaction(async (tx) => {
+      const irisId = await pickAvailableArtwork(tx, collection?.id ?? null);
+      if (!irisId) {
         return null;
       }
 
-      const irisId = rows[0].iris_id;
       const expiresAt = new Date(Date.now() + env.reservationTtlMinutes * 60 * 1000);
 
       await tx.artwork.update({
@@ -1031,11 +1140,18 @@ export const createServer = async (): Promise<FastifyInstance> => {
     });
 
     if (!reservation) {
-      sendJson(reply, 409, { error: "no_available_artwork" });
+      sendJson(reply, 409, {
+        error: "no_available_artwork",
+        ...(collection ? { collection: { slug: collection.slug, name: collection.name } } : {})
+      });
       return;
     }
 
-    sendJson(reply, 200, { reservationToken: reservation.token, irisId: reservation.iris_id });
+    sendJson(reply, 200, {
+      reservationToken: reservation.token,
+      irisId: reservation.iris_id,
+      ...(collection ? { collection: { slug: collection.slug, name: collection.name } } : {})
+    });
   });
 
   app.post("/webhooks/shopify/orders-paid", async (req, reply) => {
@@ -1083,11 +1199,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const order = req.body as Record<string, unknown>;
-    const reservationTokens = parseReservationTokens(order);
-    if (reservationTokens.length === 0) {
-      reply.code(400).send({ error: "missing_reservation_token" });
-      return;
-    }
+    const lineItems = parseShopifyLineItems(order);
+    const reservationTokens = lineItems.flatMap((item) => item.reservationTokens);
 
     const orderId = order.id ? String(order.id) : null;
     const orderName = typeof order.name === "string" ? order.name : null;
@@ -1098,6 +1211,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const orderNumberDisplay = orderName ?? orderNumber ?? orderId;
     const customerEmail = extractCustomerEmail(order);
     const failed: Array<{ token: string; error: string }> = [];
+    const collectionLookupCache = new Map<string, Awaited<ReturnType<typeof resolveCollection>>>();
+
+    const resolveLineItemCollection = async (productId: string | null, productHandle: string | null) => {
+      const cacheKey = `${productId ?? ""}|${productHandle ?? ""}`;
+      if (collectionLookupCache.has(cacheKey)) {
+        return collectionLookupCache.get(cacheKey) ?? null;
+      }
+      const collection = await resolveCollection({ productId, productHandle });
+      collectionLookupCache.set(cacheKey, collection);
+      return collection;
+    };
 
     const confirmReservation = async (reservationToken: string) => {
       let assignedIrisId: string | null = null;
@@ -1205,6 +1329,126 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     };
 
+    const assignFromCollection = async (
+      collection: { id: string; slug: string; name: string },
+      lineItem: { productId: string | null; handle: string | null; quantity: number }
+    ) => {
+      let assignedIrisId: string | null = null;
+      let generatedPin: string | null = null;
+
+      await prisma.$transaction(async (tx) => {
+        const irisId = await pickAvailableArtwork(tx, collection.id);
+        if (!irisId) {
+          throw new Error(`no_available_artwork:${collection.slug}`);
+        }
+
+        const artwork = await tx.artwork.findUnique({
+          where: { iris_id: irisId }
+        });
+
+        const pinCode = artwork?.pin_code ?? generatePin();
+        const activationToken = artwork?.activation_token ?? generateActivationToken();
+        generatedPin = artwork?.pin_code ? null : pinCode;
+
+        await tx.artwork.update({
+          where: { iris_id: irisId },
+          data: {
+            status: "assigned",
+            assigned_order_id: orderNumberDisplay,
+            assigned_customer_email: customerEmail,
+            pin_code: pinCode,
+            pin_last4: pinCode.slice(-4),
+            activation_token: activationToken,
+            pin_attempts: 0,
+            pin_locked_until: null
+          }
+        });
+
+        await tx.event.create({
+          data: {
+            iris_id: irisId,
+            type: "assigned",
+            actor: "shopify",
+            payload_json: {
+              order_id: orderId,
+              order_number: orderNumberDisplay,
+              customer_email: customerEmail,
+              collection_slug: collection.slug,
+              collection_name: collection.name,
+              source: "product_mapping",
+              shopify_product_id: lineItem.productId,
+              shopify_handle: lineItem.handle
+            }
+          }
+        });
+
+        if (generatedPin) {
+          await tx.event.create({
+            data: {
+              iris_id: irisId,
+              type: "pin_generated",
+              actor: "system",
+              payload_json: {
+                pin_last4: pinCode.slice(-4)
+              }
+            }
+          });
+        }
+
+        assignedIrisId = irisId;
+      });
+
+      if (assignedIrisId) {
+        try {
+          await recordShopifyOwnership(order, assignedIrisId);
+        } catch (error) {
+          req.log.error({ err: error, irisId: assignedIrisId }, "Shopify write failed");
+          await prisma.$transaction(async (tx) => {
+            await tx.artwork.update({
+              where: { iris_id: assignedIrisId! },
+              data: { status: "shopify_failed" }
+            });
+            await tx.event.create({
+              data: {
+                iris_id: assignedIrisId!,
+                type: "SHOPIFY_ERROR",
+                actor: "shopify",
+                payload_json: {
+                  order_id: orderId,
+                  error: error instanceof Error ? error.message : "unknown",
+                  source: "product_mapping"
+                }
+              }
+            });
+          });
+        }
+      }
+    };
+
+    const mappedAssignments = [] as Array<{
+      collection: { id: string; slug: string; name: string };
+      lineItem: { productId: string | null; handle: string | null; quantity: number };
+    }>;
+
+    for (const item of lineItems) {
+      if (item.reservationTokens.length >= item.quantity) {
+        continue;
+      }
+      const collection = await resolveLineItemCollection(item.productId, item.handle);
+      if (!collection) {
+        continue;
+      }
+      const missingCount = item.quantity - item.reservationTokens.length;
+      for (let index = 0; index < missingCount; index += 1) {
+        mappedAssignments.push({ collection, lineItem: item });
+      }
+    }
+
+    if (reservationTokens.length === 0 && mappedAssignments.length === 0) {
+      reply.code(400).send({ error: "missing_reservation_token" });
+      return;
+    }
+
     try {
       for (const token of reservationTokens) {
         try {
@@ -1217,6 +1461,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
           }
           throw error;
         }
+      }
+      for (const assignment of mappedAssignments) {
+        await assignFromCollection(assignment.collection, assignment.lineItem);
       }
     } catch (error) {
       req.log.error({ err: error }, "Failed to confirm reservation");
@@ -1458,7 +1705,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
         status: true,
         activated_at: true,
         rarity_code: true,
-        weight_grams: true
+        weight_grams: true,
+        collection: {
+          select: {
+            slug: true,
+            name: true
+          }
+        }
       }
     });
     if (!artwork) {
@@ -1471,17 +1724,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
       status: artwork.status,
       activated_at: artwork.activated_at,
       rarity_code: artwork.rarity_code,
-      weight_grams: artwork.weight_grams
+      weight_grams: artwork.weight_grams,
+      collection: artwork.collection
     });
   });
 
   app.get("/apps/iris/seen-archive", async (req, reply) => {
-    const query = req.query as { limit?: string; cursor?: string; rarity?: string };
+    const query = req.query as { limit?: string; cursor?: string; rarity?: string; collection?: string };
     const limit = parseLimit(query.limit, 20);
 
     const rarityParam = query.rarity?.trim();
     const rarityKey = rarityParam ? rarityParam.toLowerCase().replace(/\s+/g, " ") : "";
-    const statusFilter: ArtworkStatus | null = null;
     const rarityMap: Record<string, string> = {
       common: "Common",
       uncommon: "Uncommon",
@@ -1493,6 +1746,20 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (rarityKey && rarityKey !== "all" && !rarityCode) {
       reply.code(400).send({ error: "invalid_rarity" });
       return;
+    }
+
+    const collectionSlug = query.collection?.trim() ? normalizeCollectionSlug(query.collection) : null;
+    let collectionId: string | null = null;
+    if (collectionSlug) {
+      const collection = await prisma.collection.findUnique({
+        where: { slug: collectionSlug },
+        select: { id: true }
+      });
+      if (!collection) {
+        reply.code(404).send({ error: "collection_not_found" });
+        return;
+      }
+      collectionId = collection.id;
     }
 
     let cursorFilter = {};
@@ -1516,18 +1783,30 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (rarityCode) {
       where.rarity_code = rarityCode;
     }
+    if (collectionId) {
+      where.collection_id = collectionId;
+    }
     Object.assign(where, cursorFilter);
 
     const [items, totalCount] = await Promise.all([
       prisma.artwork.findMany({
         where,
         orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-        take: limit + 1
+        take: limit + 1,
+        include: {
+          collection: {
+            select: {
+              slug: true,
+              name: true
+            }
+          }
+        }
       }),
       prisma.artwork.count({
         where: {
           status: "activated",
           activated_at: { not: null },
+          ...(collectionId ? { collection_id: collectionId } : {}),
           ...(rarityCode ? { rarity_code: rarityCode } : {})
         }
       })
@@ -1549,7 +1828,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         image_url: item.image_url,
         rarity_code: item.rarity_code,
         activated_at: item.activated_at,
-        weight_grams: item.weight_grams
+        weight_grams: item.weight_grams,
+        collection: item.collection
       })),
       nextCursor,
       total_count: totalCount
@@ -1571,7 +1851,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
           { owner_email: null, assigned_customer_email: query.email }
         ]
       },
-      orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }]
+      orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }],
+      include: {
+        collection: {
+          select: {
+            slug: true,
+            name: true
+          }
+        }
+      }
     });
 
     const generatedTokens = new Map<string, string>();
@@ -1595,6 +1883,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         image_url: item.image_url,
         rarity_code: item.rarity_code,
         activated_at: item.activated_at,
+        collection: item.collection,
         passport_url: (item.proof_token ?? generatedTokens.get(item.iris_id))
           ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(
               item.proof_token ?? generatedTokens.get(item.iris_id) ?? ""
@@ -1614,7 +1903,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     const item = await prisma.artwork.findUnique({
-      where: { iris_id: irisId }
+      where: { iris_id: irisId },
+      include: {
+        collection: {
+          select: {
+            slug: true,
+            name: true
+          }
+        }
+      }
     });
 
     if (!item || item.status !== "activated") {
@@ -1631,7 +1928,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       weight_grams: item.weight_grams,
       activated_at: item.activated_at,
       status: item.status,
-      proof_url: proofPath
+      proof_url: proofPath,
+      collection: item.collection
     });
   });
 

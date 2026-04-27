@@ -21,9 +21,36 @@ enum ReservationStatus {
   expired
 }
 
+enum CollectionStatus {
+  draft
+  active
+  sold_out
+  archived
+}
+
+model Collection {
+  id                  String           @id @default(cuid())
+  slug                String           @unique
+  name                String
+  artist_name         String?
+  edition_size        Int
+  artworks_count      Int              @default(1)
+  status              CollectionStatus @default(draft)
+  shopify_product_id  String?          @unique
+  shopify_handle      String?
+  default_price_cents Int?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  artworks            Artwork[]
+
+  @@index([status])
+}
+
 model Artwork {
   iris_id                 String          @id
   status                  ArtworkStatus
+  collection_id           String?
   rarity_code             String?
   rarity_proof            Json?
   proof_token             String?         @unique
@@ -41,10 +68,12 @@ model Artwork {
   created_at              DateTime        @default(now())
   updated_at              DateTime        @updatedAt
 
+  collection              Collection?     @relation(fields: [collection_id], references: [id], onDelete: SetNull)
   events                  Event[]
   reservations            Reservation[]
 
   @@index([status])
+  @@index([collection_id, status])
   @@index([assigned_customer_email])
   @@index([owner_email])
   @@index([activated_at])
