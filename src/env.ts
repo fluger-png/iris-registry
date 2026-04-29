@@ -29,5 +29,10 @@ export const env = {
   shopifyShopDomain: required("SHOPIFY_SHOP_DOMAIN"),
   shopifyApiVersion: process.env.SHOPIFY_API_VERSION ?? "2024-10",
   goldApiKey: process.env.GOLDAPI_KEY ?? "",
-  adminTimezone: process.env.ADMIN_TIMEZONE ?? "America/New_York"
+  adminTimezone: process.env.ADMIN_TIMEZONE ?? "America/New_York",
+  partnerPortalBaseUrl: process.env.PARTNER_PORTAL_BASE_URL ?? process.env.BASE_URL ?? "http://localhost:3000",
+  partnerInviteTtlHours: Number(process.env.PARTNER_INVITE_TTL_HOURS ?? 24 * 7),
+  partnerSessionTtlDays: Number(process.env.PARTNER_SESSION_TTL_DAYS ?? 30),
+  resendApiKey: process.env.RESEND_API_KEY ?? "",
+  resendFromEmail: process.env.RESEND_FROM_EMAIL ?? ""
 };

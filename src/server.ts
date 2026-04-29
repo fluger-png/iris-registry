@@ -1,7 +1,7 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { Prisma, ArtworkStatus } from "@prisma/client";
+import { Prisma, ArtworkStatus, CollaboratorStatus } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -105,6 +105,282 @@ const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
   return true;
 };
 
+const PARTNER_SESSION_COOKIE = "iris_partner_session";
+const PARTNER_PASSWORD_KEYLEN = 64;
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const readSingleValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return typeof value[0] === "string" ? value[0] : "";
+  }
+  return typeof value === "string" ? value : "";
+};
+
+const normalizeEmail = (value: unknown): string => readSingleValue(value).trim().toLowerCase();
+
+const parseCookieHeader = (header: string | undefined): Record<string, string> => {
+  if (!header) {
+    return {};
+  }
+  return header.split(";").reduce<Record<string, string>>((acc, part) => {
+    const [name, ...rest] = part.trim().split("=");
+    if (!name) {
+      return acc;
+    }
+    acc[name] = decodeURIComponent(rest.join("=") || "");
+    return acc;
+  }, {});
+};
+
+const createOpaqueToken = (): string => crypto.randomBytes(32).toString("base64url");
+const hashOpaqueToken = (token: string): string => crypto.createHash("sha256").update(token).digest("hex");
+
+const hashPassword = (password: string): string => {
+  const salt = crypto.randomBytes(16);
+  const digest = crypto.scryptSync(password, salt, PARTNER_PASSWORD_KEYLEN);
+  return `${salt.toString("hex")}:${digest.toString("hex")}`;
+};
+
+const verifyPassword = (password: string, encoded: string | null): boolean => {
+  if (!encoded) {
+    return false;
+  }
+  const [saltHex, digestHex] = encoded.split(":");
+  if (!saltHex || !digestHex) {
+    return false;
+  }
+  const salt = Buffer.from(saltHex, "hex");
+  const expected = Buffer.from(digestHex, "hex");
+  const actual = crypto.scryptSync(password, salt, expected.length);
+  if (actual.length !== expected.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(actual, expected);
+};
+
+const buildCookie = (name: string, value: string, expiresAt: Date): string => {
+  const isSecure =
+    env.partnerPortalBaseUrl.startsWith("https://") || env.baseUrl.startsWith("https://");
+  return [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${expiresAt.toUTCString()}`,
+    isSecure ? "Secure" : ""
+  ]
+    .filter(Boolean)
+    .join("; ");
+};
+
+const clearCookie = (name: string): string => {
+  const isSecure =
+    env.partnerPortalBaseUrl.startsWith("https://") || env.baseUrl.startsWith("https://");
+  return [
+    `${name}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "Max-Age=0",
+    isSecure ? "Secure" : ""
+  ]
+    .filter(Boolean)
+    .join("; ");
+};
+
+const createPartnerInviteUrl = (rawToken: string): string =>
+  `${env.partnerPortalBaseUrl.replace(/\/$/, "")}/partner/invite/${rawToken}`;
+
+const setPartnerSessionCookie = (reply: any, rawToken: string, expiresAt: Date): void => {
+  reply.header("Set-Cookie", buildCookie(PARTNER_SESSION_COOKIE, rawToken, expiresAt));
+};
+
+const clearPartnerSessionCookie = (reply: any): void => {
+  reply.header("Set-Cookie", clearCookie(PARTNER_SESSION_COOKIE));
+};
+
+const sendCollaboratorInviteEmailBestEffort = async (params: {
+  email: string;
+  fullName: string;
+  collectionName: string;
+  inviteLink: string;
+}): Promise<{ sent: boolean; reason: string }> => {
+  if (!env.resendApiKey || !env.resendFromEmail) {
+    return { sent: false, reason: "email_not_configured" };
+  }
+
+  const subject = `You’re invited to the IRIS Partner Portal`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#0A0A09;color:#F5F1E8;padding:32px;">
+      <div style="max-width:560px;margin:0 auto;background:#111111;border:1px solid #2A2722;padding:32px;">
+        <div style="font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:#C9A84C;margin-bottom:16px;">IRIS Partner Portal</div>
+        <h1 style="margin:0 0 18px;font-size:34px;line-height:1.05;font-weight:600;color:#F5F1E8;">Welcome, ${escapeHtml(params.fullName)}.</h1>
+        <p style="margin:0 0 14px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+          Your collaborator account for <strong style="color:#F5F1E8;">${escapeHtml(params.collectionName)}</strong> is ready.
+        </p>
+        <p style="margin:0 0 24px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+          Use the button below to create your password and access the IRIS Partner Portal.
+        </p>
+        <p style="margin:0 0 24px;">
+          <a href="${params.inviteLink}" style="display:inline-block;padding:14px 20px;background:#C9A84C;color:#111111;text-decoration:none;font-weight:700;letter-spacing:.18em;text-transform:uppercase;font-size:12px;">Create Password</a>
+        </p>
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#9F9686;">If the button doesn't work, copy this link:</p>
+        <p style="margin:0;font-size:13px;line-height:1.7;word-break:break-all;color:#F5F1E8;">${params.inviteLink}</p>
+      </div>
+    </div>
+  `;
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.resendApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: env.resendFromEmail,
+      to: [params.email],
+      subject,
+      html
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    return { sent: false, reason: `email_error:${text}` };
+  }
+
+  return { sent: true, reason: "sent" };
+};
+
+const createCollaboratorSession = async (userId: string) => {
+  const rawToken = createOpaqueToken();
+  const expiresAt = new Date(Date.now() + env.partnerSessionTtlDays * 24 * 60 * 60 * 1000);
+
+  await prisma.collaboratorSession.create({
+    data: {
+      user_id: userId,
+      token_hash: hashOpaqueToken(rawToken),
+      expires_at: expiresAt,
+      last_seen_at: new Date()
+    }
+  });
+
+  return { rawToken, expiresAt };
+};
+
+const issueCollaboratorInvite = async (params: {
+  userId: string;
+  email: string;
+  fullName: string;
+  collectionName: string;
+}) => {
+  const rawToken = createOpaqueToken();
+  const tokenHash = hashOpaqueToken(rawToken);
+  const expiresAt = new Date(Date.now() + env.partnerInviteTtlHours * 60 * 60 * 1000);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.collaboratorInvite.updateMany({
+      where: {
+        user_id: params.userId,
+        accepted_at: null,
+        revoked_at: null
+      },
+      data: {
+        revoked_at: now
+      }
+    });
+
+    await tx.collaboratorInvite.create({
+      data: {
+        user_id: params.userId,
+        token_hash: tokenHash,
+        sent_to: params.email,
+        expires_at: expiresAt
+      }
+    });
+
+    await tx.collaboratorUser.update({
+      where: { id: params.userId },
+      data: {
+        status: CollaboratorStatus.invited,
+        invitation_sent_at: now
+      }
+    });
+  });
+
+  const inviteLink = createPartnerInviteUrl(rawToken);
+  let emailSent = false;
+  let emailReason = "sent";
+
+  try {
+    const emailResult = await sendCollaboratorInviteEmailBestEffort({
+      email: params.email,
+      fullName: params.fullName,
+      collectionName: params.collectionName,
+      inviteLink
+    });
+    emailSent = emailResult.sent;
+    emailReason = emailResult.reason;
+  } catch (error) {
+    emailSent = false;
+    emailReason = error instanceof Error ? error.message : "email_failed";
+  }
+
+  return {
+    inviteLink,
+    expiresAt,
+    emailSent,
+    emailReason
+  };
+};
+
+const getPartnerAuth = async (req: any) => {
+  const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
+  const rawToken = cookies[PARTNER_SESSION_COOKIE];
+  if (!rawToken) {
+    return null;
+  }
+  const session = await prisma.collaboratorSession.findFirst({
+    where: {
+      token_hash: hashOpaqueToken(rawToken),
+      expires_at: { gt: new Date() }
+    },
+    include: {
+      user: {
+        include: {
+          collection: true
+        }
+      }
+    }
+  });
+  if (!session || session.user.status !== CollaboratorStatus.active) {
+    return null;
+  }
+  return { rawToken, session };
+};
+
+const requireCollaborator = async (req: any, reply: any) => {
+  const auth = await getPartnerAuth(req);
+  if (!auth) {
+    reply.redirect(302, "/partner/login");
+    return null;
+  }
+  await prisma.collaboratorSession.update({
+    where: { id: auth.session.id },
+    data: { last_seen_at: new Date() }
+  });
+  return auth.session;
+};
+
 const statusPill = (status: string) => {
   const key = status.toLowerCase();
   const map: Record<string, { bg: string; fg: string; label: string }> = {
@@ -127,6 +403,17 @@ const activationPill = (type: string) => {
   return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
 };
 
+const collaboratorPill = (status: CollaboratorStatus | string) => {
+  const key = status.toString().toLowerCase();
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    invited: { bg: "#FFF9D5", fg: "#B78103", label: "Invited" },
+    active: { bg: "#DAFFE9", fg: "#2F9E67", label: "Active" },
+    disabled: { bg: "#FEE2E2", fg: "#991B1B", label: "Disabled" }
+  };
+  const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: status.toString() };
+  return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
+};
+
 const buildAdminShell = (title: string, body: string, _searchValue: string, activeTab: string) => {
   const activitiesActive =
     activeTab === "activities" ||
@@ -135,6 +422,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
     activeTab === "unactivated";
   const allActive = activeTab === "all-iris";
   const logsActive = activeTab === "activation-logs";
+  const collaboratorsActive = activeTab === "collaborators";
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -421,6 +709,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
             <a class="${allActive ? "active" : ""}" href="/admin">IRIS Archive</a>
             <a class="${activitiesActive ? "active" : ""}" href="/admin/activities">Activities</a>
             <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
+            <a class="${collaboratorsActive ? "active" : ""}" href="/admin/collaborators">Collaborators</a>
             <a href="/admin/logout">Log Out</a>
           </div>
         </aside>
@@ -713,6 +1002,451 @@ const buildActivationLogsHtml = (
   `;
 
   return buildAdminShell("IRIS Admin", body, "", "activation-logs");
+};
+
+const buildCollaboratorsAdminHtml = (
+  items: Array<{
+    id: string;
+    full_name: string;
+    email: string;
+    status: CollaboratorStatus;
+    collection_name: string | null;
+    edition_size: number | null;
+    invitation_sent_at: Date | null;
+    last_login_at: Date | null;
+  }>
+) => {
+  const rows = items
+    .map((item) => {
+      return `
+        <tr>
+          <td>${escapeHtml(item.full_name)}</td>
+          <td>${escapeHtml(item.email)}</td>
+          <td>${escapeHtml(item.collection_name ?? "—")}</td>
+          <td>${item.edition_size ?? "—"}</td>
+          <td>${collaboratorPill(item.status)}</td>
+          <td>${item.invitation_sent_at ? formatDateTime(item.invitation_sent_at) : "—"}</td>
+          <td>${item.last_login_at ? formatDateTime(item.last_login_at) : "—"}</td>
+          <td>
+            ${item.status === CollaboratorStatus.invited ? `<form method="POST" action="/admin/collaborators/${item.id}/invite"><button class="btn secondary" type="submit">Resend</button></form>` : `<span class="muted">—</span>`}
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const body = `
+    <div class="title-row">
+      <h1>Collaborators</h1>
+      <a class="btn primary" href="/admin/collaborators/new" style="width:auto;height:auto;padding:10px 14px;">Create New User</a>
+    </div>
+    <p class="muted" style="margin:10px 0 18px;">Create collaborator accounts, link them to a draft collection, and send an invitation to create their password.</p>
+    <div class="card table">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Collection</th>
+            <th>Edition Size</th>
+            <th>Status</th>
+            <th>Invite Sent</th>
+            <th>Last Login</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || "<tr><td colspan='8'>No collaborators yet</td></tr>"}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  return buildAdminShell("IRIS Admin", body, "", "collaborators");
+};
+
+const buildCollaboratorCreateHtml = (options?: {
+  error?: string;
+  values?: Record<string, string>;
+}) => {
+  const values = options?.values ?? {};
+  const field = (key: string) => escapeHtml(values[key] ?? "");
+  const errorHtml = options?.error
+    ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2;color:#991B1B;margin-bottom:18px;">${escapeHtml(options.error)}</div>`
+    : "";
+  const inputStyle =
+    "width:100%;padding:12px 14px;border:1px solid #D8DDEB;border-radius:12px;font:inherit;background:#fff;";
+
+  const body = `
+    <div class="title-row">
+      <h1>Create New User</h1>
+      <a class="btn secondary" href="/admin/collaborators" style="width:auto;height:auto;padding:10px 14px;">Back</a>
+    </div>
+    <p class="muted" style="margin:10px 0 18px;">We’ll create a collaborator account, prepare a draft collection, and generate an invite link so they can create their own password.</p>
+    ${errorHtml}
+    <form method="POST" action="/admin/collaborators">
+      <div class="card" style="display:grid;gap:20px;max-width:860px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Full Name</span>
+            <input style="${inputStyle}" type="text" name="full_name" value="${field("full_name")}" required />
+          </label>
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Email</span>
+            <input style="${inputStyle}" type="email" name="email" value="${field("email")}" required />
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Collection Name</span>
+            <input style="${inputStyle}" type="text" name="collection_name" value="${field("collection_name")}" placeholder="Sayat Nova Collection" required />
+          </label>
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Collection Slug</span>
+            <input style="${inputStyle}" type="text" name="collection_slug" value="${field("collection_slug")}" placeholder="sayat-nova" />
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Artist / Vendor</span>
+            <input style="${inputStyle}" type="text" name="artist_name" value="${field("artist_name")}" placeholder="Gugoco" />
+          </label>
+          <label style="display:grid;gap:8px;">
+            <span class="muted">Edition Size</span>
+            <input style="${inputStyle}" type="number" min="1" step="1" name="edition_size" value="${field("edition_size")}" placeholder="100" required />
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div class="muted">If email delivery is not configured yet, we’ll still generate a secure invite link you can copy manually.</div>
+          <button class="btn primary" type="submit" style="width:auto;height:auto;padding:12px 16px;">Create User &amp; Invite</button>
+        </div>
+      </div>
+    </form>
+  `;
+
+  return buildAdminShell("IRIS Admin", body, "", "collaborators");
+};
+
+const buildCollaboratorSuccessHtml = (params: {
+  fullName: string;
+  email: string;
+  collectionName: string;
+  collectionSlug: string;
+  editionSize: number;
+  inviteLink: string;
+  emailSent: boolean;
+  emailReason: string;
+}) => {
+  const body = `
+    <div class="title-row">
+      <h1>Collaborator Ready</h1>
+      <a class="btn secondary" href="/admin/collaborators" style="width:auto;height:auto;padding:10px 14px;">Back to Collaborators</a>
+    </div>
+    <div class="card" style="max-width:860px;display:grid;gap:18px;">
+      <div>
+        <div class="muted" style="margin-bottom:8px;">Created account</div>
+        <h2 style="margin:0 0 8px;font-size:22px;">${escapeHtml(params.fullName)}</h2>
+        <div class="muted">${escapeHtml(params.email)}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;">
+        <div class="card" style="padding:16px;">
+          <div class="muted">Collection</div>
+          <div style="margin-top:6px;font-weight:700;">${escapeHtml(params.collectionName)}</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div class="muted">Slug</div>
+          <div style="margin-top:6px;font-weight:700;">${escapeHtml(params.collectionSlug)}</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div class="muted">Edition Size</div>
+          <div style="margin-top:6px;font-weight:700;">${params.editionSize}</div>
+        </div>
+      </div>
+      <div class="card" style="padding:16px;background:${params.emailSent ? "#ECFDF3" : "#FFF7ED"};border-color:${params.emailSent ? "#86EFAC" : "#FDBA74"};">
+        <div style="font-weight:700;color:${params.emailSent ? "#166534" : "#9A3412"};">
+          ${params.emailSent ? "Invitation sent successfully." : "Invitation link generated."}
+        </div>
+        <div class="muted" style="margin-top:6px;color:${params.emailSent ? "#166534" : "#9A3412"};">
+          ${params.emailSent ? "The collaborator can now create a password from the email invite." : `Email delivery skipped (${escapeHtml(params.emailReason)}). Copy the link below and send it manually.`}
+        </div>
+      </div>
+      <div>
+        <div class="muted" style="margin-bottom:8px;">Invite Link</div>
+        <div class="copy-row">
+          <input class="copy-input" type="text" readonly value="${params.inviteLink}" />
+          <button class="btn secondary copy-btn" type="button" data-copy-link="${params.inviteLink}">Copy link</button>
+        </div>
+      </div>
+    </div>
+  `;
+  return buildAdminShell("IRIS Admin", body, "", "collaborators");
+};
+
+const buildPartnerShell = (title: string, body: string) => `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${title}</title>
+      <style>
+        :root {
+          --bg:#0A0A09;
+          --bg-soft:#111111;
+          --line:#272420;
+          --gold:#C9A84C;
+          --text:#F5F1E8;
+          --muted:#B2A99A;
+        }
+        * { box-sizing:border-box; }
+        body {
+          margin:0;
+          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background: radial-gradient(circle at top, #151412 0%, #0A0A09 52%);
+          color: var(--text);
+        }
+        a { color: inherit; }
+        .page {
+          min-height: 100vh;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:32px 18px;
+        }
+        .panel {
+          width:min(100%, 960px);
+          background: rgba(17,17,17,.94);
+          border:1px solid var(--line);
+          box-shadow:0 24px 60px rgba(0,0,0,.35);
+        }
+        .shell {
+          display:grid;
+          grid-template-columns: minmax(260px, 0.95fr) 1.05fr;
+        }
+        .hero {
+          padding:40px 32px;
+          border-right:1px solid var(--line);
+          background: linear-gradient(180deg, rgba(20,18,16,.95), rgba(10,10,9,.98));
+        }
+        .eyebrow {
+          color:var(--gold);
+          text-transform:uppercase;
+          letter-spacing:.26em;
+          font-size:12px;
+          margin-bottom:22px;
+        }
+        .hero h1 {
+          margin:0;
+          font-size:clamp(2.8rem, 6vw, 4.6rem);
+          line-height:.96;
+          letter-spacing:-0.06rem;
+        }
+        .hero p {
+          margin:18px 0 0;
+          color:var(--muted);
+          font-size:16px;
+          line-height:1.7;
+        }
+        .body {
+          padding:40px 32px;
+        }
+        .body h2 {
+          margin:0 0 8px;
+          font-size:28px;
+          letter-spacing:-0.03rem;
+        }
+        .body p {
+          margin:0 0 18px;
+          color:var(--muted);
+          line-height:1.7;
+        }
+        .field {
+          display:grid;
+          gap:8px;
+          margin-bottom:14px;
+        }
+        .field label {
+          font-size:12px;
+          letter-spacing:.22em;
+          text-transform:uppercase;
+          color:var(--gold);
+        }
+        .field input {
+          width:100%;
+          border:1px solid var(--line);
+          background:#151412;
+          color:var(--text);
+          border-radius:12px;
+          padding:14px 16px;
+          font:inherit;
+        }
+        .btn {
+          border:0;
+          cursor:pointer;
+          background:var(--gold);
+          color:#111111;
+          font-weight:700;
+          letter-spacing:.18em;
+          text-transform:uppercase;
+          font-size:12px;
+          padding:14px 18px;
+        }
+        .ghost {
+          display:inline-flex;
+          margin-top:18px;
+          color:var(--muted);
+          text-decoration:none;
+        }
+        .error {
+          margin:0 0 18px;
+          padding:14px 16px;
+          border:1px solid #7F1D1D;
+          background:#1F1111;
+          color:#FCA5A5;
+        }
+        .stats {
+          display:grid;
+          grid-template-columns:repeat(3,minmax(0,1fr));
+          gap:14px;
+          margin-top:26px;
+        }
+        .stat {
+          border:1px solid var(--line);
+          padding:16px;
+          background:#141311;
+        }
+        .stat .label {
+          color:var(--gold);
+          text-transform:uppercase;
+          letter-spacing:.22em;
+          font-size:11px;
+        }
+        .stat .value {
+          margin-top:8px;
+          font-size:22px;
+          font-weight:700;
+        }
+        @media (max-width: 820px) {
+          .shell { grid-template-columns:1fr; }
+          .hero { border-right:0; border-bottom:1px solid var(--line); }
+          .stats { grid-template-columns:1fr; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="page">
+        <div class="panel">
+          ${body}
+        </div>
+      </div>
+    </body>
+  </html>`;
+
+const buildPartnerLoginHtml = (options?: { error?: string }) => {
+  const errorHtml = options?.error ? `<div class="error">${escapeHtml(options.error)}</div>` : "";
+  const body = `
+    <div class="shell">
+      <section class="hero">
+        <div class="eyebrow">IRIS Partner Portal</div>
+        <h1>Your art.<br/>Our infrastructure.</h1>
+        <p>Sign in to review your collection, track invitations, and manage your IRIS collaborator workspace.</p>
+      </section>
+      <section class="body">
+        <h2>Welcome back.</h2>
+        <p>Use the email address and password from your collaborator invitation.</p>
+        ${errorHtml}
+        <form method="POST" action="/partner/login">
+          <div class="field">
+            <label>Email</label>
+            <input type="email" name="email" required />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" name="password" required />
+          </div>
+          <button class="btn" type="submit">Sign In</button>
+        </form>
+      </section>
+    </div>
+  `;
+  return buildPartnerShell("IRIS Partner Portal", body);
+};
+
+const buildPartnerInviteHtml = (params: {
+  fullName: string;
+  collectionName: string;
+  error?: string;
+}) => {
+  const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
+  const body = `
+    <div class="shell">
+      <section class="hero">
+        <div class="eyebrow">IRIS Partner Portal</div>
+        <h1>Hello, ${escapeHtml(params.fullName)}.</h1>
+        <p>Your workspace for <strong>${escapeHtml(params.collectionName)}</strong> is ready. Create your password once, then we’ll bring you into the partner dashboard.</p>
+      </section>
+      <section class="body">
+        <h2>Create your password.</h2>
+        <p>This invite is one-time and secure. After you set your password, we’ll sign you in automatically.</p>
+        ${errorHtml}
+        <form method="POST">
+          <div class="field">
+            <label>New Password</label>
+            <input type="password" name="password" minlength="10" required />
+          </div>
+          <div class="field">
+            <label>Confirm Password</label>
+            <input type="password" name="password_confirm" minlength="10" required />
+          </div>
+          <button class="btn" type="submit">Create Password</button>
+        </form>
+        <a class="ghost" href="/partner/login">Already set up? Sign in</a>
+      </section>
+    </div>
+  `;
+  return buildPartnerShell("Create Password • IRIS Partner Portal", body);
+};
+
+const buildPartnerDashboardHtml = (params: {
+  fullName: string;
+  email: string;
+  collectionName: string;
+  editionSize: number;
+  collectionStatus: string;
+  revealedCount: number;
+}) => {
+  const body = `
+    <div class="shell">
+      <section class="hero">
+        <div class="eyebrow">IRIS Partner Portal</div>
+        <h1>${escapeHtml(params.collectionName)}</h1>
+        <p>${escapeHtml(params.fullName)} · ${escapeHtml(params.email)}</p>
+        <div class="stats">
+          <div class="stat">
+            <div class="label">Edition Size</div>
+            <div class="value">${params.editionSize}</div>
+          </div>
+          <div class="stat">
+            <div class="label">Revealed</div>
+            <div class="value">${params.revealedCount}</div>
+          </div>
+          <div class="stat">
+            <div class="label">Status</div>
+            <div class="value">${escapeHtml(params.collectionStatus)}</div>
+          </div>
+        </div>
+      </section>
+      <section class="body">
+        <h2>Partner dashboard is ready.</h2>
+        <p>We now have the collaborator account system in place: invite, password creation, and partner sign-in are live. Next we can shape this area into the collection-specific dashboard you want.</p>
+        <div class="card" style="padding:18px;border:1px solid var(--line);background:#141311;">
+          <div class="muted" style="margin-bottom:6px;">Next suggested slice</div>
+          <div style="font-size:18px;font-weight:700;">Collection uploads, sales tracking, and payout view</div>
+        </div>
+        <a class="ghost" href="/partner/logout">Log out</a>
+      </section>
+    </div>
+  `;
+  return buildPartnerShell("IRIS Partner Dashboard", body);
 };
 
   const buildAdminDetailHtml = (item: {
@@ -2113,6 +2847,444 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     sendJson(reply, 200, payload);
+  });
+
+  app.get("/admin/collaborators", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const collaborators = await prisma.collaboratorUser.findMany({
+      include: {
+        collection: {
+          select: {
+            name: true,
+            edition_size: true
+          }
+        }
+      },
+      orderBy: [{ created_at: "desc" }, { full_name: "asc" }]
+    });
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildCollaboratorsAdminHtml(
+          collaborators.map((item) => ({
+            id: item.id,
+            full_name: item.full_name,
+            email: item.email,
+            status: item.status,
+            collection_name: item.collection?.name ?? null,
+            edition_size: item.collection?.edition_size ?? null,
+            invitation_sent_at: item.invitation_sent_at,
+            last_login_at: item.last_login_at
+          }))
+        )
+      );
+  });
+
+  app.get("/admin/collaborators/new", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(buildCollaboratorCreateHtml());
+  });
+
+  app.post("/admin/collaborators", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const values = {
+      full_name: readSingleValue(body.full_name).trim(),
+      email: normalizeEmail(body.email),
+      collection_name: readSingleValue(body.collection_name).trim(),
+      collection_slug: normalizeCollectionSlug(
+        readSingleValue(body.collection_slug).trim() || readSingleValue(body.collection_name).trim()
+      ),
+      artist_name: readSingleValue(body.artist_name).trim(),
+      edition_size: readSingleValue(body.edition_size).trim()
+    };
+
+    const editionSize = Number(values.edition_size);
+    if (!values.full_name || !values.email || !values.collection_name || !values.collection_slug) {
+      reply
+        .code(400)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildCollaboratorCreateHtml({
+            error: "Please fill in name, email, collection name, and a valid collection slug.",
+            values
+          })
+        );
+      return;
+    }
+
+    if (!Number.isInteger(editionSize) || editionSize <= 0) {
+      reply
+        .code(400)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildCollaboratorCreateHtml({
+            error: "Edition size must be a whole number greater than zero.",
+            values
+          })
+        );
+      return;
+    }
+
+    try {
+      const created = await prisma.$transaction(async (tx) => {
+        const collection = await tx.collection.create({
+          data: {
+            slug: values.collection_slug,
+            name: values.collection_name,
+            artist_name: values.artist_name || null,
+            edition_size: editionSize,
+            artworks_count: 1,
+            status: "draft"
+          }
+        });
+
+        const user = await tx.collaboratorUser.create({
+          data: {
+            email: values.email,
+            full_name: values.full_name,
+            collection_id: collection.id,
+            status: CollaboratorStatus.invited,
+            invited_by: env.adminBasicUser
+          }
+        });
+
+        return { collection, user };
+      });
+
+      const invite = await issueCollaboratorInvite({
+        userId: created.user.id,
+        email: created.user.email,
+        fullName: created.user.full_name,
+        collectionName: created.collection.name
+      });
+
+      reply
+        .code(200)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildCollaboratorSuccessHtml({
+            fullName: created.user.full_name,
+            email: created.user.email,
+            collectionName: created.collection.name,
+            collectionSlug: created.collection.slug,
+            editionSize: created.collection.edition_size,
+            inviteLink: invite.inviteLink,
+            emailSent: invite.emailSent,
+            emailReason: invite.emailReason
+          })
+        );
+    } catch (error) {
+      let message = "Unable to create collaborator right now.";
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const target = Array.isArray(error.meta?.target)
+          ? error.meta?.target.join(",")
+          : String(error.meta?.target ?? "");
+        if (target.includes("email")) {
+          message = "That email already belongs to another collaborator.";
+        } else if (target.includes("slug")) {
+          message = "That collection slug is already in use.";
+        }
+      }
+
+      req.log.error({ err: error }, "Failed to create collaborator");
+      reply
+        .code(400)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildCollaboratorCreateHtml({
+            error: message,
+            values
+          })
+        );
+    }
+  });
+
+  app.post("/admin/collaborators/:id/invite", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const params = req.params as { id: string };
+    const user = await prisma.collaboratorUser.findUnique({
+      where: { id: params.id },
+      include: { collection: true }
+    });
+
+    if (!user || !user.collection) {
+      reply.code(404).send("Collaborator not found");
+      return;
+    }
+
+    const invite = await issueCollaboratorInvite({
+      userId: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      collectionName: user.collection.name
+    });
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildCollaboratorSuccessHtml({
+          fullName: user.full_name,
+          email: user.email,
+          collectionName: user.collection.name,
+          collectionSlug: user.collection.slug,
+          editionSize: user.collection.edition_size,
+          inviteLink: invite.inviteLink,
+          emailSent: invite.emailSent,
+          emailReason: invite.emailReason
+        })
+      );
+  });
+
+  app.get("/partner/login", async (req, reply) => {
+    const auth = await getPartnerAuth(req);
+    if (auth) {
+      reply.redirect(302, "/partner");
+      return;
+    }
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(buildPartnerLoginHtml());
+  });
+
+  app.post("/partner/login", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const email = normalizeEmail(body.email);
+    const password = readSingleValue(body.password);
+
+    const fail = () =>
+      reply
+        .code(401)
+        .type("text/html; charset=utf-8")
+        .send(buildPartnerLoginHtml({ error: "We couldn't sign you in with that email and password." }));
+
+    if (!email || !password) {
+      fail();
+      return;
+    }
+
+    const user = await prisma.collaboratorUser.findUnique({
+      where: { email },
+      include: { collection: true }
+    });
+
+    if (!user || user.status !== CollaboratorStatus.active || !verifyPassword(password, user.password_hash)) {
+      fail();
+      return;
+    }
+
+    const session = await createCollaboratorSession(user.id);
+    await prisma.collaboratorUser.update({
+      where: { id: user.id },
+      data: { last_login_at: new Date() }
+    });
+    setPartnerSessionCookie(reply, session.rawToken, session.expiresAt);
+    reply.redirect(302, "/partner");
+  });
+
+  app.get("/partner/invite/:token", async (req, reply) => {
+    const params = req.params as { token: string };
+    const invite = await prisma.collaboratorInvite.findFirst({
+      where: {
+        token_hash: hashOpaqueToken(params.token),
+        revoked_at: null
+      },
+      include: {
+        user: {
+          include: {
+            collection: true
+          }
+        }
+      }
+    });
+
+    if (!invite || invite.accepted_at || invite.expires_at <= new Date() || !invite.user.collection) {
+      reply
+        .code(410)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildPartnerShell(
+            "Invite expired • IRIS Partner Portal",
+            `
+              <div class="shell">
+                <section class="hero">
+                  <div class="eyebrow">IRIS Partner Portal</div>
+                  <h1>Invite unavailable.</h1>
+                  <p>This invitation link is expired or has already been used.</p>
+                </section>
+                <section class="body">
+                  <h2>Need help?</h2>
+                  <p>Please ask the IRIS team to resend your collaborator invite, or sign in if your password is already set.</p>
+                  <a class="btn" href="/partner/login" style="display:inline-block;text-decoration:none;">Go to Sign In</a>
+                </section>
+              </div>
+            `
+          )
+        );
+      return;
+    }
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildPartnerInviteHtml({
+          fullName: invite.user.full_name,
+          collectionName: invite.user.collection.name
+        })
+      );
+  });
+
+  app.post("/partner/invite/:token", async (req, reply) => {
+    const params = req.params as { token: string };
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const password = readSingleValue(body.password);
+    const passwordConfirm = readSingleValue(body.password_confirm);
+
+    const invite = await prisma.collaboratorInvite.findFirst({
+      where: {
+        token_hash: hashOpaqueToken(params.token),
+        revoked_at: null
+      },
+      include: {
+        user: {
+          include: {
+            collection: true
+          }
+        }
+      }
+    });
+
+    if (!invite || invite.accepted_at || invite.expires_at <= new Date() || !invite.user.collection) {
+      reply
+        .code(410)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildPartnerShell(
+            "Invite expired • IRIS Partner Portal",
+            `
+              <div class="shell">
+                <section class="hero">
+                  <div class="eyebrow">IRIS Partner Portal</div>
+                  <h1>Invite unavailable.</h1>
+                  <p>This invitation link is expired or has already been used.</p>
+                </section>
+                <section class="body">
+                  <h2>Need help?</h2>
+                  <p>Please ask the IRIS team to resend your collaborator invite.</p>
+                </section>
+              </div>
+            `
+          )
+        );
+      return;
+    }
+
+    if (password.length < 10) {
+      reply
+        .code(400)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildPartnerInviteHtml({
+            fullName: invite.user.full_name,
+            collectionName: invite.user.collection.name,
+            error: "Use at least 10 characters for your password."
+          })
+        );
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      reply
+        .code(400)
+        .type("text/html; charset=utf-8")
+        .send(
+          buildPartnerInviteHtml({
+            fullName: invite.user.full_name,
+            collectionName: invite.user.collection.name,
+            error: "Password confirmation doesn't match."
+          })
+        );
+      return;
+    }
+
+    const hashedPassword = hashPassword(password);
+    const now = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.collaboratorInvite.update({
+        where: { id: invite.id },
+        data: { accepted_at: now }
+      });
+
+      await tx.collaboratorUser.update({
+        where: { id: invite.user.id },
+        data: {
+          password_hash: hashedPassword,
+          status: CollaboratorStatus.active,
+          last_login_at: now
+        }
+      });
+    });
+
+    const session = await createCollaboratorSession(invite.user.id);
+    setPartnerSessionCookie(reply, session.rawToken, session.expiresAt);
+    reply.redirect(302, "/partner");
+  });
+
+  app.get("/partner", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+
+    const collection = session.user.collection;
+    const revealedCount = collection?.id
+      ? await prisma.artwork.count({
+          where: {
+            collection_id: collection.id,
+            status: "activated"
+          }
+        })
+      : 0;
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildPartnerDashboardHtml({
+          fullName: session.user.full_name,
+          email: session.user.email,
+          collectionName: collection?.name ?? "Untitled collection",
+          editionSize: collection?.edition_size ?? 0,
+          collectionStatus: collection?.status ? collection.status.toString() : "draft",
+          revealedCount
+        })
+      );
+  });
+
+  app.get("/partner/logout", async (req, reply) => {
+    const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
+    const rawToken = cookies[PARTNER_SESSION_COOKIE];
+    if (rawToken) {
+      await prisma.collaboratorSession.deleteMany({
+        where: {
+          token_hash: hashOpaqueToken(rawToken)
+        }
+      });
+    }
+    clearPartnerSessionCookie(reply);
+    reply.redirect(302, "/partner/login");
   });
 
   app.get("/admin", async (req, reply) => {

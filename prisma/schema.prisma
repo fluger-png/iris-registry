@@ -28,6 +28,12 @@ enum CollectionStatus {
   archived
 }
 
+enum CollaboratorStatus {
+  invited
+  active
+  disabled
+}
+
 model Collection {
   id                  String           @id @default(cuid())
   slug                String           @unique
@@ -43,6 +49,7 @@ model Collection {
   updated_at          DateTime         @updatedAt
 
   artworks            Artwork[]
+  collaborator_user   CollaboratorUser?
 
   @@index([status])
 }
@@ -112,4 +119,52 @@ model WebhookReceipt {
   topic               String
   shopify_webhook_id  String   @unique
   created_at          DateTime @default(now())
+}
+
+model CollaboratorUser {
+  id                  String             @id @default(cuid())
+  email               String             @unique
+  full_name           String
+  collection_id       String?            @unique
+  status              CollaboratorStatus @default(invited)
+  password_hash       String?
+  invited_by          String?
+  invitation_sent_at  DateTime?
+  last_login_at       DateTime?
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+
+  collection          Collection?        @relation(fields: [collection_id], references: [id], onDelete: SetNull)
+  invites             CollaboratorInvite[]
+  sessions            CollaboratorSession[]
+}
+
+model CollaboratorInvite {
+  id                  String             @id @default(cuid())
+  user_id             String
+  token_hash          String             @unique
+  sent_to             String
+  expires_at          DateTime
+  accepted_at         DateTime?
+  revoked_at          DateTime?
+  created_at          DateTime           @default(now())
+
+  user                CollaboratorUser   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
+}
+
+model CollaboratorSession {
+  id                  String             @id @default(cuid())
+  user_id             String
+  token_hash          String             @unique
+  expires_at          DateTime
+  last_seen_at        DateTime?
+  created_at          DateTime           @default(now())
+
+  user                CollaboratorUser   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
 }
