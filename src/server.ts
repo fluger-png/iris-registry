@@ -2100,20 +2100,33 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     };
 
-    const assignFromCollection = async (
-      collection: { id: string; slug: string; name: string },
+    const assignFromPool = async (
+      pool:
+        | { kind: "collection"; collection: { id: string; slug: string; name: string } }
+        | { kind: "core" },
       lineItem: { productId: string | null; handle: string | null; quantity: number }
     ) => {
       let assignedIrisId: string | null = null;
       let generatedPin: string | null = null;
 
       await prisma.$transaction(async (tx) => {
-        const irisId = await pickAvailableArtwork(tx, {
-          mode: "collection",
-          collectionId: collection.id
-        });
+        const irisId = await pickAvailableArtwork(
+          tx,
+          pool.kind === "collection"
+            ? {
+                mode: "collection",
+                collectionId: pool.collection.id
+              }
+            : {
+                mode: "core"
+              }
+        );
         if (!irisId) {
-          throw new Error(`no_available_artwork:${collection.slug}`);
+          throw new Error(
+            pool.kind === "collection"
+              ? `no_available_artwork:${pool.collection.slug}`
+              : "no_available_artwork:core"
+          );
         }
 
         const artwork = await tx.artwork.findUnique({
@@ -2147,11 +2160,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
               order_id: orderId,
               order_number: orderNumberDisplay,
               customer_email: customerEmail,
-              collection_slug: collection.slug,
-              collection_name: collection.name,
+              collection_slug: pool.kind === "collection" ? pool.collection.slug : CORE_COLLECTION_SLUG,
+              collection_name: pool.kind === "collection" ? pool.collection.name : "IRIS Collection",
               source: "product_mapping",
               shopify_product_id: lineItem.productId,
-              shopify_handle: lineItem.handle
+              shopify_handle: lineItem.handle,
+              core_collection: pool.kind === "core"
             }
           }
         });
@@ -2199,45 +2213,84 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     };
 
-    const mappedAssignments = [] as Array<{
-      collection: { id: string; slug: string; name: string };
-      lineItem: { productId: string | null; handle: string | null; quantity: number };
+    type LineItemPool =
+      | { kind: "collection"; collection: { id: string; slug: string; name: string } }
+      | { kind: "core" }
+      | { kind: "none" };
+
+    const resolveLineItemPool = async (item: {
+      productId: string | null;
+      handle: string | null;
+      quantity: number;
+      reservationTokens: string[];
+    }): Promise<LineItemPool> => {
+      const collection = await resolveLineItemCollection(item.productId, item.handle);
+      if (collection) {
+        return { kind: "collection", collection };
+      }
+      if (isCoreCollectionAlias(item.handle)) {
+        return { kind: "core" };
+      }
+      return { kind: "none" };
+    };
+
+    const relevantLineItems = [] as Array<{
+      item: (typeof lineItems)[number];
+      pool: LineItemPool;
     }>;
 
     for (const item of lineItems) {
-      if (item.reservationTokens.length >= item.quantity) {
+      const pool = await resolveLineItemPool(item);
+      if (item.reservationTokens.length === 0 && pool.kind === "none") {
         continue;
       }
-      const collection = await resolveLineItemCollection(item.productId, item.handle);
-      if (!collection) {
-        continue;
-      }
-      const missingCount = item.quantity - item.reservationTokens.length;
-      for (let index = 0; index < missingCount; index += 1) {
-        mappedAssignments.push({ collection, lineItem: item });
-      }
+      relevantLineItems.push({ item, pool });
     }
 
-    if (reservationTokens.length === 0 && mappedAssignments.length === 0) {
+    if (reservationTokens.length === 0 && relevantLineItems.length === 0) {
       reply.code(400).send({ error: "missing_reservation_token" });
       return;
     }
 
     try {
-      for (const token of reservationTokens) {
-        try {
-          await confirmReservation(token);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "unknown";
-          if (message === "reservation_expired" || message === "reservation_not_active") {
-            failed.push({ token, error: message });
-            continue;
+      for (const { item, pool } of relevantLineItems) {
+        let successfulAssignments = 0;
+
+        for (const token of item.reservationTokens) {
+          try {
+            await confirmReservation(token);
+            successfulAssignments += 1;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "unknown";
+            if (message === "reservation_expired" || message === "reservation_not_active") {
+              failed.push({ token, error: message });
+              continue;
+            }
+            throw error;
           }
-          throw error;
         }
-      }
-      for (const assignment of mappedAssignments) {
-        await assignFromCollection(assignment.collection, assignment.lineItem);
+
+        const missingCount = Math.max(0, item.quantity - successfulAssignments);
+        if (missingCount === 0) {
+          continue;
+        }
+
+        if (pool.kind === "none") {
+          req.log.warn(
+            {
+              orderId,
+              productId: item.productId,
+              handle: item.handle,
+              missingCount
+            },
+            "Unable to recover missing reservation without a pool mapping"
+          );
+          continue;
+        }
+
+        for (let index = 0; index < missingCount; index += 1) {
+          await assignFromPool(pool, item);
+        }
       }
     } catch (error) {
       req.log.error({ err: error }, "Failed to confirm reservation");
