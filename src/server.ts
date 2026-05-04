@@ -778,6 +778,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
 const buildAdminHtml = (
   items: Array<{
     iris_id: string;
+    display_iris_id: string;
     status: string;
     assigned_order_id: string | null;
     assigned_customer_email: string | null;
@@ -796,7 +797,7 @@ const buildAdminHtml = (
       return `
         <tr>
           <td>${item.assigned_order_id ?? "-"}</td>
-          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.display_iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.assigned_customer_email ?? "-"}</td>
           <td>${item.order_date ? formatDate(item.order_date) : "-"}</td>
@@ -857,6 +858,7 @@ const buildAdminHtml = (
 const buildAdminAllHtml = (
   items: Array<{
     iris_id: string;
+    display_iris_id: string;
     status: string;
     owner_email: string | null;
     activated_at: Date | null;
@@ -879,7 +881,7 @@ const buildAdminAllHtml = (
       const fileId = `file-${item.iris_id}`;
       return `
         <tr>
-          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.iris_id}</a></td>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.display_iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.owner_email ?? "-"}</td>
           <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
@@ -1451,6 +1453,7 @@ const buildPartnerDashboardHtml = (params: {
 
   const buildAdminDetailHtml = (item: {
   iris_id: string;
+  display_iris_id: string;
   status: string;
   rarity_code: string | null;
   weight_grams: number | null;
@@ -1463,9 +1466,9 @@ const buildPartnerDashboardHtml = (params: {
   pin_code: string | null;
   activation_token: string | null;
 }) => {
-  const displayId = item.iris_id.toUpperCase().startsWith("IRIS-")
-    ? item.iris_id.replace(/^IRIS-/i, "#")
-    : item.iris_id;
+  const displayId = item.display_iris_id.toUpperCase().startsWith("IRIS-")
+    ? item.display_iris_id.replace(/^IRIS-/i, "#")
+    : item.display_iris_id;
     const activationToken = item.activation_token ? item.activation_token : null;
     const activationLink = activationToken
       ? `${env.baseStorefrontUrl}/pages/activate?token=${activationToken}`
@@ -1653,9 +1656,46 @@ const CORE_COLLECTION_ALIASES = new Set([
   "iris"
 ]);
 
+type IrisCollectionDisplayMeta = {
+  slug?: string | null;
+  edition_size?: number | null;
+} | null | undefined;
+
 const isCoreCollectionAlias = (value: string | null | undefined): boolean => {
   if (!value) return false;
   return CORE_COLLECTION_ALIASES.has(normalizeCollectionSlug(value));
+};
+
+const displayWidthForCollection = (collection: IrisCollectionDisplayMeta): number | null => {
+  const editionSize = collection?.edition_size ?? null;
+  if (!editionSize || !Number.isFinite(editionSize) || editionSize <= 0) {
+    return null;
+  }
+  return Math.max(3, String(editionSize).length);
+};
+
+const formatDisplayIrisId = (irisId: string, collection: IrisCollectionDisplayMeta): string => {
+  const clean = sanitizeIrisId(irisId);
+  if (clean.toUpperCase().startsWith("IRIS-")) {
+    return clean;
+  }
+
+  const match = clean.match(/^([A-Z]+)-(\d+)$/);
+  if (!match) {
+    return clean;
+  }
+
+  const width = displayWidthForCollection(collection);
+  if (!width) {
+    return clean;
+  }
+
+  const numericValue = Number(match[2]);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return clean;
+  }
+
+  return `${match[1]}-${String(numericValue).padStart(width, "0")}`;
 };
 
 const resolveCollection = async (input: CollectionLookupInput) => {
@@ -2536,7 +2576,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         collection: {
           select: {
             slug: true,
-            name: true
+            name: true,
+            edition_size: true
           }
         }
       }
@@ -2547,6 +2588,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
     reply.send({
       iris_id: artwork.iris_id,
+      display_iris_id: formatDisplayIrisId(artwork.iris_id, artwork.collection),
       image_url: artwork.image_url,
       status: artwork.status,
       activated_at: artwork.activated_at,
@@ -2636,7 +2678,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
           collection: {
             select: {
               slug: true,
-              name: true
+              name: true,
+              edition_size: true
             }
           }
         }
@@ -2663,6 +2706,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     sendJson(reply, 200, {
       items: slice.map((item) => ({
         iris_id: item.iris_id,
+        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
         status: item.status,
         image_url: item.image_url,
         rarity_code: item.rarity_code,
@@ -2696,7 +2740,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         collection: {
           select: {
             slug: true,
-            name: true
+            name: true,
+            edition_size: true
           }
         }
       }
@@ -2720,6 +2765,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     sendJson(reply, 200, {
       items: items.map((item) => ({
         iris_id: item.iris_id,
+        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
         image_url: item.image_url,
         rarity_code: item.rarity_code,
         activated_at: item.activated_at,
@@ -2748,7 +2794,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         collection: {
           select: {
             slug: true,
-            name: true
+            name: true,
+            edition_size: true
           }
         }
       }
@@ -2763,6 +2810,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const proofPath = tokenOk ? `/apps/iris/proof/${item.iris_id}?token=${encodeURIComponent(query.token!)}` : null;
     sendJson(reply, 200, {
       iris_id: item.iris_id,
+      display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
       image_url: item.image_url,
       rarity_code: item.rarity_code,
       weight_grams: item.weight_grams,
@@ -3372,7 +3420,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
       where,
       orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
       skip,
-      take: take + 1
+      take: take + 1,
+      include: {
+        collection: {
+          select: {
+            slug: true,
+            edition_size: true
+          }
+        }
+      }
     });
 
     const hasNext = items.length > take;
@@ -3386,6 +3442,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildAdminAllHtml(
           slice.map((item) => ({
             iris_id: item.iris_id,
+            display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
             status: item.status,
             owner_email: item.owner_email,
             activated_at: item.activated_at,
@@ -3436,7 +3493,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
       where,
       orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
       skip,
-      take: take + 1
+      take: take + 1,
+      include: {
+        collection: {
+          select: {
+            slug: true,
+            edition_size: true
+          }
+        }
+      }
     });
 
     const orderEvents = await prisma.event.findMany({
@@ -3461,6 +3526,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildAdminHtml(
           slice.map((item) => ({
             iris_id: item.iris_id,
+            display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
             status: item.status,
             assigned_order_id: item.assigned_order_id,
             assigned_customer_email: item.assigned_customer_email,
@@ -3525,7 +3591,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
     let item = await prisma.artwork.findUnique({
-      where: { iris_id: irisId }
+      where: { iris_id: irisId },
+      include: {
+        collection: {
+          select: {
+            slug: true,
+            edition_size: true
+          }
+        }
+      }
     });
     if (!item) {
       reply.code(404).send("Not found");
@@ -3534,7 +3608,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!item.activation_token) {
       item = await prisma.artwork.update({
         where: { iris_id: irisId },
-        data: { activation_token: generateActivationToken() }
+        data: { activation_token: generateActivationToken() },
+        include: {
+          collection: {
+            select: {
+              slug: true,
+              edition_size: true
+            }
+          }
+        }
       });
     }
 
@@ -3544,6 +3626,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .send(
         buildAdminDetailHtml({
           iris_id: item.iris_id,
+          display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
           status: item.status,
           rarity_code: item.rarity_code,
           weight_grams: item.weight_grams,

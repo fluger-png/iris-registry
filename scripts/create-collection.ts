@@ -51,7 +51,7 @@ if (!validStatuses.has(status)) {
   throw new Error(`Invalid status: ${status}`);
 }
 
-const zeroPad = Math.max(4, String(startIndex + editionSize - 1).length);
+const zeroPad = Math.max(3, String(startIndex + editionSize - 1).length);
 const defaultRarityCode =
   explicitRarityCode ?? (editionSize <= 100 ? "Artist Edition" : null);
 
