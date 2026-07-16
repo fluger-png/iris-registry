@@ -2418,9 +2418,33 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const LOCK_MINUTES = 60;
 
     try {
-      let artwork = irisId ? await prisma.artwork.findUnique({ where: { iris_id: irisId } }) : null;
+      let artwork = irisId
+        ? await prisma.artwork.findUnique({
+            where: { iris_id: irisId },
+            include: {
+              collection: {
+                select: {
+                  slug: true,
+                  name: true,
+                  edition_size: true
+                }
+              }
+            }
+          })
+        : null;
       if (!artwork && token) {
-        artwork = await prisma.artwork.findUnique({ where: { activation_token: token } });
+        artwork = await prisma.artwork.findUnique({
+          where: { activation_token: token },
+          include: {
+            collection: {
+              select: {
+                slug: true,
+                name: true,
+                edition_size: true
+              }
+            }
+          }
+        });
         if (artwork) {
           irisId = artwork.iris_id;
         }
@@ -2506,13 +2530,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
 
       const proofToken = artwork.proof_token ?? crypto.randomUUID();
+      const activatedAt = new Date();
 
       await prisma.$transaction(async (tx) => {
         await tx.artwork.update({
           where: { iris_id: irisId },
           data: {
             status: "activated",
-            activated_at: new Date(),
+            activated_at: activatedAt,
             owner_email: email,
             proof_token: proofToken,
             pin_attempts: 0,
@@ -2531,13 +2556,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
         });
       });
 
-      try {
-        await ensureShopifyCustomerInvite(email);
-      } catch (inviteErr) {
-        req.log.error({ err: inviteErr, email }, "Shopify invite failed");
-      }
-
-      sendJson(reply, 200, { status: "ok" });
+      sendJson(reply, 200, {
+        status: "ok",
+        iris_id: artwork.iris_id,
+        display_iris_id: formatDisplayIrisId(artwork.iris_id, artwork.collection),
+        image_url: artwork.image_url,
+        activated_at: activatedAt,
+        rarity_code: artwork.rarity_code,
+        weight_grams: artwork.weight_grams,
+        passport_url: `/pages/iris-passport?iris_id=${encodeURIComponent(artwork.iris_id)}`,
+        collection: artwork.collection
+      });
     } catch (error) {
       req.log.error({ err: error }, "Activation verify failed");
       sendJson(reply, 500, { error: "activation_failed" });
