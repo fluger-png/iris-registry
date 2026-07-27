@@ -14,10 +14,10 @@ const getArg = (flag: string): string | null => {
 
 const required = (flag: string): string => {
   const value = getArg(flag);
-  if (!value) {
+  if (!value?.trim()) {
     throw new Error(`Missing required argument: ${flag}`);
   }
-  return value;
+  return value.trim();
 };
 
 const normalizeCollectionSlug = (value: string): string =>
@@ -38,14 +38,26 @@ const generateActivationToken = (): string => crypto.randomBytes(16).toString("h
 const generatePin = (): string => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
 
 const orderNumber = required("--order-number");
-const customerEmail = getArg("--email");
-const orderId = getArg("--order-id");
+const customerEmail = getArg("--email")?.trim().toLowerCase() || null;
+const orderId = getArg("--order-id")?.trim() || null;
 const collectionSlug = normalizeCollectionSlug(getArg("--collection-slug") ?? CORE_COLLECTION_SLUG);
+
+const orderNumberVariants = Array.from(
+  new Set(
+    [
+      orderNumber,
+      orderNumber.startsWith("#") ? orderNumber.slice(1) : `#${orderNumber}`,
+      orderId
+    ].filter((value): value is string => Boolean(value))
+  )
+);
 
 const run = async () => {
   const existing = await prisma.artwork.findMany({
     where: {
-      assigned_order_id: orderNumber
+      assigned_order_id: {
+        in: orderNumberVariants
+      }
     },
     select: {
       iris_id: true,
