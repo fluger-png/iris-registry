@@ -3155,28 +3155,38 @@ export const createServer = async (): Promise<FastifyInstance> => {
       });
 
       if (!emailResult.sent) {
-        await prisma.$transaction(async (tx) => {
-          await tx.ownershipTransfer.update({
-            where: { id: transferId },
-            data: {
-              status: "canceled",
-              canceled_at: new Date()
-            }
-          });
-          await tx.event.create({
-            data: {
-              iris_id: artwork.iris_id,
-              type: "transfer_email_failed",
-              actor: "system",
-              payload_json: {
-                transfer_id: transferId,
-                to_email: toEmail,
-                reason: emailResult.reason
+        try {
+          await prisma.$transaction(async (tx) => {
+            await tx.ownershipTransfer.update({
+              where: { id: transferId },
+              data: {
+                status: "canceled",
+                canceled_at: new Date()
               }
-            }
+            });
+            await tx.event.create({
+              data: {
+                iris_id: artwork.iris_id,
+                type: "transfer_email_failed",
+                actor: "system",
+                payload_json: {
+                  transfer_id: transferId,
+                  to_email: toEmail,
+                  reason: emailResult.reason
+                }
+              }
+            });
           });
+        } catch (cleanupError) {
+          req.log.error(
+            { err: cleanupError, irisId: artwork.iris_id, transferId, reason: emailResult.reason },
+            "Transfer email failure cleanup failed"
+          );
+        }
+        sendJson(reply, 502, {
+          error: "transfer_email_failed",
+          reason: emailResult.reason
         });
-        sendJson(reply, 502, { error: "transfer_email_failed", reason: emailResult.reason });
         return;
       }
 
