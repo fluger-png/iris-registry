@@ -77,6 +77,36 @@ const formatDateTime = (value: Date): string => {
   return `${mm}.${dd}.${yy} ${hh}:${min}`;
 };
 
+const parseDateValue = (value: unknown): Date | null => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const extractShopifyOrderDate = (order: Record<string, unknown>): Date | null =>
+  parseDateValue(order.created_at) ?? parseDateValue(order.processed_at) ?? parseDateValue(order.updated_at);
+
+const extractAssignedEventOrderDate = (event: {
+  created_at: Date;
+  payload_json: Prisma.JsonValue;
+}): Date => {
+  const payload =
+    event.payload_json && typeof event.payload_json === "object" && !Array.isArray(event.payload_json)
+      ? (event.payload_json as Record<string, unknown>)
+      : {};
+  return (
+    parseDateValue(payload.order_created_at) ??
+    parseDateValue(payload.shopify_order_created_at) ??
+    parseDateValue(payload.order_date) ??
+    event.created_at
+  );
+};
+
 const publicProofHtmlTemplate = (() => {
   const distPath = path.join(process.cwd(), "dist", "verify.html");
   const srcPath = path.join(process.cwd(), "src", "verify.html");
@@ -1461,7 +1491,7 @@ const buildPartnerDashboardHtml = (params: {
   assigned_customer_email: string | null;
   owner_email: string | null;
   activated_at: Date | null;
-  created_at: Date;
+  order_date: Date | null;
   image_url: string | null;
   pin_code: string | null;
   activation_token: string | null;
@@ -1509,7 +1539,7 @@ const buildPartnerDashboardHtml = (params: {
             </div>
           </dd>
           <dt>Order Number</dt><dd>${item.assigned_order_id ?? "-"}</dd>
-          <dt>Order Date</dt><dd>${new Date(item.created_at).toISOString().slice(0, 10)}</dd>
+          <dt>Order Date</dt><dd>${item.order_date ? item.order_date.toISOString().slice(0, 10) : "-"}</dd>
           <dt>Activation Date</dt><dd>${item.activated_at ? new Date(item.activated_at).toISOString().slice(0, 10) : "-"}</dd>
           <dt>Buyer</dt><dd>${item.assigned_customer_email ?? "-"}</dd>
           <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
@@ -2021,6 +2051,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         : null;
     const orderNumberDisplay = orderName ?? orderNumber ?? orderId;
     const customerEmail = extractCustomerEmail(order);
+    const orderCreatedAt = extractShopifyOrderDate(order);
+    const orderCreatedAtIso = orderCreatedAt ? orderCreatedAt.toISOString() : null;
     const failed: Array<{ token: string; error: string }> = [];
     const collectionLookupCache = new Map<string, Awaited<ReturnType<typeof resolveCollection>>>();
 
@@ -2072,6 +2104,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
                 reservation_token: reservationToken,
                 order_id: orderId,
                 order_number: orderNumberDisplay,
+                order_created_at: orderCreatedAtIso,
                 artwork_released: artwork.count > 0,
                 source: "orders_paid"
               }
@@ -2116,6 +2149,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
               reservation_token: reservationToken,
               order_id: orderId,
               order_number: orderNumberDisplay,
+              order_created_at: orderCreatedAtIso,
               customer_email: customerEmail
             }
           }
@@ -2224,6 +2258,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             payload_json: {
               order_id: orderId,
               order_number: orderNumberDisplay,
+              order_created_at: orderCreatedAtIso,
               customer_email: customerEmail,
               collection_slug: pool.kind === "collection" ? pool.collection.slug : CORE_COLLECTION_SLUG,
               collection_name: pool.kind === "collection" ? pool.collection.name : "IRIS Collection",
@@ -3604,7 +3639,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const orderDateById = new Map<string, Date>();
     for (const ev of orderEvents) {
       if (!orderDateById.has(ev.iris_id)) {
-        orderDateById.set(ev.iris_id, ev.created_at);
+        orderDateById.set(ev.iris_id, extractAssignedEventOrderDate(ev));
       }
     }
 
@@ -3712,6 +3747,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
         }
       });
     }
+    const assignedEvent = await prisma.event.findFirst({
+      where: { iris_id: item.iris_id, type: "assigned" },
+      orderBy: { created_at: "desc" }
+    });
 
     reply
       .code(200)
@@ -3727,7 +3766,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           assigned_customer_email: item.assigned_customer_email,
           owner_email: item.owner_email,
           activated_at: item.activated_at,
-          created_at: item.created_at,
+          order_date: assignedEvent ? extractAssignedEventOrderDate(assignedEvent) : null,
           image_url: item.image_url,
           pin_code: item.pin_code,
           activation_token: item.activation_token

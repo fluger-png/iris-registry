@@ -14,17 +14,31 @@ const getArg = (flag: string): string | null => {
 
 const required = (flag: string): string => {
   const value = getArg(flag);
-  if (!value) {
+  if (!value?.trim()) {
     throw new Error(`Missing required argument: ${flag}`);
   }
-  return value;
+  return value.trim();
 };
 
 const irisId = required("--iris-id");
 const orderNumber = required("--order-number");
-const customerEmail = getArg("--email");
-const orderId = getArg("--order-id");
-const reservationToken = getArg("--reservation-token");
+const customerEmail = getArg("--email")?.trim().toLowerCase() || null;
+const orderId = getArg("--order-id")?.trim() || null;
+const reservationToken = getArg("--reservation-token")?.trim() || null;
+
+const parseDateArg = (value: string | null): Date | null => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid --order-date value: ${value}`);
+  }
+  return parsed;
+};
+
+const orderDate = parseDateArg(getArg("--order-date"));
+const orderDateIso = orderDate ? orderDate.toISOString() : null;
 
 const generateActivationToken = (): string => crypto.randomBytes(16).toString("hex");
 const generatePin = (): string => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
@@ -107,6 +121,7 @@ const run = async () => {
           source: "manual_recovery",
           order_id: orderId,
           order_number: orderNumber,
+          order_created_at: orderDateIso,
           customer_email: customerEmail,
           reservation_token: reservationToken,
           collection_slug: artwork.collection?.slug ?? "iris-the-unseen-edition",

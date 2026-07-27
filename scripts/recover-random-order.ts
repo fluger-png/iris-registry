@@ -27,6 +27,17 @@ const normalizeCollectionSlug = (value: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
+const parseDateArg = (value: string | null): Date | null => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid --order-date value: ${value}`);
+  }
+  return parsed;
+};
+
 const CORE_COLLECTION_SLUG = "iris-the-unseen-edition";
 const CORE_COLLECTION_ALIASES = new Set([
   CORE_COLLECTION_SLUG,
@@ -40,6 +51,8 @@ const generatePin = (): string => crypto.randomInt(0, 1_000_000).toString().padS
 const orderNumber = required("--order-number");
 const customerEmail = getArg("--email")?.trim().toLowerCase() || null;
 const orderId = getArg("--order-id")?.trim() || null;
+const orderDate = parseDateArg(getArg("--order-date"));
+const orderDateIso = orderDate ? orderDate.toISOString() : null;
 const collectionSlug = normalizeCollectionSlug(getArg("--collection-slug") ?? CORE_COLLECTION_SLUG);
 
 const orderNumberVariants = Array.from(
@@ -140,6 +153,7 @@ const run = async () => {
           source: "manual_random_recovery",
           order_id: orderId,
           order_number: orderNumber,
+          order_created_at: orderDateIso,
           customer_email: customerEmail,
           collection_slug: collection?.slug ?? CORE_COLLECTION_SLUG,
           collection_name: collection?.name ?? "IRIS Collection"
