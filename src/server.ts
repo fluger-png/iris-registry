@@ -197,6 +197,7 @@ const publicTransferErrorReason = (error: unknown): string => {
 const TRANSFER_TTL_DAYS = 14;
 const TRANSFER_MAX_ATTEMPTS = 5;
 const TRANSFER_LOCK_MINUTES = 60;
+const TRANSFER_EMAIL_TIMEOUT_MS = 8_000;
 
 const hashPassword = (password: string): string => {
   const salt = crypto.randomBytes(16);
@@ -358,6 +359,9 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
     </div>
   `;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRANSFER_EMAIL_TIMEOUT_MS);
+
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -365,6 +369,7 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
         Authorization: `Bearer ${env.resendApiKey}`,
         "Content-Type": "application/json"
       },
+      signal: controller.signal,
       body: JSON.stringify({
         from: env.resendFromEmail,
         to: [params.toEmail],
@@ -378,8 +383,13 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
       return { sent: false, reason: `email_error:${text}` };
     }
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { sent: false, reason: "email_timeout" };
+    }
     const message = error instanceof Error ? error.message : "unknown";
     return { sent: false, reason: `email_exception:${message}` };
+  } finally {
+    clearTimeout(timeout);
   }
 
   return { sent: true, reason: "sent" };
