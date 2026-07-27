@@ -345,23 +345,28 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
     </div>
   `;
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.resendApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: env.resendFromEmail,
-      to: [params.toEmail],
-      subject,
-      html
-    })
-  });
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: env.resendFromEmail,
+        to: [params.toEmail],
+        subject,
+        html
+      })
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    return { sent: false, reason: `email_error:${text}` };
+    if (!res.ok) {
+      const text = await res.text();
+      return { sent: false, reason: `email_error:${text}` };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown";
+    return { sent: false, reason: `email_exception:${message}` };
   }
 
   return { sent: true, reason: "sent" };
@@ -2943,7 +2948,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
   app.get("/apps/iris/my-iris", async (req, reply) => {
     const query = req.query as { email?: string };
-    if (!query.email) {
+    const customerEmail = normalizeEmail(query.email);
+    if (!customerEmail) {
       sendJson(reply, 400, { error: "missing_email" });
       return;
     }
@@ -2952,8 +2958,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       where: {
         status: "activated",
         OR: [
-          { owner_email: query.email },
-          { owner_email: null, assigned_customer_email: query.email }
+          { owner_email: customerEmail },
+          { owner_email: null, assigned_customer_email: customerEmail }
         ]
       },
       orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }],
@@ -3056,8 +3062,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
         sendJson(reply, 409, { error: "not_activated" });
         return;
       }
-      const currentOwner = artwork.owner_email?.trim().toLowerCase() ?? "";
-      if (currentOwner !== fromEmail) {
+      const currentOwner = normalizeEmail(artwork.owner_email);
+      const assignedCustomer = normalizeEmail(artwork.assigned_customer_email);
+      const canTransfer =
+        currentOwner === fromEmail || (!currentOwner && assignedCustomer === fromEmail);
+      if (!canTransfer) {
         sendJson(reply, 403, { error: "owner_mismatch" });
         return;
       }
