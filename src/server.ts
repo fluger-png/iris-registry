@@ -181,6 +181,19 @@ const hashTransferCode = (code: string): string =>
   crypto.createHash("sha256").update(normalizeTransferCode(code)).digest("hex");
 const generateTransferCode = (): string => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
 
+const publicTransferErrorReason = (error: unknown): string => {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return `prisma_${error.code}`;
+  }
+  if (error instanceof Prisma.PrismaClientValidationError) {
+    return "prisma_validation";
+  }
+  if (error instanceof Error) {
+    return error.name || "error";
+  }
+  return "unknown";
+};
+
 const TRANSFER_TTL_DAYS = 14;
 const TRANSFER_MAX_ATTEMPTS = 5;
 const TRANSFER_LOCK_MINUTES = 60;
@@ -3126,7 +3139,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
               transfer_id: transfer.id,
               from_email: fromEmail,
               to_email: toEmail,
-              expires_at: expiresAt,
+              expires_at: expiresAt.toISOString(),
               canceled_previous_count: canceled.count
             }
           }
@@ -3176,7 +3189,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
       });
     } catch (error) {
       req.log.error({ err: error, irisId }, "Transfer request failed");
-      sendJson(reply, 500, { error: "transfer_request_failed" });
+      sendJson(reply, 500, {
+        error: "transfer_request_failed",
+        reason: publicTransferErrorReason(error)
+      });
     }
   });
 
@@ -3312,7 +3328,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
                 transfer_id: transfer.id,
                 reason: lockedUntil ? "max_attempts" : "invalid_transfer_code",
                 attempts: nextAttempts,
-                locked_until: lockedUntil
+                locked_until: lockedUntil ? lockedUntil.toISOString() : null
               }
             }
           });
@@ -3357,7 +3373,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
               previous_owner_email: previousOwnerEmail,
               new_owner_email: email,
               from_email: transfer.from_email,
-              claimed_at: claimedAt
+              claimed_at: claimedAt.toISOString()
             }
           }
         });
