@@ -64,6 +64,8 @@ export type ShopifyLineItemSummary = {
   productId: string | null;
   handle: string | null;
   quantity: number;
+  irisIds: string[];
+  collectionSlugs: string[];
   reservationTokens: string[];
 };
 
@@ -81,20 +83,52 @@ export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] 
     "iris_reservation_token",
     "iris-reservation-token"
   ]);
+  const irisIdKeys = new Set([
+    "iris_id",
+    "iris-id",
+    "_iris_id",
+    "_iris-id"
+  ]);
+  const collectionSlugKeys = new Set([
+    "iris_collection_slug",
+    "iris-collection-slug",
+    "_iris_collection_slug",
+    "_iris-collection-slug",
+    "collection_slug",
+    "collection-slug"
+  ]);
+  const productHandleKeys = new Set([
+    "product_handle",
+    "product-handle",
+    "_iris_product_handle",
+    "_iris-product-handle"
+  ]);
 
   return lineItems.map((item) => {
     const rawQuantity = Number(item.quantity ?? 1);
     const properties = item.properties as Array<{ name?: string; value?: string }> | undefined;
     const reservationTokens: string[] = [];
+    const irisIds: string[] = [];
+    const collectionSlugs: string[] = [];
+    let propertyProductHandle: string | null = null;
     if (Array.isArray(properties)) {
       for (const prop of properties) {
         const name = prop?.name?.toString().trim().toLowerCase();
-        if (!name || !tokenKeys.has(name)) {
+        if (!name) {
           continue;
         }
         const value = prop?.value?.toString().trim();
-        if (value) {
+        if (!value) {
+          continue;
+        }
+        if (tokenKeys.has(name)) {
           reservationTokens.push(value);
+        } else if (irisIdKeys.has(name)) {
+          irisIds.push(value);
+        } else if (collectionSlugKeys.has(name)) {
+          collectionSlugs.push(value);
+        } else if (productHandleKeys.has(name)) {
+          propertyProductHandle = value;
         }
       }
     }
@@ -103,11 +137,19 @@ export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] 
       typeof item.product_id === "number" || typeof item.product_id === "string"
         ? String(item.product_id)
         : null;
-    const handle = typeof item.handle === "string" && item.handle.trim() ? item.handle.trim() : null;
+    const itemHandle =
+      typeof item.handle === "string" && item.handle.trim()
+        ? item.handle.trim()
+        : typeof item.product_handle === "string" && item.product_handle.trim()
+          ? item.product_handle.trim()
+          : null;
+    const handle = itemHandle ?? propertyProductHandle;
     return {
       productId,
       handle,
       quantity: Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1,
+      irisIds: Array.from(new Set(irisIds)),
+      collectionSlugs: Array.from(new Set(collectionSlugs)),
       reservationTokens: Array.from(new Set(reservationTokens))
     };
   });

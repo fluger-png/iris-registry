@@ -2024,12 +2024,16 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const failed: Array<{ token: string; error: string }> = [];
     const collectionLookupCache = new Map<string, Awaited<ReturnType<typeof resolveCollection>>>();
 
-    const resolveLineItemCollection = async (productId: string | null, productHandle: string | null) => {
-      const cacheKey = `${productId ?? ""}|${productHandle ?? ""}`;
+    const resolveLineItemCollection = async (
+      productId: string | null,
+      productHandle: string | null,
+      collectionSlug?: string | null
+    ) => {
+      const cacheKey = `${collectionSlug ?? ""}|${productId ?? ""}|${productHandle ?? ""}`;
       if (collectionLookupCache.has(cacheKey)) {
         return collectionLookupCache.get(cacheKey) ?? null;
       }
-      const collection = await resolveCollection({ productId, productHandle });
+      const collection = await resolveCollection({ productId, productHandle, collectionSlug });
       collectionLookupCache.set(cacheKey, collection);
       return collection;
     };
@@ -2051,6 +2055,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
           await tx.reservation.update({
             where: { token: reservationToken },
             data: { status: "expired" }
+          });
+          const artwork = await tx.artwork.updateMany({
+            where: {
+              iris_id: reservation.iris_id,
+              status: "reserved"
+            },
+            data: { status: "available" }
+          });
+          await tx.event.create({
+            data: {
+              iris_id: reservation.iris_id,
+              type: "reservation_expired",
+              actor: "shopify",
+              payload_json: {
+                reservation_token: reservationToken,
+                order_id: orderId,
+                order_number: orderNumberDisplay,
+                artwork_released: artwork.count > 0,
+                source: "orders_paid"
+              }
+            }
           });
           throw new Error("reservation_expired");
         }
@@ -2144,7 +2169,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       pool:
         | { kind: "collection"; collection: { id: string; slug: string; name: string } }
         | { kind: "core" },
-      lineItem: { productId: string | null; handle: string | null; quantity: number }
+      lineItem: (typeof lineItems)[number]
     ) => {
       let assignedIrisId: string | null = null;
       let generatedPin: string | null = null;
@@ -2205,6 +2230,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
               source: "product_mapping",
               shopify_product_id: lineItem.productId,
               shopify_handle: lineItem.handle,
+              line_item_iris_ids: lineItem.irisIds,
+              line_item_collection_slugs: lineItem.collectionSlugs,
               core_collection: pool.kind === "core"
             }
           }
@@ -2262,8 +2289,20 @@ export const createServer = async (): Promise<FastifyInstance> => {
       productId: string | null;
       handle: string | null;
       quantity: number;
+      irisIds: string[];
+      collectionSlugs: string[];
       reservationTokens: string[];
     }): Promise<LineItemPool> => {
+      for (const collectionSlug of item.collectionSlugs) {
+        if (isCoreCollectionAlias(collectionSlug)) {
+          return { kind: "core" };
+        }
+        const collection = await resolveLineItemCollection(null, null, collectionSlug);
+        if (collection) {
+          return { kind: "collection", collection };
+        }
+      }
+
       const collection = await resolveLineItemCollection(item.productId, item.handle);
       if (collection) {
         return { kind: "collection", collection };
@@ -2271,6 +2310,29 @@ export const createServer = async (): Promise<FastifyInstance> => {
       if (isCoreCollectionAlias(item.handle)) {
         return { kind: "core" };
       }
+
+      for (const lineItemIrisId of item.irisIds) {
+        const irisId = sanitizeIrisId(lineItemIrisId);
+        if (irisId.toUpperCase().startsWith("IRIS-")) {
+          return { kind: "core" };
+        }
+        const artwork = await prisma.artwork.findUnique({
+          where: { iris_id: irisId },
+          include: {
+            collection: {
+              select: {
+                id: true,
+                slug: true,
+                name: true
+              }
+            }
+          }
+        });
+        if (artwork?.collection) {
+          return { kind: "collection", collection: artwork.collection };
+        }
+      }
+
       return { kind: "none" };
     };
 
@@ -2321,6 +2383,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
               orderId,
               productId: item.productId,
               handle: item.handle,
+              irisIds: item.irisIds,
+              collectionSlugs: item.collectionSlugs,
               missingCount
             },
             "Unable to recover missing reservation without a pool mapping"

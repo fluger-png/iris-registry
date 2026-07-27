@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "collection:create": "tsx scripts/create-collection.ts",
     "order:recover": "tsx scripts/recover-missed-order.ts",
+    "order:recover-random": "tsx scripts/recover-random-order.ts",
     "rarity:commit": "tsx scripts/rarity-commit.ts",
     "test": "vitest run"
   },
