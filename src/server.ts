@@ -34,6 +34,10 @@ const r2 = new S3Client({
 });
 
 const sanitizeIrisId = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+const normalizeIrisIdInput = (value: string): string => {
+  const clean = sanitizeIrisId(value);
+  return /^\d+$/.test(clean) ? `IRIS-${clean.padStart(4, "0").slice(-4)}` : clean;
+};
 const normalizeCollectionSlug = (value: string): string =>
   value
     .trim()
@@ -154,6 +158,7 @@ const readSingleValue = (value: unknown): string => {
 };
 
 const normalizeEmail = (value: unknown): string => readSingleValue(value).trim().toLowerCase();
+const isValidEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 const parseCookieHeader = (header: string | undefined): Record<string, string> => {
   if (!header) {
@@ -171,6 +176,14 @@ const parseCookieHeader = (header: string | undefined): Record<string, string> =
 
 const createOpaqueToken = (): string => crypto.randomBytes(32).toString("base64url");
 const hashOpaqueToken = (token: string): string => crypto.createHash("sha256").update(token).digest("hex");
+const normalizeTransferCode = (value: string): string => value.trim().replace(/\s+/g, "").toUpperCase();
+const hashTransferCode = (code: string): string =>
+  crypto.createHash("sha256").update(normalizeTransferCode(code)).digest("hex");
+const generateTransferCode = (): string => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+
+const TRANSFER_TTL_DAYS = 14;
+const TRANSFER_MAX_ATTEMPTS = 5;
+const TRANSFER_LOCK_MINUTES = 60;
 
 const hashPassword = (password: string): string => {
   const salt = crypto.randomBytes(16);
@@ -277,6 +290,70 @@ const sendCollaboratorInviteEmailBestEffort = async (params: {
     body: JSON.stringify({
       from: env.resendFromEmail,
       to: [params.email],
+      subject,
+      html
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    return { sent: false, reason: `email_error:${text}` };
+  }
+
+  return { sent: true, reason: "sent" };
+};
+
+const sendOwnershipTransferEmailBestEffort = async (params: {
+  toEmail: string;
+  fromEmail: string;
+  displayIrisId: string;
+  transferCode: string;
+  expiresAt: Date;
+}): Promise<{ sent: boolean; reason: string }> => {
+  if (!env.resendApiKey || !env.resendFromEmail) {
+    return { sent: false, reason: "email_not_configured" };
+  }
+
+  const expiresLabel = params.expiresAt.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  });
+  const subject = `Transfer code for ${params.displayIrisId}`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#0A0A09;color:#F5F1E8;padding:32px;">
+      <div style="max-width:580px;margin:0 auto;background:#111111;border:1px solid #2A2722;padding:32px;">
+        <div style="font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:#C9A84C;margin-bottom:16px;">IRIS Ownership Transfer</div>
+        <h1 style="margin:0 0 18px;font-size:34px;line-height:1.05;font-weight:600;color:#F5F1E8;">${escapeHtml(params.displayIrisId)} is ready to be claimed.</h1>
+        <p style="margin:0 0 14px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+          ${escapeHtml(params.fromEmail)} has started an ownership transfer to this email address.
+        </p>
+        <p style="margin:0 0 18px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+          To complete the transfer, hold the physical IRIS piece, scan the NFC tag, and enter the transfer code below on the IRIS activation page.
+        </p>
+        <div style="margin:26px 0;padding:20px 22px;border:1px solid #C9A84C;background:#0A0A09;text-align:center;">
+          <div style="font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:#9F9686;margin-bottom:10px;">Transfer Code</div>
+          <div style="font-size:32px;letter-spacing:.28em;font-weight:700;color:#F5F1E8;">${escapeHtml(params.transferCode)}</div>
+        </div>
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#9F9686;">
+          The NFC link on the artwork does not change. This code expires on ${escapeHtml(expiresLabel)}.
+        </p>
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#9F9686;">
+          If you were not expecting an IRIS transfer, you can ignore this email.
+        </p>
+      </div>
+    </div>
+  `;
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.resendApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: env.resendFromEmail,
+      to: [params.toEmail],
       subject,
       html
     })
@@ -2714,6 +2791,20 @@ export const createServer = async (): Promise<FastifyInstance> => {
       reply.code(404).send({ error: "not_found" });
       return;
     }
+    const pendingTransfer =
+      artwork.status === "activated"
+        ? await prisma.ownershipTransfer.findFirst({
+            where: {
+              iris_id: artwork.iris_id,
+              status: "pending",
+              expires_at: { gt: new Date() }
+            },
+            select: {
+              expires_at: true
+            },
+            orderBy: { created_at: "desc" }
+          })
+        : null;
     reply.send({
       iris_id: artwork.iris_id,
       display_iris_id: formatDisplayIrisId(artwork.iris_id, artwork.collection),
@@ -2722,6 +2813,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       activated_at: artwork.activated_at,
       rarity_code: artwork.rarity_code,
       weight_grams: artwork.weight_grams,
+      transfer_pending: Boolean(pendingTransfer),
+      transfer_expires_at: pendingTransfer?.expires_at ?? null,
       collection: artwork.collection
     });
   });
@@ -2871,6 +2964,18 @@ export const createServer = async (): Promise<FastifyInstance> => {
             name: true,
             edition_size: true
           }
+        },
+        ownership_transfers: {
+          where: {
+            status: "pending",
+            expires_at: { gt: new Date() }
+          },
+          orderBy: { created_at: "desc" },
+          take: 1,
+          select: {
+            to_email: true,
+            expires_at: true
+          }
         }
       }
     });
@@ -2898,6 +3003,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
         rarity_code: item.rarity_code,
         activated_at: item.activated_at,
         collection: item.collection,
+        transfer_pending: item.ownership_transfers.length > 0,
+        transfer_pending_to: item.ownership_transfers[0]?.to_email ?? null,
+        transfer_expires_at: item.ownership_transfers[0]?.expires_at ?? null,
         passport_url: (item.proof_token ?? generatedTokens.get(item.iris_id))
           ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(
               item.proof_token ?? generatedTokens.get(item.iris_id) ?? ""
@@ -2905,6 +3013,347 @@ export const createServer = async (): Promise<FastifyInstance> => {
           : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
       }))
     });
+  });
+
+  app.post("/apps/iris/transfer-request", async (req, reply) => {
+    const body = req.body as { iris_id?: string; from_email?: string; to_email?: string };
+    const irisId = normalizeIrisIdInput(readSingleValue(body.iris_id));
+    const fromEmail = normalizeEmail(body.from_email);
+    const toEmail = normalizeEmail(body.to_email);
+
+    if (!irisId || !fromEmail || !toEmail) {
+      sendJson(reply, 400, { error: "missing_required_fields" });
+      return;
+    }
+    if (!isValidEmail(fromEmail) || !isValidEmail(toEmail)) {
+      sendJson(reply, 400, { error: "invalid_email" });
+      return;
+    }
+    if (fromEmail === toEmail) {
+      sendJson(reply, 400, { error: "same_email" });
+      return;
+    }
+
+    try {
+      const artwork = await prisma.artwork.findUnique({
+        where: { iris_id: irisId },
+        include: {
+          collection: {
+            select: {
+              slug: true,
+              name: true,
+              edition_size: true
+            }
+          }
+        }
+      });
+
+      if (!artwork) {
+        sendJson(reply, 404, { error: "iris_not_found" });
+        return;
+      }
+      if (artwork.status !== "activated") {
+        sendJson(reply, 409, { error: "not_activated" });
+        return;
+      }
+      const currentOwner = artwork.owner_email?.trim().toLowerCase() ?? "";
+      if (currentOwner !== fromEmail) {
+        sendJson(reply, 403, { error: "owner_mismatch" });
+        return;
+      }
+
+      const transferCode = generateTransferCode();
+      const expiresAt = new Date(Date.now() + TRANSFER_TTL_DAYS * 24 * 60 * 60 * 1000);
+      let transferId = "";
+      const now = new Date();
+
+      await prisma.$transaction(async (tx) => {
+        const canceled = await tx.ownershipTransfer.updateMany({
+          where: {
+            iris_id: artwork.iris_id,
+            status: "pending"
+          },
+          data: {
+            status: "canceled",
+            canceled_at: now
+          }
+        });
+
+        const transfer = await tx.ownershipTransfer.create({
+          data: {
+            iris_id: artwork.iris_id,
+            from_email: fromEmail,
+            to_email: toEmail,
+            code_hash: hashTransferCode(transferCode),
+            code_last4: transferCode.slice(-4),
+            expires_at: expiresAt
+          }
+        });
+        transferId = transfer.id;
+
+        await tx.event.create({
+          data: {
+            iris_id: artwork.iris_id,
+            type: "transfer_requested",
+            actor: fromEmail,
+            payload_json: {
+              transfer_id: transfer.id,
+              from_email: fromEmail,
+              to_email: toEmail,
+              expires_at: expiresAt,
+              canceled_previous_count: canceled.count
+            }
+          }
+        });
+      });
+
+      const emailResult = await sendOwnershipTransferEmailBestEffort({
+        toEmail,
+        fromEmail,
+        displayIrisId: formatDisplayIrisId(artwork.iris_id, artwork.collection),
+        transferCode,
+        expiresAt
+      });
+
+      if (!emailResult.sent) {
+        await prisma.$transaction(async (tx) => {
+          await tx.ownershipTransfer.update({
+            where: { id: transferId },
+            data: {
+              status: "canceled",
+              canceled_at: new Date()
+            }
+          });
+          await tx.event.create({
+            data: {
+              iris_id: artwork.iris_id,
+              type: "transfer_email_failed",
+              actor: "system",
+              payload_json: {
+                transfer_id: transferId,
+                to_email: toEmail,
+                reason: emailResult.reason
+              }
+            }
+          });
+        });
+        sendJson(reply, 502, { error: "transfer_email_failed", reason: emailResult.reason });
+        return;
+      }
+
+      sendJson(reply, 200, {
+        status: "ok",
+        iris_id: artwork.iris_id,
+        display_iris_id: formatDisplayIrisId(artwork.iris_id, artwork.collection),
+        to_email: toEmail,
+        expires_at: expiresAt
+      });
+    } catch (error) {
+      req.log.error({ err: error, irisId }, "Transfer request failed");
+      sendJson(reply, 500, { error: "transfer_request_failed" });
+    }
+  });
+
+  app.post("/apps/iris/transfer-claim", async (req, reply) => {
+    const body = req.body as {
+      iris_id?: string;
+      token?: string;
+      email?: string;
+      transfer_code?: string;
+    };
+    const rawIrisId = readSingleValue(body.iris_id);
+    const token = readSingleValue(body.token).trim();
+    let irisId = rawIrisId ? normalizeIrisIdInput(rawIrisId) : "";
+    const email = normalizeEmail(body.email);
+    const transferCode = normalizeTransferCode(readSingleValue(body.transfer_code));
+
+    if ((!irisId && !token) || !email || !transferCode) {
+      sendJson(reply, 400, { error: "missing_required_fields" });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      sendJson(reply, 400, { error: "invalid_email" });
+      return;
+    }
+
+    try {
+      let artwork = irisId
+        ? await prisma.artwork.findUnique({
+            where: { iris_id: irisId },
+            include: {
+              collection: {
+                select: {
+                  slug: true,
+                  name: true,
+                  edition_size: true
+                }
+              }
+            }
+          })
+        : null;
+      if (!artwork && token) {
+        artwork = await prisma.artwork.findUnique({
+          where: { activation_token: token },
+          include: {
+            collection: {
+              select: {
+                slug: true,
+                name: true,
+                edition_size: true
+              }
+            }
+          }
+        });
+      }
+
+      if (!artwork) {
+        sendJson(reply, 404, { error: "iris_not_found" });
+        return;
+      }
+      irisId = artwork.iris_id;
+      if (artwork.status !== "activated") {
+        sendJson(reply, 409, { error: "not_activated" });
+        return;
+      }
+      if (artwork.activation_token && (!token || token !== artwork.activation_token)) {
+        sendJson(reply, 403, { error: "invalid_activation_link" });
+        return;
+      }
+
+      const transfer = await prisma.ownershipTransfer.findFirst({
+        where: {
+          iris_id: artwork.iris_id,
+          status: "pending",
+          to_email: email
+        },
+        orderBy: { created_at: "desc" }
+      });
+
+      if (!transfer) {
+        sendJson(reply, 404, { error: "transfer_not_found" });
+        return;
+      }
+
+      const now = new Date();
+      if (transfer.expires_at <= now) {
+        await prisma.$transaction(async (tx) => {
+          await tx.ownershipTransfer.update({
+            where: { id: transfer.id },
+            data: { status: "expired" }
+          });
+          await tx.event.create({
+            data: {
+              iris_id: artwork.iris_id,
+              type: "transfer_expired",
+              actor: email,
+              payload_json: {
+                transfer_id: transfer.id,
+                to_email: email
+              }
+            }
+          });
+        });
+        sendJson(reply, 410, { error: "transfer_expired" });
+        return;
+      }
+
+      if (transfer.locked_until && transfer.locked_until > now) {
+        sendJson(reply, 429, { error: "too_many_attempts", retry_at: transfer.locked_until });
+        return;
+      }
+
+      if (transfer.code_hash !== hashTransferCode(transferCode)) {
+        const nextAttempts = transfer.attempts + 1;
+        const lockedUntil =
+          nextAttempts >= TRANSFER_MAX_ATTEMPTS
+            ? new Date(Date.now() + TRANSFER_LOCK_MINUTES * 60 * 1000)
+            : null;
+
+        await prisma.$transaction(async (tx) => {
+          await tx.ownershipTransfer.update({
+            where: { id: transfer.id },
+            data: {
+              attempts: nextAttempts,
+              locked_until: lockedUntil
+            }
+          });
+          await tx.event.create({
+            data: {
+              iris_id: artwork.iris_id,
+              type: lockedUntil ? "transfer_claim_blocked" : "transfer_claim_failed",
+              actor: email,
+              payload_json: {
+                transfer_id: transfer.id,
+                reason: lockedUntil ? "max_attempts" : "invalid_transfer_code",
+                attempts: nextAttempts,
+                locked_until: lockedUntil
+              }
+            }
+          });
+        });
+
+        if (lockedUntil) {
+          sendJson(reply, 429, { error: "too_many_attempts", retry_at: lockedUntil });
+        } else {
+          sendJson(reply, 401, { error: "invalid_transfer_code" });
+        }
+        return;
+      }
+
+      const previousOwnerEmail = artwork.owner_email;
+      const proofToken = crypto.randomUUID();
+      const claimedAt = new Date();
+
+      await prisma.$transaction(async (tx) => {
+        await tx.ownershipTransfer.update({
+          where: { id: transfer.id },
+          data: {
+            status: "claimed",
+            claimed_at: claimedAt,
+            attempts: 0,
+            locked_until: null
+          }
+        });
+        await tx.artwork.update({
+          where: { iris_id: artwork.iris_id },
+          data: {
+            owner_email: email,
+            proof_token: proofToken
+          }
+        });
+        await tx.event.create({
+          data: {
+            iris_id: artwork.iris_id,
+            type: "ownership_transferred",
+            actor: email,
+            payload_json: {
+              transfer_id: transfer.id,
+              previous_owner_email: previousOwnerEmail,
+              new_owner_email: email,
+              from_email: transfer.from_email,
+              claimed_at: claimedAt
+            }
+          }
+        });
+      });
+
+      sendJson(reply, 200, {
+        status: "ok",
+        iris_id: artwork.iris_id,
+        display_iris_id: formatDisplayIrisId(artwork.iris_id, artwork.collection),
+        image_url: artwork.image_url,
+        activated_at: artwork.activated_at,
+        rarity_code: artwork.rarity_code,
+        weight_grams: artwork.weight_grams,
+        passport_url: `/pages/iris-passport?iris_id=${encodeURIComponent(artwork.iris_id)}&token=${encodeURIComponent(
+          proofToken
+        )}`,
+        collection: artwork.collection
+      });
+    } catch (error) {
+      req.log.error({ err: error, irisId }, "Transfer claim failed");
+      sendJson(reply, 500, { error: "transfer_claim_failed" });
+    }
   });
 
   app.get("/apps/iris/iris/:irisId", async (req, reply) => {
@@ -2936,6 +3385,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const tokenOk = !!query.token && item.proof_token === query.token;
     const proofPath = tokenOk ? `/apps/iris/proof/${item.iris_id}?token=${encodeURIComponent(query.token!)}` : null;
+    const pendingTransfer = await prisma.ownershipTransfer.findFirst({
+      where: {
+        iris_id: item.iris_id,
+        status: "pending",
+        expires_at: { gt: new Date() }
+      },
+      select: {
+        expires_at: true
+      },
+      orderBy: { created_at: "desc" }
+    });
     sendJson(reply, 200, {
       iris_id: item.iris_id,
       display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
@@ -2944,6 +3404,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       weight_grams: item.weight_grams,
       activated_at: item.activated_at,
       status: item.status,
+      transfer_pending: Boolean(pendingTransfer),
+      transfer_expires_at: pendingTransfer?.expires_at ?? null,
       proof_url: proofPath,
       collection: item.collection
     });

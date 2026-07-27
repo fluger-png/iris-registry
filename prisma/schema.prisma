@@ -78,6 +78,7 @@ model Artwork {
   collection              Collection?     @relation(fields: [collection_id], references: [id], onDelete: SetNull)
   events                  Event[]
   reservations            Reservation[]
+  ownership_transfers     OwnershipTransfer[]
 
   @@index([status])
   @@index([collection_id, status])
@@ -111,6 +112,29 @@ model Reservation {
 
   @@index([iris_id])
   @@index([status])
+  @@index([expires_at])
+}
+
+model OwnershipTransfer {
+  id             String   @id @default(cuid())
+  iris_id        String
+  status         String   @default("pending")
+  from_email     String
+  to_email       String
+  code_hash      String
+  code_last4     String
+  attempts       Int      @default(0)
+  locked_until   DateTime?
+  expires_at     DateTime
+  claimed_at     DateTime?
+  canceled_at    DateTime?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  artwork        Artwork  @relation(fields: [iris_id], references: [iris_id], onDelete: Cascade)
+
+  @@index([iris_id, status])
+  @@index([to_email, status])
   @@index([expires_at])
 }
 
