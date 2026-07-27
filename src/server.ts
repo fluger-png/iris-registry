@@ -2970,21 +2970,35 @@ export const createServer = async (): Promise<FastifyInstance> => {
             name: true,
             edition_size: true
           }
-        },
-        ownership_transfers: {
+        }
+      }
+    });
+
+    const pendingTransfersByIrisId = new Map<string, { to_email: string; expires_at: Date }>();
+    if (items.length > 0) {
+      try {
+        const pendingTransfers = await prisma.ownershipTransfer.findMany({
           where: {
+            iris_id: { in: items.map((item) => item.iris_id) },
             status: "pending",
             expires_at: { gt: new Date() }
           },
           orderBy: { created_at: "desc" },
-          take: 1,
           select: {
+            iris_id: true,
             to_email: true,
             expires_at: true
           }
+        });
+        for (const transfer of pendingTransfers) {
+          if (!pendingTransfersByIrisId.has(transfer.iris_id)) {
+            pendingTransfersByIrisId.set(transfer.iris_id, transfer);
+          }
         }
+      } catch (error) {
+        req.log.warn({ err: error }, "Pending transfer lookup skipped");
       }
-    });
+    }
 
     const generatedTokens = new Map<string, string>();
     const missing = items.filter((item) => !item.proof_token);
@@ -3002,22 +3016,25 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     sendJson(reply, 200, {
-      items: items.map((item) => ({
-        iris_id: item.iris_id,
-        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-        image_url: item.image_url,
-        rarity_code: item.rarity_code,
-        activated_at: item.activated_at,
-        collection: item.collection,
-        transfer_pending: item.ownership_transfers.length > 0,
-        transfer_pending_to: item.ownership_transfers[0]?.to_email ?? null,
-        transfer_expires_at: item.ownership_transfers[0]?.expires_at ?? null,
-        passport_url: (item.proof_token ?? generatedTokens.get(item.iris_id))
-          ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(
-              item.proof_token ?? generatedTokens.get(item.iris_id) ?? ""
-            )}`
-          : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
-      }))
+      items: items.map((item) => {
+        const pendingTransfer = pendingTransfersByIrisId.get(item.iris_id);
+        return {
+          iris_id: item.iris_id,
+          display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+          image_url: item.image_url,
+          rarity_code: item.rarity_code,
+          activated_at: item.activated_at,
+          collection: item.collection,
+          transfer_pending: Boolean(pendingTransfer),
+          transfer_pending_to: pendingTransfer?.to_email ?? null,
+          transfer_expires_at: pendingTransfer?.expires_at ?? null,
+          passport_url: (item.proof_token ?? generatedTokens.get(item.iris_id))
+            ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(
+                item.proof_token ?? generatedTokens.get(item.iris_id) ?? ""
+              )}`
+            : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
+        };
+      })
     });
   });
 
