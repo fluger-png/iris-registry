@@ -3062,25 +3062,30 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   app.post("/apps/iris/transfer-request", async (req, reply) => {
-    const body = req.body as { iris_id?: string; from_email?: string; to_email?: string };
-    const irisId = normalizeIrisIdInput(readSingleValue(body.iris_id));
-    const fromEmail = normalizeEmail(body.from_email);
-    const toEmail = normalizeEmail(body.to_email);
-
-    if (!irisId || !fromEmail || !toEmail) {
-      sendJson(reply, 400, { error: "missing_required_fields" });
-      return;
-    }
-    if (!isValidEmail(fromEmail) || !isValidEmail(toEmail)) {
-      sendJson(reply, 400, { error: "invalid_email" });
-      return;
-    }
-    if (fromEmail === toEmail) {
-      sendJson(reply, 400, { error: "same_email" });
-      return;
-    }
-
+    let irisId = "";
     try {
+      const body = (req.body ?? {}) as {
+        iris_id?: string;
+        from_email?: string;
+        to_email?: string;
+      };
+      irisId = normalizeIrisIdInput(readSingleValue(body.iris_id));
+      const fromEmail = normalizeEmail(body.from_email);
+      const toEmail = normalizeEmail(body.to_email);
+
+      if (!irisId || !fromEmail || !toEmail) {
+        sendJson(reply, 400, { error: "missing_required_fields" });
+        return;
+      }
+      if (!isValidEmail(fromEmail) || !isValidEmail(toEmail)) {
+        sendJson(reply, 400, { error: "invalid_email" });
+        return;
+      }
+      if (fromEmail === toEmail) {
+        sendJson(reply, 400, { error: "same_email" });
+        return;
+      }
+
       const artwork = await prisma.artwork.findUnique({
         where: { iris_id: irisId },
         include: {
