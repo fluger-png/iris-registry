@@ -14,6 +14,7 @@
     "order:recover": "tsx scripts/recover-missed-order.ts",
     "order:recover-random": "tsx scripts/recover-random-order.ts",
     "order:backfill-dates": "tsx scripts/backfill-order-dates.ts",
+    "owner:correct": "tsx scripts/correct-owner-email.ts",
     "rarity:commit": "tsx scripts/rarity-commit.ts",
     "test": "vitest run"
   },
