@@ -323,6 +323,10 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
   displayIrisId: string;
   transferCode: string;
   expiresAt: Date;
+  imageUrl: string | null;
+  weightGrams: number | null;
+  rarityCode: string | null;
+  activatedAt: Date | null;
 }): Promise<{ sent: boolean; reason: string }> => {
   if (!env.resendApiKey || !env.resendFromEmail) {
     return { sent: false, reason: "email_not_configured" };
@@ -333,26 +337,65 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
     day: "numeric",
     year: "numeric"
   });
+  const activatedAtLabel = params.activatedAt
+    ? params.activatedAt.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric"
+      })
+    : "-";
+  const weightLabel =
+    typeof params.weightGrams === "number" && Number.isFinite(params.weightGrams)
+      ? `${params.weightGrams.toFixed(2)} g`
+      : "-";
+  const rarityLabel = params.rarityCode || "-";
+  const imageBlock = params.imageUrl
+    ? `<img src="${escapeHtml(params.imageUrl)}" alt="${escapeHtml(
+        params.displayIrisId
+      )}" style="display:block;width:100%;height:auto;border:1px solid #E5E7EB;background:#F8FAFC;" />`
+    : `<div style="height:260px;border:1px solid #E5E7EB;background:#F8FAFC;display:flex;align-items:center;justify-content:center;color:#6B7280;font-size:14px;">IRIS image</div>`;
+  const detailRows = [
+    ["Weight", weightLabel],
+    ["Rarity", rarityLabel],
+    ["First activation", activatedAtLabel]
+  ]
+    .map(
+      ([label, value]) => `
+        <tr>
+          <td style="padding:13px 0;border-top:1px solid #E5E7EB;color:#6B7280;font-size:11px;letter-spacing:.16em;text-transform:uppercase;">${escapeHtml(label)}</td>
+          <td style="padding:13px 0;border-top:1px solid #E5E7EB;color:#111827;font-size:15px;font-weight:700;text-align:right;">${escapeHtml(value)}</td>
+        </tr>
+      `
+    )
+    .join("");
   const subject = `Transfer code for ${params.displayIrisId}`;
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;background:#0A0A09;color:#F5F1E8;padding:32px;">
-      <div style="max-width:580px;margin:0 auto;background:#111111;border:1px solid #2A2722;padding:32px;">
-        <div style="font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:#C9A84C;margin-bottom:16px;">IRIS Ownership Transfer</div>
-        <h1 style="margin:0 0 18px;font-size:34px;line-height:1.05;font-weight:600;color:#F5F1E8;">${escapeHtml(params.displayIrisId)} is ready to be claimed.</h1>
-        <p style="margin:0 0 14px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#F3F4F8;color:#111827;padding:32px;">
+      <div style="max-width:640px;margin:0 auto;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:22px;padding:28px;box-shadow:0 18px 48px rgba(15,23,42,.08);">
+        <div style="font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#6B7280;margin-bottom:14px;">IRIS Ownership Transfer</div>
+        <h1 style="margin:0 0 18px;font-size:34px;line-height:1.05;font-weight:700;color:#111827;">${escapeHtml(params.displayIrisId)} is ready to be claimed.</h1>
+        <div style="margin:0 0 22px;">
+          ${imageBlock}
+        </div>
+        <p style="margin:0 0 12px;font-size:16px;line-height:1.7;color:#4B5563;">
           ${escapeHtml(params.fromEmail)} has started an ownership transfer to this email address.
         </p>
-        <p style="margin:0 0 18px;font-size:16px;line-height:1.7;color:#D0C7B7;">
+        <p style="margin:0 0 18px;font-size:16px;line-height:1.7;color:#4B5563;">
           To complete the transfer, hold the physical IRIS piece, scan the NFC tag, and enter the transfer code below on the IRIS activation page.
         </p>
-        <div style="margin:26px 0;padding:20px 22px;border:1px solid #C9A84C;background:#0A0A09;text-align:center;">
-          <div style="font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:#9F9686;margin-bottom:10px;">Transfer Code</div>
-          <div style="font-size:32px;letter-spacing:.28em;font-weight:700;color:#F5F1E8;">${escapeHtml(params.transferCode)}</div>
+        <div style="margin:24px 0;padding:20px 22px;border:1px solid #111827;background:#FFFFFF;text-align:center;">
+          <div style="font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#6B7280;margin-bottom:10px;">Transfer Code</div>
+          <div style="font-size:32px;letter-spacing:.28em;font-weight:700;color:#111827;">${escapeHtml(params.transferCode)}</div>
         </div>
-        <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#9F9686;">
+        <table role="presentation" style="width:100%;border-collapse:collapse;margin:4px 0 22px;">
+          <tbody>
+            ${detailRows}
+          </tbody>
+        </table>
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#6B7280;">
           The NFC link on the artwork does not change. This code expires on ${escapeHtml(expiresLabel)}.
         </p>
-        <p style="margin:0;font-size:14px;line-height:1.7;color:#9F9686;">
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#6B7280;">
           If you were not expecting an IRIS transfer, you can ignore this email.
         </p>
       </div>
@@ -520,11 +563,46 @@ const statusPill = (status: string) => {
   const key = status.toLowerCase();
   const map: Record<string, { bg: string; fg: string; label: string }> = {
     activated: { bg: "#DAFFE9", fg: "#33CC70", label: "Activated" },
+    pending_transfer: { bg: "#DBEAFE", fg: "#2563EB", label: "Pending transfer" },
     assigned: { bg: "#FFF9D5", fg: "#D8C029", label: "Assigned" },
     shopify_failed: { bg: "#FEE2E2", fg: "#991B1B", label: "Shopify Failed" }
   };
   const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: status };
   return `<span class="pill" style="background:${style.bg};color:${style.fg};">${style.label}</span>`;
+};
+
+const getPendingTransfersByIrisId = async (
+  irisIds: string[]
+): Promise<Map<string, { to_email: string; expires_at: Date }>> => {
+  const uniqueIrisIds = Array.from(new Set(irisIds.filter(Boolean)));
+  const byIrisId = new Map<string, { to_email: string; expires_at: Date }>();
+  if (uniqueIrisIds.length === 0) {
+    return byIrisId;
+  }
+
+  const transfers = await prisma.ownershipTransfer.findMany({
+    where: {
+      iris_id: { in: uniqueIrisIds },
+      status: "pending",
+      expires_at: { gt: new Date() }
+    },
+    orderBy: { created_at: "desc" },
+    select: {
+      iris_id: true,
+      to_email: true,
+      expires_at: true
+    }
+  });
+
+  for (const transfer of transfers) {
+    if (!byIrisId.has(transfer.iris_id)) {
+      byIrisId.set(transfer.iris_id, {
+        to_email: transfer.to_email,
+        expires_at: transfer.expires_at
+      });
+    }
+  }
+  return byIrisId;
 };
 
 const activationPill = (type: string) => {
@@ -2828,6 +2906,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
               expires_at: { gt: new Date() }
             },
             select: {
+              to_email: true,
               expires_at: true
             },
             orderBy: { created_at: "desc" }
@@ -2842,6 +2921,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       rarity_code: artwork.rarity_code,
       weight_grams: artwork.weight_grams,
       transfer_pending: Boolean(pendingTransfer),
+      transfer_pending_to: pendingTransfer?.to_email ?? null,
       transfer_expires_at: pendingTransfer?.expires_at ?? null,
       collection: artwork.collection
     });
@@ -3166,7 +3246,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
         fromEmail,
         displayIrisId: formatDisplayIrisId(artwork.iris_id, artwork.collection),
         transferCode,
-        expiresAt
+        expiresAt,
+        imageUrl: artwork.image_url,
+        weightGrams: artwork.weight_grams,
+        rarityCode: artwork.rarity_code,
+        activatedAt: artwork.activated_at
       });
 
       if (!emailResult.sent) {
@@ -3459,6 +3543,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         expires_at: { gt: new Date() }
       },
       select: {
+        to_email: true,
         expires_at: true
       },
       orderBy: { created_at: "desc" }
@@ -3472,6 +3557,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       activated_at: item.activated_at,
       status: item.status,
       transfer_pending: Boolean(pendingTransfer),
+      transfer_pending_to: pendingTransfer?.to_email ?? null,
       transfer_expires_at: pendingTransfer?.expires_at ?? null,
       proof_url: proofPath,
       collection: item.collection
@@ -4091,6 +4177,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const hasNext = items.length > take;
     const slice = hasNext ? items.slice(0, take) : items;
     const hasPrev = page > 1;
+    const pendingTransfersByIrisId = await getPendingTransfersByIrisId(slice.map((item) => item.iris_id));
 
     reply
       .code(200)
@@ -4100,7 +4187,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           slice.map((item) => ({
             iris_id: item.iris_id,
             display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-            status: item.status,
+            status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
             owner_email: item.owner_email,
             activated_at: item.activated_at,
             image_url: item.image_url,
@@ -4175,6 +4262,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const hasNext = items.length > take;
     const slice = hasNext ? items.slice(0, take) : items;
     const hasPrev = page > 1;
+    const pendingTransfersByIrisId = await getPendingTransfersByIrisId(slice.map((item) => item.iris_id));
 
     reply
       .code(200)
@@ -4184,7 +4272,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           slice.map((item) => ({
             iris_id: item.iris_id,
             display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-            status: item.status,
+            status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
             assigned_order_id: item.assigned_order_id,
             assigned_customer_email: item.assigned_customer_email,
             order_date: orderDateById.get(item.iris_id) ?? null,
@@ -4280,6 +4368,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       where: { iris_id: item.iris_id, type: "assigned" },
       orderBy: { created_at: "desc" }
     });
+    const pendingTransfersByIrisId = await getPendingTransfersByIrisId([item.iris_id]);
 
     reply
       .code(200)
@@ -4288,7 +4377,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildAdminDetailHtml({
           iris_id: item.iris_id,
           display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-          status: item.status,
+          status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
           rarity_code: item.rarity_code,
           weight_grams: item.weight_grams,
           assigned_order_id: item.assigned_order_id,
