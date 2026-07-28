@@ -1864,6 +1864,7 @@ const buildPartnerDashboardHtml = (params: {
 };
 
 const IRIS_ACCOUNT_DEFAULT_IMAGE = "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
+const IRIS_MARKETPLACE_PREVIEW_EMAIL = "info@gugoco.com";
 
 type IrisAccountItem = {
   iris_id: string;
@@ -1881,6 +1882,13 @@ type IrisAccountUserView = {
   username: string;
   display_name: string | null;
   profile_public: boolean;
+};
+
+type IrisAccountShellOptions = {
+  wrapClass?: string;
+  user?: IrisAccountUserView;
+  sessionToken?: string;
+  avatarUrl?: string | null;
 };
 
 const irisAccountLongDateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -1961,7 +1969,86 @@ const buildIrisArchiveCardHtml = (item: IrisAccountItem, href: string): string =
   `;
 };
 
-const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `<!doctype html>
+const selectIrisAccountAvatarUrl = (items: IrisAccountItem[]): string | null =>
+  items.find((item) => Boolean(item.image_url))?.image_url ?? null;
+
+const buildIrisArchiveFilterScript = (params: {
+  filterClass: string;
+  gridId: string;
+  emptyId: string;
+  emptyAll: string;
+  emptyFiltered: string;
+}) => `
+  <script>
+    (function () {
+      var buttons = document.querySelectorAll('.${params.filterClass}');
+      var items = document.querySelectorAll('#${params.gridId} > li');
+      var empty = document.getElementById('${params.emptyId}');
+      function applyFilter(rarity) {
+        var visible = 0;
+        items.forEach(function (item) {
+          var itemRarity = (item.getAttribute('data-rarity') || '').toLowerCase();
+          var show = rarity === 'all' || itemRarity === rarity.toLowerCase();
+          item.hidden = !show;
+          if (show) visible += 1;
+        });
+        if (empty) {
+          empty.hidden = visible > 0;
+          empty.textContent = rarity === 'all' ? ${JSON.stringify(params.emptyAll)} : ${JSON.stringify(params.emptyFiltered)};
+        }
+      }
+      buttons.forEach(function (button) {
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          buttons.forEach(function (candidate) { candidate.classList.remove('is-active'); });
+          button.classList.add('is-active');
+          applyFilter(button.getAttribute('data-rarity') || 'all');
+        });
+      });
+    })();
+  </script>
+`;
+
+const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): string => {
+  if (!options.user) {
+    return `<a class="header-login" href="/apps/iris/v3/account">Sign In</a>`;
+  }
+
+  const sessionQuery = options.sessionToken ? `?session=${encodeURIComponent(options.sessionToken)}` : "";
+  const sessionHidden = options.sessionToken
+    ? `<input type="hidden" name="session" value="${escapeHtml(options.sessionToken)}" />`
+    : "";
+  const profileHref = buildIrisAccountHref("/apps/iris/v3/profile", options.sessionToken);
+  const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", options.sessionToken);
+  const avatarUrl = options.avatarUrl || IRIS_ACCOUNT_DEFAULT_IMAGE;
+  const displayName = options.user.display_name || `@${options.user.username}`;
+
+  return `
+    <form class="account-menu-form" method="POST" action="/apps/iris/v3/logout${sessionQuery}">
+      ${sessionHidden}
+      <div class="account-menu">
+        <button class="account-menu__trigger" type="button" aria-haspopup="true">
+          <span class="account-avatar">
+            <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(displayName)}">
+          </span>
+          <span class="account-name">${escapeHtml(displayName)}</span>
+        </button>
+        <div class="account-menu__dropdown">
+          <a href="${escapeHtml(profileHref)}">My Profile</a>
+          <a href="${escapeHtml(libraryHref)}">My IRIS</a>
+          <button type="submit">Log Out</button>
+        </div>
+      </div>
+    </form>
+  `;
+};
+
+const buildIrisAccountShell = (title: string, body: string, options: IrisAccountShellOptions = {}) => {
+  const marketplaceHref = buildIrisAccountHref("/apps/iris/v3/marketplace", options.sessionToken);
+  const accountMenuHtml = buildIrisAccountHeaderAccountHtml(options);
+  const wrapClass = options.wrapClass ?? "";
+
+  return `<!doctype html>
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -2017,7 +2104,7 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
           margin:0 auto;
           padding:0 24px;
           display:grid;
-          grid-template-columns:120px 1fr 180px;
+          grid-template-columns:120px 1fr auto;
           align-items:center;
           gap:24px;
         }
@@ -2034,7 +2121,8 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
         .main-nav {
           display:flex;
           align-items:center;
-          gap:34px;
+          justify-content:center;
+          gap:2.2rem;
           color:var(--iris-gold);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:16px;
@@ -2050,15 +2138,113 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
           opacity:1;
           border-bottom-color:var(--iris-gold);
         }
-        .header-actions {
+        .header-shop-button,
+        .header-shop-button:visited {
+          min-height:4.6rem;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          padding:1.2rem 1.9rem;
+          border:1px solid var(--iris-gold-bright) !important;
+          background:var(--iris-gold-bright);
+          color:#030303 !important;
+          opacity:1 !important;
+        }
+        .header-shop-button:hover,
+        .header-shop-button:focus {
+          background:#f0c95c;
+          border-color:#f0c95c !important;
+          color:#030303 !important;
+        }
+        .header-account {
           display:flex;
+          position:relative;
           justify-content:flex-end;
-          gap:20px;
+          align-items:center;
+          min-width:18rem;
+        }
+        .header-login {
           color:var(--iris-gold);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:12px;
           text-transform:uppercase;
         }
+        .account-menu-form { margin:0; }
+        .account-menu { position:relative; }
+        .account-menu__trigger {
+          display:flex;
+          align-items:center;
+          gap:1.1rem;
+          padding:0;
+          border:0;
+          background:transparent;
+          color:var(--iris-text);
+          cursor:pointer;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.2rem;
+          text-transform:uppercase;
+        }
+        .account-avatar {
+          width:4.8rem;
+          height:4.8rem;
+          border:1px solid rgba(201,168,76,.32);
+          border-radius:50%;
+          display:block;
+          overflow:hidden;
+          background:#111;
+          flex:0 0 auto;
+        }
+        .account-avatar img {
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          display:block;
+        }
+        .account-name {
+          max-width:16rem;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+        .account-menu__dropdown {
+          position:absolute;
+          top:calc(100% + 1.2rem);
+          right:0;
+          min-width:20rem;
+          border:1px solid var(--iris-line-strong);
+          background:#050505;
+          padding:.8rem;
+          display:none;
+          z-index:40;
+          box-shadow:0 1.8rem 4rem rgba(0,0,0,.4);
+        }
+        .account-menu:hover .account-menu__dropdown,
+        .account-menu:focus-within .account-menu__dropdown {
+          display:grid;
+        }
+        .account-menu__dropdown a,
+        .account-menu__dropdown button {
+          width:100%;
+          min-height:4.2rem;
+          border:0;
+          border-bottom:1px solid rgba(201,168,76,.12);
+          background:transparent;
+          color:var(--iris-muted);
+          padding:1.1rem 1.2rem;
+          text-align:left;
+          text-transform:uppercase;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.05rem;
+          cursor:pointer;
+        }
+        .account-menu__dropdown a:hover,
+        .account-menu__dropdown a:focus,
+        .account-menu__dropdown button:hover,
+        .account-menu__dropdown button:focus {
+          color:var(--iris-gold);
+          background:rgba(201,168,76,.06);
+        }
+        .account-menu__dropdown button:last-child { border-bottom:0; }
         .page {
           flex:1;
           background:var(--iris-black);
@@ -2071,6 +2257,11 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
         .wrap--flush {
           width:100%;
           padding:0;
+        }
+        .account-notice-wrap {
+          width:min(100%, var(--page-width));
+          margin:0 auto;
+          padding:3.2rem 2.4rem 0;
         }
         .hero {
           padding:58px 0 44px;
@@ -2728,17 +2919,14 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
         }
         @media (max-width: 1100px) {
           .header-inner {
-            grid-template-columns:100px 1fr 130px;
+            grid-template-columns:100px 1fr auto;
             gap:18px;
           }
           .main-nav {
             gap:20px;
             font-size:14px;
           }
-          .header-actions {
-            gap:14px;
-            font-size:11px;
-          }
+          .account-name { max-width:12rem; }
         }
         @media (max-width: 989px) {
           .v2-iris-archive__wrap { padding:9rem 3.2rem 10rem; }
@@ -2759,8 +2947,17 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
             flex-wrap:wrap;
             font-size:14px;
           }
-          .header-actions { display:none; }
+          .header-account {
+            justify-content:center;
+            min-width:0;
+          }
+          .account-menu__dropdown {
+            left:50%;
+            right:auto;
+            transform:translateX(-50%);
+          }
           .wrap { padding:34px 18px 52px; }
+          .wrap--flush { padding:0; }
           .hero {
             display:block;
             padding:34px 0 30px;
@@ -2801,6 +2998,9 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
         @media (max-width: 480px) {
           .main-nav { font-size:13px; gap:14px; }
           h1 { font-size:36px; }
+          .account-menu__trigger { gap:.8rem; }
+          .account-avatar { width:4.2rem; height:4.2rem; }
+          .account-name { max-width:11rem; }
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
@@ -2818,15 +3018,11 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
               <img src="https://irisnyc.store/cdn/shop/files/blacklogo_4x_fab96a79-d7af-4c49-968e-176fa1fb41e6.png?v=1776815083&width=180" alt="IRIS NYC" />
             </a>
             <nav class="main-nav" aria-label="Main navigation">
-              <a href="/">Home</a>
-              <a href="/products/iris-the-unseen-edition">Shop IRIS</a>
-              <a href="/pages/iris-archive">Gallery</a>
-              <a href="/pages/what-is-iris">What Is IRIS</a>
-              <a href="/pages/faq">FAQ</a>
+              <a class="header-shop-button" href="/products/iris-the-unseen-edition">Shop IRIS</a>
+              <a href="${escapeHtml(marketplaceHref)}">Marketplace</a>
             </nav>
-            <div class="header-actions" aria-hidden="true">
-              <a href="/search">Search</a>
-              <a href="/cart">Cart</a>
+            <div class="header-account">
+              ${accountMenuHtml}
             </div>
           </div>
         </header>
@@ -2858,6 +3054,7 @@ const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `
       </div>
     </body>
   </html>`;
+};
 
 const buildIrisAccountLoginHtml = (options?: { error?: string; success?: string; email?: string }) => {
   const errorHtml = options?.error ? `<div class="error">${escapeHtml(options.error)}</div>` : "";
@@ -2930,10 +3127,8 @@ const buildIrisAccountLibraryHtml = (params: {
 }) => {
   const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
   const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
-  const sessionQuery = params.sessionToken ? `?session=${encodeURIComponent(params.sessionToken)}` : "";
-  const sessionHidden = params.sessionToken
-    ? `<input type="hidden" name="session" value="${escapeHtml(params.sessionToken)}" />`
-    : "";
+  const noticeHtml =
+    messageHtml || errorHtml ? `<div class="account-notice-wrap">${messageHtml}${errorHtml}</div>` : "";
   const cards = params.items
     .map((item) =>
       buildIrisArchiveCardHtml(
@@ -2942,33 +3137,14 @@ const buildIrisAccountLibraryHtml = (params: {
       )
     )
     .join("");
-  const profileHref = buildIrisAccountHref("/apps/iris/v3/profile", params.sessionToken);
+  const avatarUrl = selectIrisAccountAvatarUrl(params.items);
   const body = `
-    <section class="hero">
-      <div>
-        <p class="eyebrow">IRIS Account</p>
-        <h1>@${escapeHtml(params.user.username)}</h1>
-        <p>${escapeHtml(params.user.email)}</p>
-      </div>
-      <form method="POST" action="/apps/iris/v3/logout${sessionQuery}">
-        ${sessionHidden}
-        <div class="account-top-actions">
-          <a class="btn secondary" href="${escapeHtml(profileHref)}">Profile Settings</a>
-          <button class="btn secondary" type="submit">Log Out</button>
-        </div>
-      </form>
-    </section>
-    <section class="body">
-      ${messageHtml}
-      ${errorHtml}
-      <section class="v2-iris-archive v2-iris-archive--account">
+    ${noticeHtml}
+    <section class="v2-iris-archive">
         <div class="v2-iris-archive__wrap">
           <div class="v2-iris-archive__head">
             <p class="v2-iris-archive__eyebrow">Private Library</p>
             <h1 class="v2-iris-archive__title">My <em>IRIS</em></h1>
-            <div class="v2-iris-archive__description">
-              Your activated works, gathered from the IRIS ownership record. Open any passport without leaving your IRIS account.
-            </div>
           </div>
 
           <div class="v2-iris-archive__filters" id="iris-v3-library-filters">
@@ -2986,38 +3162,21 @@ const buildIrisAccountLibraryHtml = (params: {
           </ul>
         </div>
       </section>
-      <script>
-        (function () {
-          var buttons = document.querySelectorAll('.iris-v3-filter');
-          var items = document.querySelectorAll('#iris-v3-library-grid > li');
-          var empty = document.getElementById('iris-v3-library-empty');
-          function applyFilter(rarity) {
-            var visible = 0;
-            items.forEach(function (item) {
-              var itemRarity = (item.getAttribute('data-rarity') || '').toLowerCase();
-              var show = rarity === 'all' || itemRarity === rarity.toLowerCase();
-              item.hidden = !show;
-              if (show) visible += 1;
-            });
-            if (empty) {
-              empty.hidden = visible > 0;
-              empty.textContent = rarity === 'all' ? 'No IRIS activated yet.' : 'No IRIS found for this rarity.';
-            }
-          }
-          buttons.forEach(function (button) {
-            button.addEventListener('click', function (event) {
-              event.preventDefault();
-              buttons.forEach(function (candidate) { candidate.classList.remove('is-active'); });
-              button.classList.add('is-active');
-              applyFilter(button.getAttribute('data-rarity') || 'all');
-            });
-          });
-        })();
-      </script>
+      ${buildIrisArchiveFilterScript({
+        filterClass: "iris-v3-filter",
+        gridId: "iris-v3-library-grid",
+        emptyId: "iris-v3-library-empty",
+        emptyAll: "No IRIS activated yet.",
+        emptyFiltered: "No IRIS found for this rarity."
+      })}
       ${buildIrisAccountSessionScript(params.sessionToken)}
-    </section>
   `;
-  return buildIrisAccountShell("IRIS Account", body);
+  return buildIrisAccountShell("IRIS Account", body, {
+    user: params.user,
+    sessionToken: params.sessionToken,
+    avatarUrl,
+    wrapClass: "wrap--flush"
+  });
 };
 
 const buildIrisAccountSettingsHtml = (params: {
@@ -3026,6 +3185,7 @@ const buildIrisAccountSettingsHtml = (params: {
   message?: string;
   error?: string;
   libraryCount: number;
+  avatarUrl?: string | null;
 }) => {
   const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
   const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
@@ -3079,7 +3239,65 @@ const buildIrisAccountSettingsHtml = (params: {
       ${buildIrisAccountSessionScript(params.sessionToken)}
     </section>
   `;
-  return buildIrisAccountShell("IRIS Profile Settings", body);
+  return buildIrisAccountShell("IRIS Profile Settings", body, {
+    user: params.user,
+    sessionToken: params.sessionToken,
+    avatarUrl: params.avatarUrl
+  });
+};
+
+const buildIrisAccountMarketplaceHtml = (params: {
+  user: IrisAccountUserView;
+  sessionToken?: string;
+  avatarUrl?: string | null;
+  items: IrisAccountItem[];
+}) => {
+  const cards = params.items
+    .map((item) =>
+      buildIrisArchiveCardHtml(
+        item,
+        buildIrisAccountHref("/apps/iris/v3/marketplace", params.sessionToken, { iris_id: item.iris_id })
+      )
+    )
+    .join("");
+  const body = `
+    <section class="v2-iris-archive">
+      <div class="v2-iris-archive__wrap">
+        <div class="v2-iris-archive__head">
+          <p class="v2-iris-archive__eyebrow">Marketplace Preview</p>
+          <h1 class="v2-iris-archive__title">IRIS <em>Marketplace</em></h1>
+        </div>
+
+        <div class="v2-iris-archive__filters" id="iris-v3-marketplace-filters">
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter is-active" data-rarity="all" href="#">All</a>
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter" data-rarity="Common" href="#">Common</a>
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter" data-rarity="Uncommon" href="#">Uncommon</a>
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter" data-rarity="Rare" href="#">Rare</a>
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter" data-rarity="Ultra Rare" href="#">Ultra Rare</a>
+          <a class="v2-iris-archive__filter iris-v3-marketplace-filter" data-rarity="Artist Edition" href="#">Artist Edition</a>
+        </div>
+
+        <p id="iris-v3-marketplace-empty" class="v2-iris-archive__status" ${params.items.length ? "hidden" : ""}>No marketplace IRIS available yet.</p>
+        <ul id="iris-v3-marketplace-grid" class="v2-iris-archive__grid">
+          ${cards}
+        </ul>
+      </div>
+    </section>
+    ${buildIrisArchiveFilterScript({
+      filterClass: "iris-v3-marketplace-filter",
+      gridId: "iris-v3-marketplace-grid",
+      emptyId: "iris-v3-marketplace-empty",
+      emptyAll: "No marketplace IRIS available yet.",
+      emptyFiltered: "No marketplace IRIS found for this rarity."
+    })}
+    ${buildIrisAccountSessionScript(params.sessionToken)}
+  `;
+  return buildIrisAccountShell("IRIS Marketplace", body, {
+    user: params.user,
+    sessionToken: params.sessionToken,
+    avatarUrl: params.avatarUrl,
+    wrapClass: "wrap--flush"
+  });
 };
 
 const buildIrisAccountPassportHtml = (params: {
@@ -3274,7 +3492,12 @@ const buildIrisAccountPassportHtml = (params: {
   return buildIrisAccountShell(
     `${formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id)} Passport`,
     body,
-    "wrap--flush"
+    {
+      user: params.user,
+      sessionToken: params.sessionToken,
+      avatarUrl: params.item.image_url,
+      wrapClass: "wrap--flush"
+    }
   );
 };
 
@@ -4874,6 +5097,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     options?: { message?: string; error?: string; sessionToken?: string }
   ) => {
     const items = await loadIrisAccountItems(user.email);
+    const avatarUrl = selectIrisAccountAvatarUrl(items);
     sendIrisAccountHtml(
       reply,
       buildIrisAccountSettingsHtml({
@@ -4881,7 +5105,28 @@ export const createServer = async (): Promise<FastifyInstance> => {
         sessionToken: options?.sessionToken,
         message: options?.message,
         error: options?.error,
-        libraryCount: items.length
+        libraryCount: items.length,
+        avatarUrl
+      })
+    );
+  };
+
+  const renderIrisAccountMarketplace = async (
+    reply: any,
+    user: IrisAccountUserView,
+    options?: { sessionToken?: string }
+  ) => {
+    const [userItems, marketplaceItems] = await Promise.all([
+      loadIrisAccountItems(user.email),
+      loadIrisAccountItems(IRIS_MARKETPLACE_PREVIEW_EMAIL)
+    ]);
+    sendIrisAccountHtml(
+      reply,
+      buildIrisAccountMarketplaceHtml({
+        user,
+        sessionToken: options?.sessionToken,
+        avatarUrl: selectIrisAccountAvatarUrl(userItems),
+        items: marketplaceItems
       })
     );
   };
@@ -4922,6 +5167,23 @@ export const createServer = async (): Promise<FastifyInstance> => {
       await renderIrisAccountSettings(reply, auth.user, { sessionToken: auth.rawToken });
     } catch (error) {
       req.log.error({ err: error }, "IRIS Account V3 profile page failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.get("/apps/iris/v3/marketplace", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        reply.redirect(302, "/apps/iris/v3/account");
+        return;
+      }
+      await renderIrisAccountMarketplace(reply, auth.user, { sessionToken: auth.rawToken });
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account V3 marketplace page failed");
       sendIrisAccountHtml(
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
