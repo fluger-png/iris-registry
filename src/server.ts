@@ -2199,6 +2199,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           height:100%;
           object-fit:cover;
           display:block;
+          transform:scale(1.4);
+          transform-origin:center;
         }
         .account-name {
           max-width:16rem;
