@@ -16,6 +16,39 @@ const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 let goldCache: { price: number; ts: number } | null = null;
 
+const loadLiveGoldPriceUsdG = async (): Promise<{ price: number; updatedAt: Date }> => {
+  if (!env.goldApiKey) {
+    throw new Error("gold_api_key_missing");
+  }
+
+  const now = Date.now();
+  if (goldCache && now - goldCache.ts < GOLD_CACHE_TTL_MS) {
+    return { price: goldCache.price, updatedAt: new Date(goldCache.ts) };
+  }
+
+  const res = await fetch("https://www.goldapi.io/api/XAU/USD", {
+    headers: {
+      "x-access-token": env.goldApiKey,
+      "Content-Type": "application/json"
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`goldapi_bad_status_${res.status}`);
+  }
+
+  const data = (await res.json()) as { price_gram_24k?: number | string | null; price?: number | string | null };
+  let perGram = data.price_gram_24k == null ? Number.NaN : Number(data.price_gram_24k);
+  if ((!Number.isFinite(perGram) || perGram <= 0) && data.price != null) {
+    perGram = Number(data.price) / 31.1034768;
+  }
+  if (!Number.isFinite(perGram) || perGram <= 0) {
+    throw new Error("goldapi_missing_price");
+  }
+
+  goldCache = { price: perGram, ts: now };
+  return { price: perGram, updatedAt: new Date(now) };
+};
+
 const parseLimit = (value: unknown, fallback: number): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1927,7 +1960,6 @@ type IrisAccountItem = {
   image_url: string | null;
   rarity_code: string | null;
   weight_grams: number | null;
-  acquisition_price_cents: number | null;
   activated_at: Date | null;
   passport_url: string;
 };
@@ -1996,8 +2028,8 @@ const formatIrisAccountGold = (value: number | null): string => {
   return `${Number(value).toFixed(2)} g (24K)`;
 };
 
-const formatIrisAccountCurrencyCents = (value: number): string =>
-  irisAccountCurrencyFormatter.format(Math.max(0, value) / 100);
+const formatIrisAccountCurrencyUsd = (value: number): string =>
+  irisAccountCurrencyFormatter.format(Math.max(0, value));
 
 const buildIrisAccountHref = (
   path: string,
@@ -3376,6 +3408,7 @@ const buildIrisAccountLibraryHtml = (params: {
   message?: string;
   error?: string;
   items: IrisAccountItem[];
+  goldPriceUsdG?: number | null;
 }) => {
   const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
   const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
@@ -3396,11 +3429,10 @@ const buildIrisAccountLibraryHtml = (params: {
     return Number.isFinite(weight) ? sum + weight : sum;
   }, 0);
   const totalGoldLabel = `${totalGoldGrams.toFixed(2)} g`;
-  const acquisitionTotalCents = params.items.reduce((sum, item) => {
-    const price = Number(item.acquisition_price_cents);
-    return Number.isFinite(price) ? sum + Math.max(0, Math.round(price)) : sum;
-  }, 0);
-  const acquisitionTotalLabel = formatIrisAccountCurrencyCents(acquisitionTotalCents);
+  const goldPriceUsdG = Number(params.goldPriceUsdG);
+  const acquisitionTotalUsd = Number.isFinite(goldPriceUsdG) && goldPriceUsdG > 0 ? totalGoldGrams * goldPriceUsdG : null;
+  const acquisitionTotalLabel =
+    acquisitionTotalUsd == null ? "-" : formatIrisAccountCurrencyUsd(acquisitionTotalUsd);
   const body = `
     ${noticeHtml}
     <div class="wrap">
@@ -3804,8 +3836,7 @@ const loadIrisAccountItems = async (email: string) => {
         select: {
           slug: true,
           name: true,
-          edition_size: true,
-          default_price_cents: true
+          edition_size: true
         }
       }
     }
@@ -3817,7 +3848,6 @@ const loadIrisAccountItems = async (email: string) => {
     image_url: item.image_url,
     rarity_code: item.rarity_code,
     weight_grams: item.weight_grams,
-    acquisition_price_cents: item.collection?.default_price_cents ?? null,
     activated_at: item.activated_at,
     passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
   }));
@@ -3840,8 +3870,7 @@ const loadIrisAccountPassportItem = async (email: string, irisId: string): Promi
         select: {
           slug: true,
           name: true,
-          edition_size: true,
-          default_price_cents: true
+          edition_size: true
         }
       }
     }
@@ -3857,7 +3886,6 @@ const loadIrisAccountPassportItem = async (email: string, irisId: string): Promi
     image_url: item.image_url,
     rarity_code: item.rarity_code,
     weight_grams: item.weight_grams,
-    acquisition_price_cents: item.collection?.default_price_cents ?? null,
     activated_at: item.activated_at,
     passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
   };
@@ -5369,7 +5397,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
     user: IrisAccountUserView,
     options?: { message?: string; error?: string; sessionToken?: string }
   ) => {
-    const items = await loadIrisAccountItems(user.email);
+    const [items, goldPrice] = await Promise.all([
+      loadIrisAccountItems(user.email),
+      loadLiveGoldPriceUsdG().catch((error) => {
+        app.log.warn({ err: error }, "Could not load gold price for IRIS account stats");
+        return null;
+      })
+    ]);
     sendIrisAccountHtml(
       reply,
       buildIrisAccountLibraryHtml({
@@ -5377,7 +5411,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         sessionToken: options?.sessionToken,
         message: options?.message,
         error: options?.error,
-        items
+        items,
+        goldPriceUsdG: goldPrice?.price ?? null
       })
     );
   };
@@ -6192,40 +6227,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   app.get("/apps/iris/gold-price", async (_req, reply) => {
-    if (!env.goldApiKey) {
-      sendJson(reply, 503, { error: "gold_api_key_missing" });
-      return;
-    }
-
-    const now = Date.now();
-    if (goldCache && now - goldCache.ts < GOLD_CACHE_TTL_MS) {
-      sendJson(reply, 200, { price_usd_g: goldCache.price, updated_at: new Date(goldCache.ts).toISOString() });
-      return;
-    }
-
     try {
-      const res = await fetch("https://www.goldapi.io/api/XAU/USD", {
-        headers: {
-          "x-access-token": env.goldApiKey,
-          "Content-Type": "application/json"
-        }
-      });
-      if (!res.ok) {
-        throw new Error(`goldapi_bad_status_${res.status}`);
-      }
-      const data = (await res.json()) as { price_gram_24k?: number; price?: number };
-      let perGram = data.price_gram_24k;
-      if (!perGram && data.price) {
-        perGram = data.price / 31.1034768;
-      }
-      if (!perGram || !Number.isFinite(perGram)) {
-        throw new Error("goldapi_missing_price");
-      }
-      goldCache = { price: perGram, ts: now };
-      sendJson(reply, 200, { price_usd_g: perGram, updated_at: new Date(now).toISOString() });
+      const goldPrice = await loadLiveGoldPriceUsdG();
+      sendJson(reply, 200, { price_usd_g: goldPrice.price, updated_at: goldPrice.updatedAt.toISOString() });
     } catch (err) {
       app.log.error({ err }, "Gold API fetch failed");
-      sendJson(reply, 502, { error: "gold_api_failed" });
+      const message = err instanceof Error ? err.message : "";
+      sendJson(reply, message === "gold_api_key_missing" ? 503 : 502, {
+        error: message === "gold_api_key_missing" ? "gold_api_key_missing" : "gold_api_failed"
+      });
     }
   });
 
