@@ -2161,13 +2161,16 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0 auto;
           padding:0 24px;
           display:grid;
-          grid-template-columns:120px 1fr auto;
+          grid-template-columns:minmax(18rem, 1fr) auto minmax(18rem, 1fr);
+          grid-template-areas:"nav logo account";
           align-items:center;
           gap:24px;
         }
         .site-logo {
+          grid-area:logo;
           display:inline-flex;
           align-items:center;
+          justify-self:center;
           width:90px;
         }
         .site-logo img {
@@ -2176,9 +2179,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           display:block;
         }
         .main-nav {
+          grid-area:nav;
           display:flex;
           align-items:center;
-          justify-content:center;
+          justify-content:flex-start;
+          justify-self:start;
           gap:2.2rem;
           color:var(--iris-gold);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -2201,24 +2206,33 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:1.2rem 1.9rem;
-          border:1px solid var(--iris-gold-bright) !important;
-          background:var(--iris-gold-bright);
+          padding:1.2rem 3.2rem;
+          border:1px solid rgba(237,232,223,.92) !important;
+          border-radius:4px;
+          background:linear-gradient(110deg, #c9a84c 0%, #f5d875 24%, #b78d27 48%, #eabf50 72%, #fff0a3 88%, #c9a84c 100%);
+          background-size:240% 100%;
           color:#030303 !important;
           opacity:1 !important;
+          animation:iris-shop-gold-flow 5.2s ease-in-out infinite;
         }
         .header-shop-button:hover,
         .header-shop-button:focus {
-          background:#f0c95c;
-          border-color:#f0c95c !important;
+          border-color:#ffffff !important;
           color:#030303 !important;
         }
+        @keyframes iris-shop-gold-flow {
+          0% { background-position:0% 50%; }
+          50% { background-position:100% 50%; }
+          100% { background-position:0% 50%; }
+        }
         .header-account {
+          grid-area:account;
           display:flex;
           position:relative;
           justify-content:flex-end;
           align-items:center;
           min-width:18rem;
+          justify-self:end;
         }
         .header-login {
           color:var(--iris-gold);
@@ -2997,7 +3011,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         @media (max-width: 1100px) {
           .header-inner {
-            grid-template-columns:100px 1fr auto;
+            grid-template-columns:minmax(15rem, 1fr) auto minmax(15rem, 1fr);
             gap:18px;
           }
           .main-nav {
@@ -3014,6 +3028,10 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .header-inner {
             min-height:96px;
             grid-template-columns:1fr;
+            grid-template-areas:
+              "logo"
+              "nav"
+              "account";
             justify-items:center;
             gap:12px;
             padding-top:16px;
@@ -3022,12 +3040,14 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .main-nav {
             gap:18px;
             justify-content:center;
+            justify-self:center;
             flex-wrap:wrap;
             font-size:14px;
           }
           .header-account {
             justify-content:center;
             min-width:0;
+            justify-self:center;
           }
           .account-menu__dropdown {
             left:50%;
