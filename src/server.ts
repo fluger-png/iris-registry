@@ -3065,43 +3065,40 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .account-name { max-width:12rem; }
         }
         @media (max-width: 989px) {
-          .v2-iris-archive__wrap { padding:9rem 3.2rem 10rem; }
-          .v2-iris-archive__grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-        }
-        @media (max-width: 820px) {
           .header-inner {
-            min-height:118px;
+            min-height:112px;
             grid-template-columns:auto auto;
             grid-template-areas:
               "logo logo"
               "nav account";
             justify-content:center;
             justify-items:center;
-            column-gap:2rem;
-            row-gap:1.2rem;
-            padding-top:1.6rem;
-            padding-bottom:1.8rem;
+            align-items:center;
+            column-gap:1.8rem;
+            row-gap:1.1rem;
+            padding-top:1.5rem;
+            padding-bottom:1.7rem;
           }
           .site-logo,
           .site-logo img {
-            width:7.4rem;
+            width:7.2rem;
           }
           .main-nav {
             gap:0;
             justify-content:flex-end;
             justify-self:end;
             flex-wrap:nowrap;
-            font-size:1.05rem;
+            font-size:1rem;
           }
           .main-nav .header-shop-button,
           .main-nav .header-shop-button:visited {
-            min-height:3.8rem;
-            padding:1rem 3.9rem;
-            border-radius:1rem;
-            font-size:1.05rem;
+            min-height:3.6rem;
+            padding:.92rem 3.25rem;
+            border-radius:.95rem;
+            font-size:1rem;
           }
           .main-nav .header-shop-button::after {
-            border-radius:.82rem;
+            border-radius:.78rem;
           }
           .header-account {
             justify-content:flex-start;
@@ -3109,15 +3106,50 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             justify-self:start;
           }
           .account-menu__trigger {
-            gap:.7rem;
+            gap:0;
+            font-size:1rem;
+          }
+          .account-avatar {
+            width:3.6rem;
+            height:3.6rem;
+          }
+          .account-name {
+            display:none;
+          }
+          .v2-iris-archive__wrap { padding:9rem 3.2rem 10rem; }
+          .v2-iris-archive__grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 820px) {
+          .header-inner {
+            min-height:108px;
+            column-gap:1.6rem;
+            row-gap:1rem;
+            padding-top:1.6rem;
+            padding-bottom:1.8rem;
+          }
+          .site-logo,
+          .site-logo img {
+            width:7rem;
+          }
+          .main-nav {
+            font-size:1.05rem;
+          }
+          .main-nav .header-shop-button,
+          .main-nav .header-shop-button:visited {
+            min-height:3.55rem;
+            padding:.9rem 3.1rem;
+            border-radius:.92rem;
+            font-size:1.05rem;
+          }
+          .main-nav .header-shop-button::after {
+            border-radius:.74rem;
+          }
+          .account-menu__trigger {
             font-size:1.05rem;
           }
           .account-avatar {
-            width:3.8rem;
-            height:3.8rem;
-          }
-          .account-name {
-            max-width:10rem;
+            width:3.55rem;
+            height:3.55rem;
           }
           .account-menu__dropdown {
             left:50%;
@@ -3177,16 +3209,15 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .main-nav { font-size:1rem; gap:0; }
           .main-nav .header-shop-button,
           .main-nav .header-shop-button:visited {
-            min-height:3.5rem;
-            padding:.9rem 3rem;
+            min-height:3.35rem;
+            padding:.82rem 2.55rem;
             border-radius:.9rem;
             font-size:1rem;
           }
           .main-nav .header-shop-button::after { border-radius:.72rem; }
           h1 { font-size:36px; }
-          .account-menu__trigger { gap:.6rem; font-size:1rem; }
-          .account-avatar { width:3.5rem; height:3.5rem; }
-          .account-name { max-width:8.6rem; }
+          .account-menu__trigger { font-size:1rem; }
+          .account-avatar { width:3.35rem; height:3.35rem; }
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
