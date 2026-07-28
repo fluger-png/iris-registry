@@ -2102,7 +2102,6 @@ const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): st
 };
 
 const buildIrisAccountShell = (title: string, body: string, options: IrisAccountShellOptions = {}) => {
-  const marketplaceHref = buildIrisAccountHref("/apps/iris/v3/marketplace", options.sessionToken);
   const accountMenuHtml = buildIrisAccountHeaderAccountHtml(options);
   const wrapClass = options.wrapClass ?? "";
 
@@ -2477,6 +2476,9 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin-left:calc(50% - 50vw);
           margin-right:calc(50% - 50vw);
         }
+        .v2-iris-archive--library .v2-iris-archive__wrap {
+          padding-top:5rem;
+        }
         .v2-iris-archive__wrap {
           max-width:144rem;
           margin:0 auto;
@@ -2663,21 +2665,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           grid-template-columns:minmax(0, 1fr) auto;
           align-items:start;
           gap:2.4rem;
-        }
-        .v2-passport-back-link,
-        .v2-passport-back-link:visited {
-          color:var(--v2-text);
-          text-decoration:none;
-          text-transform:uppercase;
-          letter-spacing:.24rem;
-          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:1.1rem;
-          line-height:1;
-          padding-top:.7rem;
-        }
-        .v2-passport-back-link:hover,
-        .v2-passport-back-link:focus {
-          color:var(--v2-gold);
         }
         .v2-passport-eyebrow {
           margin:0 0 1.4rem;
@@ -3075,7 +3062,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           }
           .v2-passport-shell { padding:5.6rem 2rem 7rem; }
           .v2-passport-head { grid-template-columns:1fr; }
-          .v2-passport-back-link { justify-self:end; order:-1; }
           .v2-passport-grid { grid-template-columns:1fr; gap:3.2rem; }
           .v2-passport-media,
           .v2-passport-panel { padding:2rem; }
@@ -3112,7 +3098,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             </a>
             <nav class="main-nav" aria-label="Main navigation">
               <a class="header-shop-button" href="/products/iris-the-unseen-edition">Shop IRIS</a>
-              <a href="${escapeHtml(marketplaceHref)}">Marketplace</a>
             </nav>
             <div class="header-account">
               ${accountMenuHtml}
@@ -3233,13 +3218,15 @@ const buildIrisAccountLibraryHtml = (params: {
   const avatarUrl = selectIrisAccountAvatarUrl(params.items, params.user.avatar_iris_id);
   const body = `
     ${noticeHtml}
-    <section class="v2-iris-archive">
+    <div class="wrap">
+      <section class="hero">
+        <div>
+          <h1>My IRIS</h1>
+        </div>
+      </section>
+    </div>
+    <section class="v2-iris-archive v2-iris-archive--library">
         <div class="v2-iris-archive__wrap">
-          <div class="v2-iris-archive__head">
-            <p class="v2-iris-archive__eyebrow">Private Library</p>
-            <h1 class="v2-iris-archive__title">My <em>IRIS</em></h1>
-          </div>
-
           <div class="v2-iris-archive__filters" id="iris-v3-library-filters">
             <a class="v2-iris-archive__filter iris-v3-filter is-active" data-rarity="all" href="#">All</a>
             <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Common" href="#">Common</a>
@@ -3424,7 +3411,9 @@ const buildIrisAccountPassportHtml = (params: {
               and rarity commitment in one permanent place.
             </p>
           </div>
-          <a href="${escapeHtml(libraryHref)}" class="v2-passport-back-link">Back</a>
+          <div class="account-top-actions">
+            <a href="${escapeHtml(libraryHref)}" class="btn secondary">Back</a>
+          </div>
         </div>
 
         <div class="v2-passport-grid">
