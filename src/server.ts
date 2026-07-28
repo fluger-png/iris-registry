@@ -3081,7 +3081,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           }
           .site-logo,
           .site-logo img {
-            width:7.2rem;
+            width:9.4rem;
           }
           .main-nav {
             gap:0;
@@ -3110,8 +3110,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             font-size:1rem;
           }
           .account-avatar {
-            width:3.6rem;
-            height:3.6rem;
+            width:4.15rem;
+            height:4.15rem;
           }
           .account-name {
             display:none;
@@ -3129,7 +3129,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           }
           .site-logo,
           .site-logo img {
-            width:7rem;
+            width:9.1rem;
           }
           .main-nav {
             font-size:1.05rem;
@@ -3148,8 +3148,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             font-size:1.05rem;
           }
           .account-avatar {
-            width:3.55rem;
-            height:3.55rem;
+            width:4.1rem;
+            height:4.1rem;
           }
           .account-menu__dropdown {
             left:50%;
@@ -3205,7 +3205,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             padding-right:1.6rem;
           }
           .site-logo,
-          .site-logo img { width:6.8rem; }
+          .site-logo img { width:8.85rem; }
           .main-nav { font-size:1rem; gap:0; }
           .main-nav .header-shop-button,
           .main-nav .header-shop-button:visited {
@@ -3217,7 +3217,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .main-nav .header-shop-button::after { border-radius:.72rem; }
           h1 { font-size:36px; }
           .account-menu__trigger { font-size:1rem; }
-          .account-avatar { width:3.35rem; height:3.35rem; }
+          .account-avatar { width:3.85rem; height:3.85rem; }
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
