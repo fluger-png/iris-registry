@@ -2202,28 +2202,70 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .header-shop-button,
         .header-shop-button:visited {
-          min-height:4.6rem;
+          position:relative;
+          min-height:5.6rem;
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:1.2rem 3.2rem;
+          padding:1.45rem 3.8rem;
           border:1px solid rgba(237,232,223,.92) !important;
-          border-radius:4px;
-          background:linear-gradient(110deg, #c9a84c 0%, #f5d875 24%, #b78d27 48%, #eabf50 72%, #fff0a3 88%, #c9a84c 100%);
-          background-size:240% 100%;
-          color:#030303 !important;
+          border-radius:1.6rem;
+          background:#111215;
+          color:#ffffff !important;
           opacity:1 !important;
-          animation:iris-shop-gold-flow 5.2s ease-in-out infinite;
+          overflow:hidden;
+          isolation:isolate;
+          box-shadow:0 0 0 1px rgba(234,191,80,.18), 0 1rem 2.6rem rgba(0,0,0,.34);
+        }
+        .header-shop-button span {
+          position:relative;
+          z-index:2;
+          white-space:nowrap;
+        }
+        .header-shop-button::before,
+        .header-shop-button::after {
+          content:"";
+          position:absolute;
+          pointer-events:none;
+        }
+        .header-shop-button::before {
+          inset:-155%;
+          z-index:0;
+          opacity:.72;
+          background:conic-gradient(
+            from 0deg,
+            rgba(255,255,255,0) 0deg,
+            #c9a84c 42deg,
+            #fff6cf 82deg,
+            rgba(255,255,255,0) 132deg,
+            #eabf50 190deg,
+            #ffffff 244deg,
+            rgba(255,255,255,0) 306deg,
+            #c9a84c 360deg
+          );
+          animation:iris-shop-gold-spin 8s cubic-bezier(.56,.15,.28,.86) infinite;
+        }
+        .header-shop-button::after {
+          inset:2px;
+          z-index:1;
+          border-radius:1.35rem;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(234,191,80,.25), rgba(234,191,80,0) 46%),
+            linear-gradient(180deg, #161616 0%, #090909 100%);
         }
         .header-shop-button:hover,
         .header-shop-button:focus {
           border-color:#ffffff !important;
-          color:#030303 !important;
+          color:#ffffff !important;
         }
-        @keyframes iris-shop-gold-flow {
-          0% { background-position:0% 50%; }
-          50% { background-position:100% 50%; }
-          100% { background-position:0% 50%; }
+        .header-shop-button:hover::before,
+        .header-shop-button:focus::before {
+          opacity:1;
+        }
+        @keyframes iris-shop-gold-spin {
+          0% { transform:rotate(10deg) scale(1); }
+          50% { transform:rotate(190deg) scale(.82); }
+          100% { transform:rotate(370deg) scale(1); }
         }
         .header-account {
           grid-area:account;
@@ -3117,7 +3159,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
               <img src="https://irisnyc.store/cdn/shop/files/blacklogo_4x_fab96a79-d7af-4c49-968e-176fa1fb41e6.png?v=1776815083&width=180" alt="IRIS NYC" />
             </a>
             <nav class="main-nav" aria-label="Main navigation">
-              <a class="header-shop-button" href="/products/iris-the-unseen-edition">Shop IRIS</a>
+              <a class="header-shop-button" href="/products/iris-the-unseen-edition"><span>Shop IRIS</span></a>
             </nav>
             <div class="header-account">
               ${accountMenuHtml}
