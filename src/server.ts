@@ -3070,28 +3070,54 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         @media (max-width: 820px) {
           .header-inner {
-            min-height:96px;
-            grid-template-columns:1fr;
+            min-height:118px;
+            grid-template-columns:auto auto;
             grid-template-areas:
-              "logo"
-              "nav"
-              "account";
+              "logo logo"
+              "nav account";
+            justify-content:center;
             justify-items:center;
-            gap:12px;
-            padding-top:16px;
-            padding-bottom:16px;
+            column-gap:2rem;
+            row-gap:1.2rem;
+            padding-top:1.6rem;
+            padding-bottom:1.8rem;
+          }
+          .site-logo,
+          .site-logo img {
+            width:7.4rem;
           }
           .main-nav {
-            gap:18px;
-            justify-content:center;
-            justify-self:center;
-            flex-wrap:wrap;
-            font-size:14px;
+            gap:0;
+            justify-content:flex-end;
+            justify-self:end;
+            flex-wrap:nowrap;
+            font-size:1.05rem;
+          }
+          .main-nav .header-shop-button,
+          .main-nav .header-shop-button:visited {
+            min-height:3.8rem;
+            padding:1rem 3.9rem;
+            border-radius:1rem;
+            font-size:1.05rem;
+          }
+          .main-nav .header-shop-button::after {
+            border-radius:.82rem;
           }
           .header-account {
-            justify-content:center;
+            justify-content:flex-start;
             min-width:0;
-            justify-self:center;
+            justify-self:start;
+          }
+          .account-menu__trigger {
+            gap:.7rem;
+            font-size:1.05rem;
+          }
+          .account-avatar {
+            width:3.8rem;
+            height:3.8rem;
+          }
+          .account-name {
+            max-width:10rem;
           }
           .account-menu__dropdown {
             left:50%;
@@ -3139,13 +3165,28 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .footer-bottom { align-items:flex-start; flex-direction:column; padding-top:18px; padding-bottom:18px; }
         }
         @media (max-width: 480px) {
-          .main-nav { font-size:13px; gap:14px; }
+          .header-inner {
+            min-height:108px;
+            column-gap:1.4rem;
+            row-gap:1rem;
+            padding-left:1.6rem;
+            padding-right:1.6rem;
+          }
+          .site-logo,
+          .site-logo img { width:6.8rem; }
+          .main-nav { font-size:1rem; gap:0; }
           .main-nav .header-shop-button,
-          .main-nav .header-shop-button:visited { padding-left:3.6rem; padding-right:3.6rem; }
+          .main-nav .header-shop-button:visited {
+            min-height:3.5rem;
+            padding:.9rem 3rem;
+            border-radius:.9rem;
+            font-size:1rem;
+          }
+          .main-nav .header-shop-button::after { border-radius:.72rem; }
           h1 { font-size:36px; }
-          .account-menu__trigger { gap:.8rem; }
-          .account-avatar { width:4.2rem; height:4.2rem; }
-          .account-name { max-width:11rem; }
+          .account-menu__trigger { gap:.6rem; font-size:1rem; }
+          .account-avatar { width:3.5rem; height:3.5rem; }
+          .account-name { max-width:8.6rem; }
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
