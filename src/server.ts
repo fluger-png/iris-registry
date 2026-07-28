@@ -3067,12 +3067,12 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         @media (max-width: 989px) {
           .header-inner {
             min-height:112px;
-            grid-template-columns:auto auto;
+            grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
             grid-template-areas:
               "logo logo"
               "nav account";
-            justify-content:center;
-            justify-items:center;
+            justify-content:stretch;
+            justify-items:stretch;
             align-items:center;
             column-gap:1.8rem;
             row-gap:1.1rem;
@@ -3085,8 +3085,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           }
           .main-nav {
             gap:0;
-            justify-content:flex-end;
-            justify-self:end;
+            justify-content:flex-start;
+            justify-self:start;
             flex-wrap:nowrap;
             font-size:1rem;
           }
@@ -3101,9 +3101,9 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             border-radius:.78rem;
           }
           .header-account {
-            justify-content:flex-start;
+            justify-content:flex-end;
             min-width:0;
-            justify-self:start;
+            justify-self:end;
           }
           .account-menu__trigger {
             gap:0;
