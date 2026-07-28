@@ -2204,11 +2204,10 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .header-shop-button:visited {
           position:relative;
           min-height:5.6rem;
-          min-width:24rem;
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:1.45rem 3.8rem;
+          padding:1.45rem 7.2rem;
           border:1px solid rgba(237,232,223,.92) !important;
           border-radius:1.6rem;
           background:#111215;
@@ -3140,7 +3139,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         @media (max-width: 480px) {
           .main-nav { font-size:13px; gap:14px; }
           .header-shop-button,
-          .header-shop-button:visited { min-width:20rem; }
+          .header-shop-button:visited { padding-left:4.8rem; padding-right:4.8rem; }
           h1 { font-size:36px; }
           .account-menu__trigger { gap:.8rem; }
           .account-avatar { width:4.2rem; height:4.2rem; }
