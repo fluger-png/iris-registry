@@ -2303,7 +2303,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           height:100%;
           object-fit:cover;
           display:block;
-          transform:scale(1.6);
+          transform:scale(1.8);
           transform-origin:center;
         }
         .account-name {
