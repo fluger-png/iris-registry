@@ -140,7 +140,11 @@ const requireAdmin = async (req: any, reply: any): Promise<boolean> => {
 };
 
 const PARTNER_SESSION_COOKIE = "iris_partner_session";
+const IRIS_ACCOUNT_SESSION_COOKIE = "iris_account_session";
 const PARTNER_PASSWORD_KEYLEN = 64;
+const IRIS_ACCOUNT_SESSION_DAYS = 30;
+const IRIS_LOGIN_CODE_TTL_MINUTES = 10;
+const IRIS_LOGIN_CODE_MAX_ATTEMPTS = 5;
 
 const escapeHtml = (value: string): string =>
   value
@@ -262,6 +266,131 @@ const setPartnerSessionCookie = (reply: any, rawToken: string, expiresAt: Date):
 
 const clearPartnerSessionCookie = (reply: any): void => {
   reply.header("Set-Cookie", clearCookie(PARTNER_SESSION_COOKIE));
+};
+
+const setIrisAccountSessionCookie = (reply: any, rawToken: string, expiresAt: Date): void => {
+  reply.header("Set-Cookie", buildCookie(IRIS_ACCOUNT_SESSION_COOKIE, rawToken, expiresAt));
+};
+
+const clearIrisAccountSessionCookie = (reply: any): void => {
+  reply.header("Set-Cookie", clearCookie(IRIS_ACCOUNT_SESSION_COOKIE));
+};
+
+const hashLoginCode = (email: string, code: string): string =>
+  crypto
+    .createHash("sha256")
+    .update(`${normalizeEmail(email)}:${code.trim().replace(/\s+/g, "")}`)
+    .digest("hex");
+
+const generateLoginCode = (): string => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+
+const normalizeUsername = (value: unknown): string =>
+  readSingleValue(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, "");
+
+const isValidUsername = (value: string): boolean =>
+  /^[a-z0-9](?:[a-z0-9-]{1,22}[a-z0-9])$/.test(value);
+
+const usernameSeedFromEmail = (email: string): string => {
+  const localPart = normalizeEmail(email).split("@")[0] ?? "iris";
+  const seed = localPart
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+  if (isValidUsername(seed)) {
+    return seed;
+  }
+  return `iris-${crypto.randomInt(1000, 9999)}`;
+};
+
+const createUniqueIrisUsername = async (email: string): Promise<string> => {
+  const seed = usernameSeedFromEmail(email);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `-${crypto.randomInt(1000, 9999)}`;
+    const candidate = `${seed.slice(0, 24 - suffix.length)}${suffix}`;
+    if (!isValidUsername(candidate)) {
+      continue;
+    }
+    const existing = await prisma.irisUser.findUnique({ where: { username: candidate } });
+    if (!existing) {
+      return candidate;
+    }
+  }
+  return `iris-${crypto.randomUUID().slice(0, 8)}`;
+};
+
+const findOrCreateIrisUserByEmail = async (email: string) => {
+  const normalizedEmail = normalizeEmail(email);
+  const existing = await prisma.irisUser.findUnique({ where: { email: normalizedEmail } });
+  if (existing) {
+    return existing;
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const username = await createUniqueIrisUsername(normalizedEmail);
+    try {
+      return await prisma.irisUser.create({
+        data: {
+          email: normalizedEmail,
+          username
+        }
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const raced = await prisma.irisUser.findUnique({ where: { email: normalizedEmail } });
+        if (raced) {
+          return raced;
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("iris_user_create_failed");
+};
+
+const createIrisAccountSession = async (userId: string) => {
+  const rawToken = createOpaqueToken();
+  const expiresAt = new Date(Date.now() + IRIS_ACCOUNT_SESSION_DAYS * 24 * 60 * 60 * 1000);
+
+  await prisma.irisAccountSession.create({
+    data: {
+      user_id: userId,
+      token_hash: hashOpaqueToken(rawToken),
+      expires_at: expiresAt,
+      last_seen_at: new Date()
+    }
+  });
+
+  return { rawToken, expiresAt };
+};
+
+const getIrisAccountAuth = async (req: any) => {
+  const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
+  const rawToken = cookies[IRIS_ACCOUNT_SESSION_COOKIE];
+  if (!rawToken) {
+    return null;
+  }
+
+  const session = await prisma.irisAccountSession.findFirst({
+    where: {
+      token_hash: hashOpaqueToken(rawToken),
+      expires_at: { gt: new Date() }
+    },
+    include: {
+      user: true
+    }
+  });
+
+  if (!session) {
+    return null;
+  }
+
+  return { rawToken, session, user: session.user };
 };
 
 const sendCollaboratorInviteEmailBestEffort = async (params: {
@@ -433,6 +562,74 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
     return { sent: false, reason: `email_exception:${message}` };
   } finally {
     clearTimeout(timeout);
+  }
+
+  return { sent: true, reason: "sent" };
+};
+
+const sendIrisAccountLoginCodeEmailBestEffort = async (params: {
+  email: string;
+  code: string;
+  expiresAt: Date;
+}): Promise<{ sent: boolean; reason: string }> => {
+  if (!env.resendApiKey || !env.resendFromEmail) {
+    return { sent: false, reason: "email_not_configured" };
+  }
+
+  const expiresLabel = params.expiresAt.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short"
+  });
+  const accountUrl = `${env.baseStorefrontUrl.replace(/\/$/, "")}/apps/iris/v3/account`;
+  const subject = "Your IRIS account code";
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#F3F4F8;color:#111827;padding:32px;">
+      <div style="max-width:560px;margin:0 auto;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:22px;padding:30px;box-shadow:0 18px 48px rgba(15,23,42,.08);">
+        <div style="font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#6B7280;margin-bottom:14px;">IRIS Account V3</div>
+        <h1 style="margin:0 0 16px;font-size:34px;line-height:1.05;font-weight:700;color:#111827;">Sign in to your IRIS account.</h1>
+        <p style="margin:0 0 20px;font-size:16px;line-height:1.7;color:#4B5563;">
+          Enter this code on the private IRIS Account page to view your library and profile preview.
+        </p>
+        <div style="margin:24px 0;padding:20px 22px;border:1px solid #111827;background:#FFFFFF;text-align:center;">
+          <div style="font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#6B7280;margin-bottom:10px;">Login Code</div>
+          <div style="font-size:34px;letter-spacing:.28em;font-weight:700;color:#111827;">${escapeHtml(params.code)}</div>
+        </div>
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#6B7280;">
+          This code expires around ${escapeHtml(expiresLabel)}.
+        </p>
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#6B7280;">
+          Private preview link: <a href="${escapeHtml(accountUrl)}" style="color:#111827;">${escapeHtml(accountUrl)}</a>
+        </p>
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#6B7280;">
+          If you did not request this code, you can ignore this email.
+        </p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: env.resendFromEmail,
+        to: [params.email],
+        subject,
+        html
+      })
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return { sent: false, reason: `email_error:${text}` };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown";
+    return { sent: false, reason: `email_exception:${message}` };
   }
 
   return { sent: true, reason: "sent" };
@@ -1664,7 +1861,310 @@ const buildPartnerDashboardHtml = (params: {
   return buildPartnerShell("IRIS Partner Dashboard", body);
 };
 
-  const buildAdminDetailHtml = (item: {
+const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${escapeHtml(title)}</title>
+      <style>
+        * { box-sizing:border-box; }
+        body {
+          margin:0;
+          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background:#F3F4F8;
+          color:#111827;
+        }
+        a { color:inherit; }
+        .page { min-height:100vh; padding:32px 18px; }
+        .wrap { width:min(100%, 1120px); margin:0 auto; }
+        .panel {
+          background:#fff;
+          border:1px solid #E5E7EB;
+          border-radius:24px;
+          box-shadow:0 18px 48px rgba(15,23,42,.08);
+          overflow:hidden;
+        }
+        .hero {
+          padding:34px 30px;
+          border-bottom:1px solid #E5E7EB;
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:18px;
+        }
+        .eyebrow {
+          margin:0 0 12px;
+          color:#6B7280;
+          text-transform:uppercase;
+          letter-spacing:.24em;
+          font-size:12px;
+        }
+        h1 { margin:0; font-size:clamp(2.4rem, 5vw, 4.4rem); line-height:1; letter-spacing:-.04em; }
+        h2 { margin:0 0 10px; font-size:24px; }
+        p { color:#4B5563; line-height:1.7; }
+        .body { padding:30px; }
+        .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        .card { border:1px solid #E5E7EB; background:#fff; padding:18px; }
+        .field { display:grid; gap:8px; margin-bottom:14px; }
+        label { color:#6B7280; font-size:11px; letter-spacing:.18em; text-transform:uppercase; }
+        input[type="email"], input[type="text"] {
+          width:100%;
+          min-height:52px;
+          border:1px solid #111827;
+          background:#fff;
+          color:#111827;
+          padding:0 14px;
+          font:inherit;
+        }
+        .check { display:flex; align-items:center; gap:10px; margin:12px 0 18px; color:#4B5563; }
+        .btn {
+          min-height:48px;
+          border:1px solid #111827;
+          background:#111827;
+          color:#fff;
+          padding:12px 16px;
+          font-weight:700;
+          font-size:12px;
+          letter-spacing:.14em;
+          text-transform:uppercase;
+          cursor:pointer;
+          text-decoration:none;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .btn.secondary { background:#fff; color:#111827; }
+        .muted { color:#6B7280; }
+        .error { margin:0 0 18px; padding:14px 16px; border:1px solid #B91C1C; color:#B91C1C; background:#FEF2F2; }
+        .success { margin:0 0 18px; padding:14px 16px; border:1px solid #16A34A; color:#166534; background:#F0FDF4; }
+        .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .mini { font-size:13px; color:#6B7280; }
+        .iris-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:16px; }
+        .iris-card { border:1px solid #E5E7EB; background:#fff; overflow:hidden; }
+        .iris-media { aspect-ratio:1/1; background:#F8FAFC; display:flex; align-items:center; justify-content:center; }
+        .iris-media img { width:100%; height:100%; object-fit:cover; display:block; }
+        .iris-info { padding:14px; }
+        .iris-title { margin:0 0 8px; font-weight:800; }
+        .row { display:flex; justify-content:space-between; gap:14px; padding:10px 0; border-top:1px solid #E5E7EB; }
+        .row span { color:#6B7280; font-size:11px; letter-spacing:.14em; text-transform:uppercase; }
+        .row strong { text-align:right; }
+        @media (max-width: 820px) {
+          .hero { display:block; }
+          .grid, .iris-grid { grid-template-columns:1fr; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="page">
+        <main class="wrap">
+          <div class="panel">
+            ${body}
+          </div>
+        </main>
+      </div>
+    </body>
+  </html>`;
+
+const buildIrisAccountLoginHtml = (options?: { error?: string; success?: string; email?: string }) => {
+  const errorHtml = options?.error ? `<div class="error">${escapeHtml(options.error)}</div>` : "";
+  const successHtml = options?.success ? `<div class="success">${escapeHtml(options.success)}</div>` : "";
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <h1>Your IRIS account.</h1>
+        <p>This hidden preview signs you into IRIS directly by email code. Shopify login is not required here.</p>
+      </div>
+    </section>
+    <section class="body">
+      ${errorHtml}
+      ${successHtml}
+      <form method="POST" action="/apps/iris/v3/login/request">
+        <div class="field">
+          <label>Email</label>
+          <input type="email" name="email" value="${escapeHtml(options?.email ?? "")}" autocomplete="email" required />
+        </div>
+        <button class="btn" type="submit">Email Login Code</button>
+      </form>
+      <p class="mini">Private test route. No public site links point here yet.</p>
+    </section>
+  `;
+  return buildIrisAccountShell("IRIS Account V3", body);
+};
+
+const buildIrisAccountVerifyHtml = (params: { email: string; error?: string }) => {
+  const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <h1>Enter your code.</h1>
+        <p>We sent a six-digit login code to ${escapeHtml(params.email)}.</p>
+      </div>
+    </section>
+    <section class="body">
+      ${errorHtml}
+      <form method="POST" action="/apps/iris/v3/login/verify">
+        <input type="hidden" name="email" value="${escapeHtml(params.email)}" />
+        <div class="field">
+          <label>Login Code</label>
+          <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required />
+        </div>
+        <div class="actions">
+          <button class="btn" type="submit">Sign In</button>
+          <a class="btn secondary" href="/apps/iris/v3/account">Use another email</a>
+        </div>
+      </form>
+    </section>
+  `;
+  return buildIrisAccountShell("Verify IRIS Account", body);
+};
+
+const buildIrisAccountProfileHtml = (params: {
+  email: string;
+  username: string;
+  displayName: string | null;
+  profilePublic: boolean;
+  message?: string;
+  error?: string;
+  items: Array<{
+    iris_id: string;
+    display_iris_id: string;
+    image_url: string | null;
+    rarity_code: string | null;
+    weight_grams: number | null;
+    activated_at: Date | null;
+    passport_url: string;
+  }>;
+}) => {
+  const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
+  const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
+  const cards = params.items
+    .map((item) => {
+      const image = item.image_url
+        ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id)}" />`
+        : `<span class="muted">No image</span>`;
+      return `
+        <article class="iris-card">
+          <a class="iris-media" href="${escapeHtml(item.passport_url)}">${image}</a>
+          <div class="iris-info">
+            <p class="iris-title">${escapeHtml(item.display_iris_id)}</p>
+            <div class="row"><span>Rarity</span><strong>${escapeHtml(item.rarity_code ?? "-")}</strong></div>
+            <div class="row"><span>Weight</span><strong>${item.weight_grams == null ? "-" : `${item.weight_grams.toFixed(2)} g`}</strong></div>
+            <div class="row"><span>Activated</span><strong>${item.activated_at ? item.activated_at.toISOString().slice(0, 10) : "-"}</strong></div>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <h1>@${escapeHtml(params.username)}</h1>
+        <p>${escapeHtml(params.email)}</p>
+      </div>
+      <form method="POST" action="/apps/iris/v3/logout">
+        <button class="btn secondary" type="submit">Log Out</button>
+      </form>
+    </section>
+    <section class="body">
+      ${messageHtml}
+      ${errorHtml}
+      <div class="grid">
+        <section class="card">
+          <h2>Profile</h2>
+          <p class="muted">Foundation for marketplace seller identity and future public galleries.</p>
+          <form method="POST" action="/apps/iris/v3/profile">
+            <div class="field">
+              <label>Username</label>
+              <input type="text" name="username" value="${escapeHtml(params.username)}" minlength="3" maxlength="24" required />
+            </div>
+            <div class="field">
+              <label>Display Name</label>
+              <input type="text" name="display_name" value="${escapeHtml(params.displayName ?? "")}" maxlength="80" />
+            </div>
+            <label class="check">
+              <input type="checkbox" name="profile_public" ${params.profilePublic ? "checked" : ""} />
+              Allow a future public gallery for this profile
+            </label>
+            <button class="btn" type="submit">Save Profile</button>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Next Layer</h2>
+          <p>Order history will sync by verified email from Shopify Admin API. For now this V3 preview uses IRIS backend ownership only.</p>
+          <div class="row"><span>Visibility</span><strong>${params.profilePublic ? "Public-ready" : "Private"}</strong></div>
+          <div class="row"><span>Library</span><strong>${params.items.length}</strong></div>
+        </section>
+      </div>
+      <section style="margin-top:24px;">
+        <h2>My IRIS</h2>
+        <p class="muted">Read-only V3 library preview. Current public My IRIS remains unchanged.</p>
+        <div class="iris-grid">
+          ${cards || `<div class="card"><p>No IRIS found for this email yet.</p></div>`}
+        </div>
+      </section>
+    </section>
+  `;
+  return buildIrisAccountShell("IRIS Account V3", body);
+};
+
+const loadIrisAccountItems = async (email: string) => {
+  const normalizedEmail = normalizeEmail(email);
+  const items = await prisma.artwork.findMany({
+    where: {
+      status: "activated",
+      OR: [
+        { owner_email: normalizedEmail },
+        { owner_email: null, assigned_customer_email: normalizedEmail }
+      ]
+    },
+    orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }],
+    include: {
+      collection: {
+        select: {
+          slug: true,
+          name: true,
+          edition_size: true
+        }
+      }
+    }
+  });
+
+  const generatedTokens = new Map<string, string>();
+  const missing = items.filter((item) => !item.proof_token);
+  if (missing.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      for (const item of missing) {
+        const token = crypto.randomUUID();
+        await tx.artwork.update({
+          where: { iris_id: item.iris_id },
+          data: { proof_token: token }
+        });
+        generatedTokens.set(item.iris_id, token);
+      }
+    });
+  }
+
+  return items.map((item) => {
+    const proofToken = item.proof_token ?? generatedTokens.get(item.iris_id) ?? "";
+    return {
+      iris_id: item.iris_id,
+      display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+      image_url: item.image_url,
+      rarity_code: item.rarity_code,
+      weight_grams: item.weight_grams,
+      activated_at: item.activated_at,
+      passport_url: proofToken
+        ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(proofToken)}`
+        : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
+    };
+  });
+};
+
+const buildAdminDetailHtml = (item: {
   iris_id: string;
   display_iris_id: string;
   status: string;
@@ -3139,6 +3639,227 @@ export const createServer = async (): Promise<FastifyInstance> => {
         };
       })
     });
+  });
+
+  const sendIrisAccountHtml = (reply: any, html: string) =>
+    reply
+      .code(200)
+      .header("X-Robots-Tag", "noindex, nofollow")
+      .type("text/html; charset=utf-8")
+      .send(html);
+
+  const renderIrisAccountProfile = async (
+    reply: any,
+    user: {
+      email: string;
+      username: string;
+      display_name: string | null;
+      profile_public: boolean;
+    },
+    options?: { message?: string; error?: string }
+  ) => {
+    const items = await loadIrisAccountItems(user.email);
+    sendIrisAccountHtml(
+      reply,
+      buildIrisAccountProfileHtml({
+        email: user.email,
+        username: user.username,
+        displayName: user.display_name,
+        profilePublic: user.profile_public,
+        message: options?.message,
+        error: options?.error,
+        items
+      })
+    );
+  };
+
+  app.get("/apps/iris/v3", async (_req, reply) => {
+    reply.redirect(302, "/apps/iris/v3/account");
+  });
+
+  app.get("/apps/iris/v3/account", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        sendIrisAccountHtml(reply, buildIrisAccountLoginHtml());
+        return;
+      }
+
+      await prisma.irisAccountSession.update({
+        where: { id: auth.session.id },
+        data: { last_seen_at: new Date() }
+      });
+      await renderIrisAccountProfile(reply, auth.user);
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account V3 page failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.post("/apps/iris/v3/login/request", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const email = normalizeEmail(body.email);
+    if (!email || !isValidEmail(email)) {
+      sendIrisAccountHtml(reply, buildIrisAccountLoginHtml({ error: "Please enter a valid email.", email }));
+      return;
+    }
+
+    const code = generateLoginCode();
+    const expiresAt = new Date(Date.now() + IRIS_LOGIN_CODE_TTL_MINUTES * 60 * 1000);
+    const now = new Date();
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.irisAccountLoginCode.updateMany({
+          where: {
+            email,
+            consumed_at: null
+          },
+          data: {
+            consumed_at: now
+          }
+        });
+        await tx.irisAccountLoginCode.create({
+          data: {
+            email,
+            code_hash: hashLoginCode(email, code),
+            expires_at: expiresAt
+          }
+        });
+      });
+
+      const emailResult = await sendIrisAccountLoginCodeEmailBestEffort({ email, code, expiresAt });
+      if (!emailResult.sent) {
+        sendIrisAccountHtml(
+          reply,
+          buildIrisAccountLoginHtml({
+            error: `We could not send the login code (${emailResult.reason}).`,
+            email
+          })
+        );
+        return;
+      }
+
+      sendIrisAccountHtml(reply, buildIrisAccountVerifyHtml({ email }));
+    } catch (error) {
+      req.log.error({ err: error, email }, "IRIS Account login request failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration.", email })
+      );
+    }
+  });
+
+  app.post("/apps/iris/v3/login/verify", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const email = normalizeEmail(body.email);
+    const code = readSingleValue(body.code).trim().replace(/\s+/g, "");
+    if (!email || !isValidEmail(email) || !code) {
+      sendIrisAccountHtml(reply, buildIrisAccountVerifyHtml({ email, error: "Please enter the code from your email." }));
+      return;
+    }
+
+    try {
+      const loginCode = await prisma.irisAccountLoginCode.findFirst({
+        where: {
+          email,
+          consumed_at: null,
+          expires_at: { gt: new Date() }
+        },
+        orderBy: { created_at: "desc" }
+      });
+
+      if (!loginCode || loginCode.attempts >= IRIS_LOGIN_CODE_MAX_ATTEMPTS) {
+        sendIrisAccountHtml(reply, buildIrisAccountVerifyHtml({ email, error: "This code is expired. Request a new code." }));
+        return;
+      }
+
+      if (loginCode.code_hash !== hashLoginCode(email, code)) {
+        await prisma.irisAccountLoginCode.update({
+          where: { id: loginCode.id },
+          data: { attempts: { increment: 1 } }
+        });
+        sendIrisAccountHtml(reply, buildIrisAccountVerifyHtml({ email, error: "Invalid code. Please try again." }));
+        return;
+      }
+
+      const user = await findOrCreateIrisUserByEmail(email);
+      const session = await createIrisAccountSession(user.id);
+      await prisma.$transaction([
+        prisma.irisAccountLoginCode.update({
+          where: { id: loginCode.id },
+          data: { consumed_at: new Date() }
+        }),
+        prisma.irisUser.update({
+          where: { id: user.id },
+          data: { last_login_at: new Date() }
+        })
+      ]);
+
+      setIrisAccountSessionCookie(reply, session.rawToken, session.expiresAt);
+      reply.redirect(302, "/apps/iris/v3/account");
+    } catch (error) {
+      req.log.error({ err: error, email }, "IRIS Account login verify failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountVerifyHtml({ email, error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.post("/apps/iris/v3/profile", async (req, reply) => {
+    const auth = await getIrisAccountAuth(req);
+    if (!auth) {
+      reply.redirect(302, "/apps/iris/v3/account");
+      return;
+    }
+
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const username = normalizeUsername(body.username);
+    const displayName = readSingleValue(body.display_name).trim().slice(0, 80) || null;
+    const profilePublic = Object.prototype.hasOwnProperty.call(body, "profile_public");
+
+    if (!isValidUsername(username)) {
+      await renderIrisAccountProfile(reply, auth.user, {
+        error: "Username must be 3-24 characters, lowercase letters/numbers/hyphens, and cannot start or end with a hyphen."
+      });
+      return;
+    }
+
+    try {
+      const updated = await prisma.irisUser.update({
+        where: { id: auth.user.id },
+        data: {
+          username,
+          display_name: displayName,
+          profile_public: profilePublic
+        }
+      });
+      await renderIrisAccountProfile(reply, updated, { message: "Profile saved." });
+    } catch (error) {
+      const message =
+        error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
+          ? "This username is already taken."
+          : "Profile could not be saved.";
+      await renderIrisAccountProfile(reply, auth.user, { error: message });
+    }
+  });
+
+  app.post("/apps/iris/v3/logout", async (req, reply) => {
+    const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
+    const rawToken = cookies[IRIS_ACCOUNT_SESSION_COOKIE];
+    if (rawToken) {
+      await prisma.irisAccountSession.deleteMany({
+        where: {
+          token_hash: hashOpaqueToken(rawToken)
+        }
+      });
+    }
+    clearIrisAccountSessionCookie(reply);
+    reply.redirect(302, "/apps/iris/v3/account");
   });
 
   app.post("/apps/iris/transfer-request", async (req, reply) => {

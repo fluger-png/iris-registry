@@ -138,6 +138,50 @@ model OwnershipTransfer {
   @@index([expires_at])
 }
 
+model IrisUser {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  username            String               @unique
+  display_name        String?
+  profile_public      Boolean              @default(false)
+  shopify_customer_id String?
+  last_login_at       DateTime?
+  created_at          DateTime             @default(now())
+  updated_at          DateTime             @updatedAt
+
+  sessions            IrisAccountSession[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model IrisAccountSession {
+  id             String   @id @default(cuid())
+  user_id        String
+  token_hash     String   @unique
+  expires_at     DateTime
+  last_seen_at   DateTime?
+  created_at     DateTime @default(now())
+
+  user           IrisUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
+}
+
+model IrisAccountLoginCode {
+  id           String    @id @default(cuid())
+  email        String
+  code_hash    String
+  attempts     Int       @default(0)
+  expires_at   DateTime
+  consumed_at  DateTime?
+  created_at   DateTime  @default(now())
+
+  @@index([email, expires_at])
+  @@index([expires_at])
+}
+
 model WebhookReceipt {
   id                  Int      @id @default(autoincrement())
   topic               String
