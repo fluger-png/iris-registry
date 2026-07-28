@@ -293,6 +293,39 @@ const normalizeUsername = (value: unknown): string =>
 const isValidUsername = (value: string): boolean =>
   /^[a-z0-9](?:[a-z0-9-]{1,22}[a-z0-9])$/.test(value);
 
+const IRIS_ACCOUNT_USER_SELECT = {
+  id: true,
+  email: true,
+  username: true,
+  display_name: true,
+  profile_public: true
+} as const;
+
+const loadIrisAccountAvatarIrisId = async (userId: string): Promise<string | null> => {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ avatar_iris_id: string | null }>>`
+      SELECT "avatar_iris_id"
+      FROM "IrisUser"
+      WHERE "id" = ${userId}
+      LIMIT 1
+    `;
+    return rows[0]?.avatar_iris_id ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const withIrisAccountAvatar = async (user: {
+  id: string;
+  email: string;
+  username: string;
+  display_name: string | null;
+  profile_public: boolean;
+}): Promise<IrisAccountUserView> => ({
+  ...user,
+  avatar_iris_id: await loadIrisAccountAvatarIrisId(user.id)
+});
+
 const usernameSeedFromEmail = (email: string): string => {
   const localPart = normalizeEmail(email).split("@")[0] ?? "iris";
   const seed = localPart
@@ -314,7 +347,10 @@ const createUniqueIrisUsername = async (email: string): Promise<string> => {
     if (!isValidUsername(candidate)) {
       continue;
     }
-    const existing = await prisma.irisUser.findUnique({ where: { username: candidate } });
+    const existing = await prisma.irisUser.findUnique({
+      where: { username: candidate },
+      select: { id: true }
+    });
     if (!existing) {
       return candidate;
     }
@@ -324,9 +360,12 @@ const createUniqueIrisUsername = async (email: string): Promise<string> => {
 
 const findOrCreateIrisUserByEmail = async (email: string) => {
   const normalizedEmail = normalizeEmail(email);
-  const existing = await prisma.irisUser.findUnique({ where: { email: normalizedEmail } });
+  const existing = await prisma.irisUser.findUnique({
+    where: { email: normalizedEmail },
+    select: IRIS_ACCOUNT_USER_SELECT
+  });
   if (existing) {
-    return existing;
+    return withIrisAccountAvatar(existing);
   }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -336,13 +375,17 @@ const findOrCreateIrisUserByEmail = async (email: string) => {
         data: {
           email: normalizedEmail,
           username
-        }
-      });
+        },
+        select: IRIS_ACCOUNT_USER_SELECT
+      }).then(withIrisAccountAvatar);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        const raced = await prisma.irisUser.findUnique({ where: { email: normalizedEmail } });
+        const raced = await prisma.irisUser.findUnique({
+          where: { email: normalizedEmail },
+          select: IRIS_ACCOUNT_USER_SELECT
+        });
         if (raced) {
-          return raced;
+          return withIrisAccountAvatar(raced);
         }
         continue;
       }
@@ -384,7 +427,9 @@ const getIrisAccountAuth = async (req: any, fallbackRawToken?: string) => {
       expires_at: { gt: new Date() }
     },
     include: {
-      user: true
+      user: {
+        select: IRIS_ACCOUNT_USER_SELECT
+      }
     }
   });
 
@@ -392,7 +437,7 @@ const getIrisAccountAuth = async (req: any, fallbackRawToken?: string) => {
     return null;
   }
 
-  return { rawToken, session, user: session.user };
+  return { rawToken, session, user: await withIrisAccountAvatar(session.user) };
 };
 
 const sendCollaboratorInviteEmailBestEffort = async (params: {
@@ -1882,6 +1927,7 @@ type IrisAccountUserView = {
   username: string;
   display_name: string | null;
   profile_public: boolean;
+  avatar_iris_id: string | null;
 };
 
 type IrisAccountShellOptions = {
@@ -1969,8 +2015,56 @@ const buildIrisArchiveCardHtml = (item: IrisAccountItem, href: string): string =
   `;
 };
 
-const selectIrisAccountAvatarUrl = (items: IrisAccountItem[]): string | null =>
-  items.find((item) => Boolean(item.image_url))?.image_url ?? null;
+const buildIrisAccountLibraryCardHtml = (
+  item: IrisAccountItem,
+  href: string,
+  options: { sessionToken?: string; avatarIrisId?: string | null }
+): string => {
+  const media = item.image_url
+    ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.iris_id)}" loading="lazy">`
+    : `<div class="v2-iris-archive__placeholder"></div>`;
+  const isCurrentAvatar = options.avatarIrisId === item.iris_id;
+  const canSetAvatar = Boolean(item.image_url) && !isCurrentAvatar;
+  const sessionQuery = options.sessionToken ? `?session=${encodeURIComponent(options.sessionToken)}` : "";
+  const sessionHidden = options.sessionToken
+    ? `<input type="hidden" name="session" value="${escapeHtml(options.sessionToken)}" />`
+    : "";
+  const avatarButtonLabel = isCurrentAvatar ? "Current Avatar" : "Set as Avatar";
+
+  return `
+    <li data-rarity="${escapeHtml(item.rarity_code || "Activated")}">
+      <article class="v2-iris-archive__card">
+        <a class="v2-iris-archive__card-link" href="${escapeHtml(href)}">
+          <div class="v2-iris-archive__media">
+            ${media}
+            <div class="v2-iris-archive__overlay">
+              <div class="v2-iris-archive__overlay-meta">Activated: ${escapeHtml(formatIrisAccountShortDate(item.activated_at))}<br>Gold content: ${escapeHtml(formatIrisAccountGold(item.weight_grams))}</div>
+            </div>
+          </div>
+          <div class="v2-iris-archive__body">
+            <div class="v2-iris-archive__iris">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
+            <div class="v2-iris-archive__meta">${escapeHtml(item.rarity_code || "Activated")}</div>
+          </div>
+        </a>
+        <div class="v2-iris-archive__actions">
+          <a class="v2-iris-archive__action" href="${escapeHtml(href)}">Open Passport</a>
+          <form class="v2-iris-archive__avatar-form" method="POST" action="/apps/iris/v3/avatar${sessionQuery}">
+            ${sessionHidden}
+            <input type="hidden" name="iris_id" value="${escapeHtml(item.iris_id)}" />
+            <button class="v2-iris-archive__action v2-iris-archive__action--button${isCurrentAvatar ? " is-active" : ""}" type="submit" ${canSetAvatar ? "" : "disabled"}>
+              ${escapeHtml(avatarButtonLabel)}
+            </button>
+          </form>
+        </div>
+      </article>
+    </li>
+  `;
+};
+
+const selectIrisAccountAvatarUrl = (items: IrisAccountItem[], avatarIrisId?: string | null): string | null => {
+  const selected = avatarIrisId ? items.find((item) => item.iris_id === avatarIrisId && Boolean(item.image_url)) : null;
+  return selected?.image_url ?? items.find((item) => Boolean(item.image_url))?.image_url ?? null;
+};
 
 const buildIrisArchiveFilterScript = (params: {
   filterClass: string;
@@ -2199,7 +2293,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           height:100%;
           object-fit:cover;
           display:block;
-          transform:scale(1.4);
+          transform:scale(1.6);
           transform-origin:center;
         }
         .account-name {
@@ -2516,6 +2610,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           border-color:rgba(201,168,76,.4);
           transform:translateY(-2px);
         }
+        .v2-iris-archive__card-link {
+          display:block;
+          color:inherit;
+          text-decoration:none;
+        }
         .v2-iris-archive__media {
           position:relative;
           aspect-ratio:1 / 1;
@@ -2573,6 +2672,49 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           text-transform:uppercase;
           letter-spacing:.18rem;
           font-size:.95rem;
+        }
+        .v2-iris-archive__actions {
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          border-top:1px solid var(--v2-archive-border);
+        }
+        .v2-iris-archive__avatar-form { margin:0; min-width:0; }
+        .v2-iris-archive__action,
+        .v2-iris-archive__action:visited {
+          width:100%;
+          min-height:4.5rem;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          border:0;
+          border-right:1px solid var(--v2-archive-border);
+          background:rgba(201,168,76,.02);
+          color:var(--v2-archive-text-mid);
+          padding:1.1rem .9rem;
+          text-align:center;
+          text-transform:uppercase;
+          letter-spacing:.13rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:.86rem;
+          line-height:1.35;
+          cursor:pointer;
+        }
+        .v2-iris-archive__avatar-form .v2-iris-archive__action {
+          border-right:0;
+        }
+        .v2-iris-archive__action:hover,
+        .v2-iris-archive__action:focus {
+          color:var(--v2-archive-gold);
+          background:rgba(201,168,76,.07);
+        }
+        .v2-iris-archive__action:disabled {
+          color:rgba(237,232,223,.38);
+          cursor:default;
+          background:rgba(255,255,255,.02);
+        }
+        .v2-iris-archive__action.is-active:disabled {
+          color:var(--v2-archive-gold);
+          background:rgba(201,168,76,.08);
         }
         .v2-iris-archive__placeholder {
           position:absolute;
@@ -3133,13 +3275,14 @@ const buildIrisAccountLibraryHtml = (params: {
     messageHtml || errorHtml ? `<div class="account-notice-wrap">${messageHtml}${errorHtml}</div>` : "";
   const cards = params.items
     .map((item) =>
-      buildIrisArchiveCardHtml(
+      buildIrisAccountLibraryCardHtml(
         item,
-        buildIrisAccountHref("/apps/iris/v3/passport", params.sessionToken, { iris_id: item.iris_id })
+        buildIrisAccountHref("/apps/iris/v3/passport", params.sessionToken, { iris_id: item.iris_id }),
+        { sessionToken: params.sessionToken, avatarIrisId: params.user.avatar_iris_id }
       )
     )
     .join("");
-  const avatarUrl = selectIrisAccountAvatarUrl(params.items);
+  const avatarUrl = selectIrisAccountAvatarUrl(params.items, params.user.avatar_iris_id);
   const body = `
     ${noticeHtml}
     <section class="v2-iris-archive">
@@ -3306,6 +3449,7 @@ const buildIrisAccountPassportHtml = (params: {
   user: IrisAccountUserView;
   item: IrisAccountItem;
   sessionToken?: string;
+  avatarUrl?: string | null;
   transferPendingTo?: string | null;
 }) => {
   const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", params.sessionToken);
@@ -3497,7 +3641,7 @@ const buildIrisAccountPassportHtml = (params: {
     {
       user: params.user,
       sessionToken: params.sessionToken,
-      avatarUrl: params.item.image_url,
+      avatarUrl: params.avatarUrl,
       wrapClass: "wrap--flush"
     }
   );
@@ -5099,7 +5243,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     options?: { message?: string; error?: string; sessionToken?: string }
   ) => {
     const items = await loadIrisAccountItems(user.email);
-    const avatarUrl = selectIrisAccountAvatarUrl(items);
+    const avatarUrl = selectIrisAccountAvatarUrl(items, user.avatar_iris_id);
     sendIrisAccountHtml(
       reply,
       buildIrisAccountSettingsHtml({
@@ -5127,7 +5271,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       buildIrisAccountMarketplaceHtml({
         user,
         sessionToken: options?.sessionToken,
-        avatarUrl: selectIrisAccountAvatarUrl(userItems),
+        avatarUrl: selectIrisAccountAvatarUrl(userItems, user.avatar_iris_id),
         items: marketplaceItems
       })
     );
@@ -5218,12 +5362,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
         return;
       }
       const transferPendingTo = await loadPendingTransferTo(item.iris_id);
+      const items = await loadIrisAccountItems(auth.user.email);
       sendIrisAccountHtml(
         reply,
         buildIrisAccountPassportHtml({
           user: auth.user,
           item,
           sessionToken: auth.rawToken,
+          avatarUrl: selectIrisAccountAvatarUrl(items, auth.user.avatar_iris_id),
           transferPendingTo
         })
       );
@@ -5233,6 +5379,70 @@ export const createServer = async (): Promise<FastifyInstance> => {
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
       );
+    }
+  });
+
+  app.post("/apps/iris/v3/avatar", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const sessionToken = readSingleValue(body.session).trim();
+    const auth = await getIrisAccountAuth(req, sessionToken);
+    if (!auth) {
+      reply.redirect(302, "/apps/iris/v3/account");
+      return;
+    }
+
+    const irisId = normalizeIrisIdInput(readSingleValue(body.iris_id));
+    if (!irisId) {
+      await renderIrisAccountLibrary(reply, auth.user, {
+        sessionToken: auth.rawToken,
+        error: "Avatar could not be changed."
+      });
+      return;
+    }
+
+    const item = await loadIrisAccountPassportItem(auth.user.email, irisId);
+    if (!item) {
+      await renderIrisAccountLibrary(reply, auth.user, {
+        sessionToken: auth.rawToken,
+        error: "This IRIS is not registered to this account."
+      });
+      return;
+    }
+    if (!item.image_url) {
+      await renderIrisAccountLibrary(reply, auth.user, {
+        sessionToken: auth.rawToken,
+        error: "This IRIS does not have an image yet."
+      });
+      return;
+    }
+
+    try {
+      const updated = await prisma.irisUser.update({
+        where: { id: auth.user.id },
+        data: { avatar_iris_id: item.iris_id },
+        select: IRIS_ACCOUNT_USER_SELECT
+      });
+      await prisma.event.create({
+        data: {
+          iris_id: item.iris_id,
+          type: "iris_account_avatar_set",
+          actor: auth.user.email,
+          payload_json: {
+            user_id: auth.user.id,
+            avatar_iris_id: item.iris_id
+          }
+        }
+      });
+      await renderIrisAccountLibrary(reply, { ...updated, avatar_iris_id: item.iris_id }, {
+        sessionToken: auth.rawToken,
+        message: `${formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id)} is now your avatar.`
+      });
+    } catch (error) {
+      req.log.error({ err: error, irisId, userId: auth.user.id }, "IRIS Account avatar update failed");
+      await renderIrisAccountLibrary(reply, auth.user, {
+        sessionToken: auth.rawToken,
+        error: "Avatar could not be changed."
+      });
     }
   });
 
@@ -5332,7 +5542,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         }),
         prisma.irisUser.update({
           where: { id: user.id },
-          data: { last_login_at: new Date() }
+          data: { last_login_at: new Date() },
+          select: { id: true }
         })
       ]);
 
@@ -5375,9 +5586,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
           username,
           display_name: displayName,
           profile_public: profilePublic
-        }
+        },
+        select: IRIS_ACCOUNT_USER_SELECT
       });
-      await renderIrisAccountSettings(reply, updated, { message: "Profile saved.", sessionToken: auth.rawToken });
+      await renderIrisAccountSettings(reply, await withIrisAccountAvatar(updated), {
+        message: "Profile saved.",
+        sessionToken: auth.rawToken
+      });
     } catch (error) {
       const message =
         error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"

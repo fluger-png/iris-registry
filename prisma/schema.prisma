@@ -144,6 +144,7 @@ model IrisUser {
   username            String               @unique
   display_name        String?
   profile_public      Boolean              @default(false)
+  avatar_iris_id      String?
   shopify_customer_id String?
   last_login_at       DateTime?
   created_at          DateTime             @default(now())
@@ -153,6 +154,7 @@ model IrisUser {
 
   @@index([email])
   @@index([username])
+  @@index([avatar_iris_id])
 }
 
 model IrisAccountSession {
