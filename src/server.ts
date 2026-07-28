@@ -588,20 +588,20 @@ const sendIrisAccountLoginCodeEmailBestEffort = async (params: {
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;background:#F3F4F8;color:#111827;padding:32px;">
       <div style="max-width:560px;margin:0 auto;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:22px;padding:30px;box-shadow:0 18px 48px rgba(15,23,42,.08);">
-        <div style="font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#6B7280;margin-bottom:14px;">IRIS Account V3</div>
+        <div style="font-size:12px;text-transform:uppercase;color:#6B7280;margin-bottom:14px;">IRIS Account</div>
         <h1 style="margin:0 0 16px;font-size:34px;line-height:1.05;font-weight:700;color:#111827;">Sign in to your IRIS account.</h1>
         <p style="margin:0 0 20px;font-size:16px;line-height:1.7;color:#4B5563;">
-          Enter this code on the private IRIS Account page to view your library and profile preview.
+          Enter this code on the IRIS Account page to view your library and profile.
         </p>
         <div style="margin:24px 0;padding:20px 22px;border:1px solid #111827;background:#FFFFFF;text-align:center;">
-          <div style="font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#6B7280;margin-bottom:10px;">Login Code</div>
-          <div style="font-size:34px;letter-spacing:.28em;font-weight:700;color:#111827;">${escapeHtml(params.code)}</div>
+          <div style="font-size:11px;text-transform:uppercase;color:#6B7280;margin-bottom:10px;">Login Code</div>
+          <div style="font-size:34px;font-weight:700;color:#111827;">${escapeHtml(params.code)}</div>
         </div>
         <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#6B7280;">
           This code expires around ${escapeHtml(expiresLabel)}.
         </p>
         <p style="margin:0 0 12px;font-size:14px;line-height:1.7;color:#6B7280;">
-          Private preview link: <a href="${escapeHtml(accountUrl)}" style="color:#111827;">${escapeHtml(accountUrl)}</a>
+          IRIS Account: <a href="${escapeHtml(accountUrl)}" style="color:#111827;">${escapeHtml(accountUrl)}</a>
         </p>
         <p style="margin:0;font-size:14px;line-height:1.7;color:#6B7280;">
           If you did not request this code, you can ignore this email.
@@ -1870,101 +1870,431 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <meta name="referrer" content="no-referrer" />
       <title>${escapeHtml(title)}</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+      <link href="https://fonts.googleapis.com/css2?family=Abel&family=Unbounded:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <style>
         * { box-sizing:border-box; }
+        :root {
+          --iris-black:#000000;
+          --iris-surface:#070707;
+          --iris-surface-2:#101010;
+          --iris-line:rgba(201,168,76,.18);
+          --iris-line-strong:rgba(201,168,76,.36);
+          --iris-gold:#c9a84c;
+          --iris-gold-bright:#eabf50;
+          --iris-text:#ede8df;
+          --iris-muted:#a89f90;
+          --iris-soft:#746d62;
+          --iris-danger:#ff6b6b;
+          --iris-success:#7bd88f;
+          --page-width:1200px;
+        }
+        html { min-height:100%; background:var(--iris-black); }
         body {
           margin:0;
-          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          background:#F3F4F8;
-          color:#111827;
+          min-height:100vh;
+          font-family:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background:var(--iris-black);
+          color:var(--iris-text);
         }
-        a { color:inherit; }
-        .page { min-height:100vh; padding:32px 18px; }
-        .wrap { width:min(100%, 1120px); margin:0 auto; }
-        .panel {
-          background:#fff;
-          border:1px solid #E5E7EB;
-          border-radius:24px;
-          box-shadow:0 18px 48px rgba(15,23,42,.08);
-          overflow:hidden;
+        a { color:inherit; text-decoration:none; }
+        .site {
+          min-height:100vh;
+          display:flex;
+          flex-direction:column;
+          background:var(--iris-black);
+        }
+        .site-header {
+          background:var(--iris-black);
+          border-bottom:1px solid rgba(201,168,76,.14);
+          position:sticky;
+          top:0;
+          z-index:20;
+        }
+        .header-inner {
+          width:min(100%, var(--page-width));
+          min-height:112px;
+          margin:0 auto;
+          padding:0 24px;
+          display:grid;
+          grid-template-columns:120px 1fr 180px;
+          align-items:center;
+          gap:24px;
+        }
+        .site-logo {
+          display:inline-flex;
+          align-items:center;
+          width:90px;
+        }
+        .site-logo img {
+          width:90px;
+          height:auto;
+          display:block;
+        }
+        .main-nav {
+          display:flex;
+          align-items:center;
+          gap:34px;
+          color:var(--iris-gold);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:16px;
+          text-transform:uppercase;
+        }
+        .main-nav a {
+          opacity:.78;
+          border-bottom:1px solid transparent;
+          padding:4px 0;
+        }
+        .main-nav a:hover,
+        .main-nav a:focus {
+          opacity:1;
+          border-bottom-color:var(--iris-gold);
+        }
+        .header-actions {
+          display:flex;
+          justify-content:flex-end;
+          gap:20px;
+          color:var(--iris-gold);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:12px;
+          text-transform:uppercase;
+        }
+        .page {
+          flex:1;
+          background:var(--iris-black);
+        }
+        .wrap {
+          width:min(100%, var(--page-width));
+          margin:0 auto;
+          padding:56px 24px 72px;
         }
         .hero {
-          padding:34px 30px;
-          border-bottom:1px solid #E5E7EB;
-          display:flex;
+          padding:58px 0 44px;
+          border-bottom:1px solid var(--iris-line);
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) auto;
           align-items:flex-start;
           justify-content:space-between;
-          gap:18px;
+          gap:28px;
         }
         .eyebrow {
           margin:0 0 12px;
-          color:#6B7280;
+          color:var(--iris-gold);
           text-transform:uppercase;
-          letter-spacing:.24em;
           font-size:12px;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
         }
-        h1 { margin:0; font-size:clamp(2.4rem, 5vw, 4.4rem); line-height:1; letter-spacing:-.04em; }
-        h2 { margin:0 0 10px; font-size:24px; }
-        p { color:#4B5563; line-height:1.7; }
-        .body { padding:30px; }
-        .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-        .card { border:1px solid #E5E7EB; background:#fff; padding:18px; }
-        .field { display:grid; gap:8px; margin-bottom:14px; }
-        label { color:#6B7280; font-size:11px; letter-spacing:.18em; text-transform:uppercase; }
+        h1,
+        h2,
+        .iris-title,
+        .footer-brand {
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-weight:500;
+        }
+        h1 {
+          margin:0;
+          max-width:820px;
+          font-size:66px;
+          line-height:.98;
+        }
+        h2 {
+          margin:0 0 14px;
+          font-size:28px;
+          line-height:1.12;
+        }
+        p {
+          max-width:700px;
+          color:var(--iris-muted);
+          line-height:1.65;
+          font-size:19px;
+        }
+        .hero p:not(.eyebrow) { margin-bottom:0; }
+        .body { padding:34px 0 0; }
+        .grid {
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+          gap:8px;
+        }
+        .card {
+          border:1px solid var(--iris-line);
+          background:var(--iris-surface);
+          padding:26px;
+          min-width:0;
+        }
+        .field {
+          display:grid;
+          gap:8px;
+          margin-bottom:18px;
+        }
+        label {
+          color:var(--iris-gold);
+          font-size:12px;
+          text-transform:uppercase;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+        }
         input[type="email"], input[type="text"] {
           width:100%;
-          min-height:52px;
-          border:1px solid #111827;
-          background:#fff;
-          color:#111827;
-          padding:0 14px;
+          min-height:54px;
+          border:1px solid var(--iris-line-strong);
+          background:#030303;
+          color:var(--iris-text);
+          padding:0 16px;
           font:inherit;
+          font-size:20px;
+          border-radius:0;
         }
-        .check { display:flex; align-items:center; gap:10px; margin:12px 0 18px; color:#4B5563; }
+        input[type="checkbox"] { accent-color:var(--iris-gold-bright); }
+        .check {
+          display:flex;
+          align-items:center;
+          gap:10px;
+          margin:12px 0 22px;
+          color:var(--iris-muted);
+          text-transform:none;
+          font-family:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size:18px;
+        }
         .btn {
-          min-height:48px;
-          border:1px solid #111827;
-          background:#111827;
-          color:#fff;
-          padding:12px 16px;
+          min-height:54px;
+          border:1px solid var(--iris-gold-bright);
+          background:var(--iris-gold-bright);
+          color:#050505;
+          padding:14px 20px;
           font-weight:700;
-          font-size:12px;
-          letter-spacing:.14em;
+          font-size:14px;
           text-transform:uppercase;
           cursor:pointer;
           text-decoration:none;
           display:inline-flex;
           align-items:center;
           justify-content:center;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
         }
-        .btn.secondary { background:#fff; color:#111827; }
-        .muted { color:#6B7280; }
-        .error { margin:0 0 18px; padding:14px 16px; border:1px solid #B91C1C; color:#B91C1C; background:#FEF2F2; }
-        .success { margin:0 0 18px; padding:14px 16px; border:1px solid #16A34A; color:#166534; background:#F0FDF4; }
+        .btn:hover,
+        .btn:focus { background:#f0c95c; border-color:#f0c95c; }
+        .btn.secondary {
+          background:transparent;
+          color:var(--iris-text);
+          border-color:var(--iris-line-strong);
+        }
+        .btn.secondary:hover,
+        .btn.secondary:focus {
+          background:rgba(201,168,76,.08);
+          border-color:var(--iris-gold-bright);
+          color:var(--iris-text);
+        }
+        .muted { color:var(--iris-muted); }
+        .error,
+        .success {
+          margin:0 0 18px;
+          padding:14px 16px;
+          border:1px solid currentColor;
+          background:rgba(255,255,255,.03);
+          font-size:18px;
+        }
+        .error { color:var(--iris-danger); }
+        .success { color:var(--iris-success); }
         .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-        .mini { font-size:13px; color:#6B7280; }
-        .iris-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:16px; }
-        .iris-card { border:1px solid #E5E7EB; background:#fff; overflow:hidden; }
-        .iris-media { aspect-ratio:1/1; background:#F8FAFC; display:flex; align-items:center; justify-content:center; }
-        .iris-media img { width:100%; height:100%; object-fit:cover; display:block; }
-        .iris-info { padding:14px; }
-        .iris-title { margin:0 0 8px; font-weight:800; }
-        .row { display:flex; justify-content:space-between; gap:14px; padding:10px 0; border-top:1px solid #E5E7EB; }
-        .row span { color:#6B7280; font-size:11px; letter-spacing:.14em; text-transform:uppercase; }
+        .mini { font-size:15px; color:var(--iris-soft); }
+        .iris-grid {
+          display:grid;
+          grid-template-columns:repeat(3,minmax(0,1fr));
+          gap:8px;
+          margin-top:16px;
+        }
+        .iris-card {
+          border:1px solid var(--iris-line);
+          background:var(--iris-surface);
+          overflow:hidden;
+          min-width:0;
+        }
+        .iris-media {
+          aspect-ratio:1/1;
+          background:var(--iris-surface-2);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          color:var(--iris-soft);
+        }
+        .iris-media img {
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          display:block;
+        }
+        .iris-info { padding:18px; }
+        .iris-title {
+          margin:0 0 10px;
+          font-size:18px;
+          color:var(--iris-text);
+        }
+        .row {
+          display:flex;
+          justify-content:space-between;
+          gap:14px;
+          padding:12px 0;
+          border-top:1px solid var(--iris-line);
+          color:var(--iris-text);
+          font-size:18px;
+        }
+        .row span {
+          color:var(--iris-gold);
+          font-size:11px;
+          text-transform:uppercase;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+        }
         .row strong { text-align:right; }
+        .site-footer {
+          border-top:1px solid rgba(201,168,76,.14);
+          background:var(--iris-black);
+          color:var(--iris-muted);
+        }
+        .footer-inner,
+        .footer-bottom {
+          width:min(100%, var(--page-width));
+          margin:0 auto;
+          padding-left:24px;
+          padding-right:24px;
+        }
+        .footer-inner {
+          display:grid;
+          grid-template-columns:1.1fr 1fr;
+          gap:40px;
+          padding-top:42px;
+          padding-bottom:34px;
+        }
+        .footer-brand {
+          color:var(--iris-text);
+          font-size:22px;
+          margin-bottom:12px;
+        }
+        .footer-note {
+          max-width:460px;
+          margin:0;
+          color:var(--iris-muted);
+          font-size:18px;
+        }
+        .footer-links {
+          display:grid;
+          grid-template-columns:repeat(2, minmax(0, 1fr));
+          gap:14px 28px;
+          align-content:start;
+          justify-items:start;
+          color:var(--iris-muted);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:12px;
+          text-transform:uppercase;
+        }
+        .footer-links a:hover,
+        .footer-links a:focus { color:var(--iris-gold); }
+        .footer-bottom {
+          border-top:1px solid rgba(201,168,76,.14);
+          min-height:56px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:18px;
+          font-size:14px;
+        }
+        .gold-line { color:var(--iris-gold); }
+        @media (max-width: 1100px) {
+          .header-inner {
+            grid-template-columns:100px 1fr 130px;
+            gap:18px;
+          }
+          .main-nav {
+            gap:20px;
+            font-size:14px;
+          }
+          .header-actions {
+            gap:14px;
+            font-size:11px;
+          }
+        }
         @media (max-width: 820px) {
-          .hero { display:block; }
+          .header-inner {
+            min-height:96px;
+            grid-template-columns:1fr;
+            justify-items:center;
+            gap:12px;
+            padding-top:16px;
+            padding-bottom:16px;
+          }
+          .main-nav {
+            gap:18px;
+            justify-content:center;
+            flex-wrap:wrap;
+            font-size:14px;
+          }
+          .header-actions { display:none; }
+          .wrap { padding:34px 18px 52px; }
+          .hero {
+            display:block;
+            padding:34px 0 30px;
+          }
+          h1 { font-size:44px; }
+          h2 { font-size:24px; }
+          p { font-size:18px; }
           .grid, .iris-grid { grid-template-columns:1fr; }
+          .card { padding:22px; }
+          .footer-inner { grid-template-columns:1fr; gap:24px; }
+          .footer-bottom { align-items:flex-start; flex-direction:column; padding-top:18px; padding-bottom:18px; }
+        }
+        @media (max-width: 480px) {
+          .main-nav { font-size:13px; gap:14px; }
+          h1 { font-size:36px; }
+          .actions .btn,
+          form .btn { width:100%; }
+          .footer-links { grid-template-columns:1fr; }
         }
       </style>
     </head>
     <body>
-      <div class="page">
-        <main class="wrap">
-          <div class="panel">
+      <div class="site">
+        <header class="site-header">
+          <div class="header-inner">
+            <a class="site-logo" href="/" aria-label="IRIS NYC Home">
+              <img src="https://irisnyc.store/cdn/shop/files/blacklogo_4x_fab96a79-d7af-4c49-968e-176fa1fb41e6.png?v=1776815083&width=180" alt="IRIS NYC" />
+            </a>
+            <nav class="main-nav" aria-label="Main navigation">
+              <a href="/">Home</a>
+              <a href="/products/iris-the-unseen-edition">Shop IRIS</a>
+              <a href="/pages/iris-archive">Gallery</a>
+              <a href="/pages/what-is-iris">What Is IRIS</a>
+              <a href="/pages/faq">FAQ</a>
+            </nav>
+            <div class="header-actions" aria-hidden="true">
+              <a href="/search">Search</a>
+              <a href="/cart">Cart</a>
+            </div>
+          </div>
+        </header>
+        <main class="page">
+          <div class="wrap">
             ${body}
           </div>
         </main>
+        <footer class="site-footer">
+          <div class="footer-inner">
+            <div>
+              <div class="footer-brand">IRIS NYC</div>
+              <p class="footer-note">Collectible physical art, activated through ownership and preserved in the IRIS archive.</p>
+            </div>
+            <nav class="footer-links" aria-label="Footer navigation">
+              <a href="/pages/iris-archive">Gallery</a>
+              <a href="/pages/what-is-iris">What Is IRIS</a>
+              <a href="/pages/affiliate-program">Partnership</a>
+              <a href="/pages/contact">Collaborate</a>
+              <a href="/policies/privacy-policy">Privacy Policy</a>
+              <a href="/policies/terms-of-service">Terms Of Service</a>
+            </nav>
+          </div>
+          <div class="footer-bottom">
+            <span>© 2026 IRIS NYC</span>
+            <span class="gold-line">24K Gold · Au 79 · Embedded in every piece</span>
+          </div>
+        </footer>
       </div>
     </body>
   </html>`;
@@ -1975,9 +2305,9 @@ const buildIrisAccountLoginHtml = (options?: { error?: string; success?: string;
   const body = `
     <section class="hero">
       <div>
-        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <p class="eyebrow">IRIS Account</p>
         <h1>Your IRIS account.</h1>
-        <p>This hidden preview signs you into IRIS directly by email code. Shopify login is not required here.</p>
+        <p>Access your collection, profile, and future ownership tools directly through IRIS.</p>
       </div>
     </section>
     <section class="body">
@@ -1990,10 +2320,10 @@ const buildIrisAccountLoginHtml = (options?: { error?: string; success?: string;
         </div>
         <button class="btn" type="submit">Email Login Code</button>
       </form>
-      <p class="mini">Private test route. No public site links point here yet.</p>
+      <p class="mini">Access is currently available by direct invite.</p>
     </section>
   `;
-  return buildIrisAccountShell("IRIS Account V3", body);
+  return buildIrisAccountShell("IRIS Account", body);
 };
 
 const buildIrisAccountVerifyHtml = (params: { email: string; error?: string }) => {
@@ -2001,7 +2331,7 @@ const buildIrisAccountVerifyHtml = (params: { email: string; error?: string }) =
   const body = `
     <section class="hero">
       <div>
-        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <p class="eyebrow">IRIS Account</p>
         <h1>Enter your code.</h1>
         <p>We sent a six-digit login code to ${escapeHtml(params.email)}.</p>
       </div>
@@ -2074,7 +2404,7 @@ const buildIrisAccountProfileHtml = (params: {
   const body = `
     <section class="hero">
       <div>
-        <p class="eyebrow">IRIS Account V3 Private Preview</p>
+        <p class="eyebrow">IRIS Account</p>
         <h1>@${escapeHtml(params.username)}</h1>
         <p>${escapeHtml(params.email)}</p>
       </div>
@@ -2089,7 +2419,7 @@ const buildIrisAccountProfileHtml = (params: {
       <div class="grid">
         <section class="card">
           <h2>Profile</h2>
-          <p class="muted">Foundation for marketplace seller identity and future public galleries.</p>
+          <p class="muted">Your IRIS identity for future marketplace tools and optional public galleries.</p>
           <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
             ${sessionHidden}
             <div class="field">
@@ -2109,14 +2439,14 @@ const buildIrisAccountProfileHtml = (params: {
         </section>
         <section class="card">
           <h2>Next Layer</h2>
-          <p>Order history will sync by verified email from Shopify Admin API. For now this V3 preview uses IRIS backend ownership only.</p>
+          <p>Order history can be connected by verified email. Ownership remains anchored in the IRIS passport record.</p>
           <div class="row"><span>Visibility</span><strong>${params.profilePublic ? "Public-ready" : "Private"}</strong></div>
           <div class="row"><span>Library</span><strong>${params.items.length}</strong></div>
         </section>
       </div>
       <section style="margin-top:24px;">
         <h2>My IRIS</h2>
-        <p class="muted">Read-only V3 library preview. Current public My IRIS remains unchanged.</p>
+        <p class="muted">Your activated IRIS works, gathered from the ownership record.</p>
         <div class="iris-grid">
           ${cards || `<div class="card"><p>No IRIS found for this email yet.</p></div>`}
         </div>
@@ -2124,7 +2454,7 @@ const buildIrisAccountProfileHtml = (params: {
       ${sessionScript}
     </section>
   `;
-  return buildIrisAccountShell("IRIS Account V3", body);
+  return buildIrisAccountShell("IRIS Account", body);
 };
 
 const loadIrisAccountItems = async (email: string) => {
