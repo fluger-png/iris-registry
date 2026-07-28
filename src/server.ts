@@ -369,9 +369,11 @@ const createIrisAccountSession = async (userId: string) => {
   return { rawToken, expiresAt };
 };
 
-const getIrisAccountAuth = async (req: any) => {
+const getIrisAccountAuth = async (req: any, fallbackRawToken?: string) => {
+  const query = (req.query as { session?: unknown } | null) ?? {};
+  const queryRawToken = readSingleValue(query.session).trim();
   const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
-  const rawToken = cookies[IRIS_ACCOUNT_SESSION_COOKIE];
+  const rawToken = fallbackRawToken?.trim() || queryRawToken || cookies[IRIS_ACCOUNT_SESSION_COOKIE];
   if (!rawToken) {
     return null;
   }
@@ -1866,6 +1868,7 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <meta name="referrer" content="no-referrer" />
       <title>${escapeHtml(title)}</title>
       <style>
         * { box-sizing:border-box; }
@@ -2026,6 +2029,7 @@ const buildIrisAccountProfileHtml = (params: {
   username: string;
   displayName: string | null;
   profilePublic: boolean;
+  sessionToken?: string;
   message?: string;
   error?: string;
   items: Array<{
@@ -2040,6 +2044,15 @@ const buildIrisAccountProfileHtml = (params: {
 }) => {
   const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
   const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
+  const sessionQuery = params.sessionToken ? `?session=${encodeURIComponent(params.sessionToken)}` : "";
+  const sessionHidden = params.sessionToken
+    ? `<input type="hidden" name="session" value="${escapeHtml(params.sessionToken)}" />`
+    : "";
+  const sessionScript = params.sessionToken
+    ? `<script>
+        document.cookie = "${IRIS_ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(params.sessionToken)}; Path=/; Max-Age=${IRIS_ACCOUNT_SESSION_DAYS * 24 * 60 * 60}; SameSite=Lax; Secure";
+      </script>`
+    : "";
   const cards = params.items
     .map((item) => {
       const image = item.image_url
@@ -2065,7 +2078,8 @@ const buildIrisAccountProfileHtml = (params: {
         <h1>@${escapeHtml(params.username)}</h1>
         <p>${escapeHtml(params.email)}</p>
       </div>
-      <form method="POST" action="/apps/iris/v3/logout">
+      <form method="POST" action="/apps/iris/v3/logout${sessionQuery}">
+        ${sessionHidden}
         <button class="btn secondary" type="submit">Log Out</button>
       </form>
     </section>
@@ -2076,7 +2090,8 @@ const buildIrisAccountProfileHtml = (params: {
         <section class="card">
           <h2>Profile</h2>
           <p class="muted">Foundation for marketplace seller identity and future public galleries.</p>
-          <form method="POST" action="/apps/iris/v3/profile">
+          <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
+            ${sessionHidden}
             <div class="field">
               <label>Username</label>
               <input type="text" name="username" value="${escapeHtml(params.username)}" minlength="3" maxlength="24" required />
@@ -2106,6 +2121,7 @@ const buildIrisAccountProfileHtml = (params: {
           ${cards || `<div class="card"><p>No IRIS found for this email yet.</p></div>`}
         </div>
       </section>
+      ${sessionScript}
     </section>
   `;
   return buildIrisAccountShell("IRIS Account V3", body);
@@ -3656,7 +3672,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       display_name: string | null;
       profile_public: boolean;
     },
-    options?: { message?: string; error?: string }
+    options?: { message?: string; error?: string; sessionToken?: string }
   ) => {
     const items = await loadIrisAccountItems(user.email);
     sendIrisAccountHtml(
@@ -3666,6 +3682,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         username: user.username,
         displayName: user.display_name,
         profilePublic: user.profile_public,
+        sessionToken: options?.sessionToken,
         message: options?.message,
         error: options?.error,
         items
@@ -3689,7 +3706,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         where: { id: auth.session.id },
         data: { last_seen_at: new Date() }
       });
-      await renderIrisAccountProfile(reply, auth.user);
+      await renderIrisAccountProfile(reply, auth.user, { sessionToken: auth.rawToken });
     } catch (error) {
       req.log.error({ err: error }, "IRIS Account V3 page failed");
       sendIrisAccountHtml(
@@ -3800,7 +3817,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       ]);
 
       setIrisAccountSessionCookie(reply, session.rawToken, session.expiresAt);
-      reply.redirect(302, "/apps/iris/v3/account");
+      reply.redirect(302, `/apps/iris/v3/account?session=${encodeURIComponent(session.rawToken)}`);
     } catch (error) {
       req.log.error({ err: error, email }, "IRIS Account login verify failed");
       sendIrisAccountHtml(
@@ -3811,19 +3828,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   app.post("/apps/iris/v3/profile", async (req, reply) => {
-    const auth = await getIrisAccountAuth(req);
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const sessionToken = readSingleValue(body.session).trim();
+    const auth = await getIrisAccountAuth(req, sessionToken);
     if (!auth) {
       reply.redirect(302, "/apps/iris/v3/account");
       return;
     }
 
-    const body = (req.body as Record<string, unknown> | null) ?? {};
     const username = normalizeUsername(body.username);
     const displayName = readSingleValue(body.display_name).trim().slice(0, 80) || null;
     const profilePublic = Object.prototype.hasOwnProperty.call(body, "profile_public");
 
     if (!isValidUsername(username)) {
       await renderIrisAccountProfile(reply, auth.user, {
+        sessionToken: auth.rawToken,
         error: "Username must be 3-24 characters, lowercase letters/numbers/hyphens, and cannot start or end with a hyphen."
       });
       return;
@@ -3838,19 +3857,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
           profile_public: profilePublic
         }
       });
-      await renderIrisAccountProfile(reply, updated, { message: "Profile saved." });
+      await renderIrisAccountProfile(reply, updated, { message: "Profile saved.", sessionToken: auth.rawToken });
     } catch (error) {
       const message =
         error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
           ? "This username is already taken."
           : "Profile could not be saved.";
-      await renderIrisAccountProfile(reply, auth.user, { error: message });
+      await renderIrisAccountProfile(reply, auth.user, { error: message, sessionToken: auth.rawToken });
     }
   });
 
   app.post("/apps/iris/v3/logout", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const sessionToken = readSingleValue(body.session).trim();
     const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
-    const rawToken = cookies[IRIS_ACCOUNT_SESSION_COOKIE];
+    const rawToken = sessionToken || cookies[IRIS_ACCOUNT_SESSION_COOKIE];
     if (rawToken) {
       await prisma.irisAccountSession.deleteMany({
         where: {
