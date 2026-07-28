@@ -2025,52 +2025,6 @@ const buildIrisArchiveCardHtml = (item: IrisAccountItem, href: string): string =
   `;
 };
 
-const buildIrisAccountLibraryCardHtml = (
-  item: IrisAccountItem,
-  href: string,
-  options: { sessionToken?: string; avatarIrisId?: string | null }
-): string => {
-  const media = item.image_url
-    ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.iris_id)}" loading="lazy">`
-    : `<div class="v2-iris-archive__placeholder"></div>`;
-  const isCurrentAvatar = options.avatarIrisId === item.iris_id;
-  const canSetAvatar = Boolean(item.image_url) && !isCurrentAvatar;
-  const sessionQuery = options.sessionToken ? `?session=${encodeURIComponent(options.sessionToken)}` : "";
-  const sessionHidden = options.sessionToken
-    ? `<input type="hidden" name="session" value="${escapeHtml(options.sessionToken)}" />`
-    : "";
-  const avatarButtonLabel = isCurrentAvatar ? "Current Avatar" : "Set as Avatar";
-
-  return `
-    <li data-rarity="${escapeHtml(item.rarity_code || "Activated")}">
-      <article class="v2-iris-archive__card">
-        <a class="v2-iris-archive__card-link" href="${escapeHtml(href)}">
-          <div class="v2-iris-archive__media">
-            ${media}
-            <div class="v2-iris-archive__overlay">
-              <div class="v2-iris-archive__overlay-meta">Activated: ${escapeHtml(formatIrisAccountShortDate(item.activated_at))}<br>Gold content: ${escapeHtml(formatIrisAccountGold(item.weight_grams))}</div>
-            </div>
-          </div>
-          <div class="v2-iris-archive__body">
-            <div class="v2-iris-archive__iris">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
-            <div class="v2-iris-archive__meta">${escapeHtml(item.rarity_code || "Activated")}</div>
-          </div>
-        </a>
-        <div class="v2-iris-archive__actions">
-          <a class="v2-iris-archive__action" href="${escapeHtml(href)}">Open Passport</a>
-          <form class="v2-iris-archive__avatar-form" method="POST" action="/apps/iris/v3/avatar${sessionQuery}">
-            ${sessionHidden}
-            <input type="hidden" name="iris_id" value="${escapeHtml(item.iris_id)}" />
-            <button class="v2-iris-archive__action v2-iris-archive__action--button${isCurrentAvatar ? " is-active" : ""}" type="submit" ${canSetAvatar ? "" : "disabled"}>
-              ${escapeHtml(avatarButtonLabel)}
-            </button>
-          </form>
-        </div>
-      </article>
-    </li>
-  `;
-};
-
 const selectIrisAccountAvatarUrl = (items: IrisAccountItem[], avatarIrisId?: string | null): string | null => {
   const selected = avatarIrisId ? items.find((item) => item.iris_id === avatarIrisId && Boolean(item.image_url)) : null;
   return selected?.image_url ?? items.find((item) => Boolean(item.image_url))?.image_url ?? null;
@@ -2620,11 +2574,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           border-color:rgba(201,168,76,.4);
           transform:translateY(-2px);
         }
-        .v2-iris-archive__card-link {
-          display:block;
-          color:inherit;
-          text-decoration:none;
-        }
         .v2-iris-archive__media {
           position:relative;
           aspect-ratio:1 / 1;
@@ -2683,49 +2632,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           letter-spacing:.18rem;
           font-size:.95rem;
         }
-        .v2-iris-archive__actions {
-          display:grid;
-          grid-template-columns:1fr 1fr;
-          border-top:1px solid var(--v2-archive-border);
-        }
-        .v2-iris-archive__avatar-form { margin:0; min-width:0; }
-        .v2-iris-archive__action,
-        .v2-iris-archive__action:visited {
-          width:100%;
-          min-height:4.5rem;
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          border:0;
-          border-right:1px solid var(--v2-archive-border);
-          background:rgba(201,168,76,.02);
-          color:var(--v2-archive-text-mid);
-          padding:1.1rem .9rem;
-          text-align:center;
-          text-transform:uppercase;
-          letter-spacing:.13rem;
-          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:.86rem;
-          line-height:1.35;
-          cursor:pointer;
-        }
-        .v2-iris-archive__avatar-form .v2-iris-archive__action {
-          border-right:0;
-        }
-        .v2-iris-archive__action:hover,
-        .v2-iris-archive__action:focus {
-          color:var(--v2-archive-gold);
-          background:rgba(201,168,76,.07);
-        }
-        .v2-iris-archive__action:disabled {
-          color:rgba(237,232,223,.38);
-          cursor:default;
-          background:rgba(255,255,255,.02);
-        }
-        .v2-iris-archive__action.is-active:disabled {
-          color:var(--v2-archive-gold);
-          background:rgba(201,168,76,.08);
-        }
         .v2-iris-archive__placeholder {
           position:absolute;
           inset:10%;
@@ -2751,7 +2657,28 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0 auto;
           padding:8rem 8rem 10rem;
         }
-        .v2-passport-head { margin-bottom:4.8rem; }
+        .v2-passport-head {
+          margin-bottom:4.8rem;
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) auto;
+          align-items:start;
+          gap:2.4rem;
+        }
+        .v2-passport-back-link,
+        .v2-passport-back-link:visited {
+          color:var(--v2-text);
+          text-decoration:none;
+          text-transform:uppercase;
+          letter-spacing:.24rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.1rem;
+          line-height:1;
+          padding-top:.7rem;
+        }
+        .v2-passport-back-link:hover,
+        .v2-passport-back-link:focus {
+          color:var(--v2-gold);
+        }
         .v2-passport-eyebrow {
           margin:0 0 1.4rem;
           color:var(--v2-gold-dim);
@@ -2862,6 +2789,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           gap:1.4rem;
           margin-top:3.2rem;
         }
+        .v2-passport-avatar-form { margin:0; display:contents; }
         .v2-passport-button,
         .v2-passport-button:visited {
           display:inline-flex;
@@ -2881,6 +2809,15 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .v2-passport-button:hover {
           border-color:rgba(201,168,76,.5);
+          background:rgba(201,168,76,.08);
+        }
+        .v2-passport-button:disabled {
+          opacity:.52;
+          cursor:default;
+        }
+        .v2-passport-button.is-active:disabled {
+          opacity:1;
+          color:var(--v2-gold);
           background:rgba(201,168,76,.08);
         }
         .v2-passport-button--ghost,
@@ -3137,6 +3074,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             font-size:.95rem;
           }
           .v2-passport-shell { padding:5.6rem 2rem 7rem; }
+          .v2-passport-head { grid-template-columns:1fr; }
+          .v2-passport-back-link { justify-self:end; order:-1; }
           .v2-passport-grid { grid-template-columns:1fr; gap:3.2rem; }
           .v2-passport-media,
           .v2-passport-panel { padding:2rem; }
@@ -3285,10 +3224,9 @@ const buildIrisAccountLibraryHtml = (params: {
     messageHtml || errorHtml ? `<div class="account-notice-wrap">${messageHtml}${errorHtml}</div>` : "";
   const cards = params.items
     .map((item) =>
-      buildIrisAccountLibraryCardHtml(
+      buildIrisArchiveCardHtml(
         item,
-        buildIrisAccountHref("/apps/iris/v3/passport", params.sessionToken, { iris_id: item.iris_id }),
-        { sessionToken: params.sessionToken, avatarIrisId: params.user.avatar_iris_id }
+        buildIrisAccountHref("/apps/iris/v3/passport", params.sessionToken, { iris_id: item.iris_id })
       )
     )
     .join("");
@@ -3464,6 +3402,13 @@ const buildIrisAccountPassportHtml = (params: {
 }) => {
   const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", params.sessionToken);
   const imageUrl = params.item.image_url || IRIS_ACCOUNT_DEFAULT_IMAGE;
+  const isCurrentAvatar = params.user.avatar_iris_id === params.item.iris_id;
+  const canSetAvatar = Boolean(params.item.image_url) && !isCurrentAvatar;
+  const sessionQuery = params.sessionToken ? `?session=${encodeURIComponent(params.sessionToken)}` : "";
+  const sessionHidden = params.sessionToken
+    ? `<input type="hidden" name="session" value="${escapeHtml(params.sessionToken)}" />`
+    : "";
+  const avatarButtonLabel = isCurrentAvatar ? "Current Avatar" : "Set as Avatar";
   const pendingNote = params.transferPendingTo
     ? `<div class="v2-passport-note">Transfer code is pending for ${escapeHtml(params.transferPendingTo)}.</div>`
     : "";
@@ -3471,12 +3416,15 @@ const buildIrisAccountPassportHtml = (params: {
     <div class="v2-passport-page">
       <div class="v2-passport-shell">
         <div class="v2-passport-head">
-          <p class="v2-passport-eyebrow">Digital Passport</p>
-          <h1 class="v2-passport-page__title">IRIS Passport</h1>
-          <p class="v2-passport-page__summary">
-            The registered record of your revealed artwork. Each activated IRIS keeps its image, activation date,
-            and rarity commitment in one permanent place.
-          </p>
+          <div>
+            <p class="v2-passport-eyebrow">Digital Passport</p>
+            <h1 class="v2-passport-page__title">IRIS Passport</h1>
+            <p class="v2-passport-page__summary">
+              The registered record of your revealed artwork. Each activated IRIS keeps its image, activation date,
+              and rarity commitment in one permanent place.
+            </p>
+          </div>
+          <a href="${escapeHtml(libraryHref)}" class="v2-passport-back-link">Back</a>
         </div>
 
         <div class="v2-passport-grid">
@@ -3511,7 +3459,13 @@ const buildIrisAccountPassportHtml = (params: {
             </div>
 
             <div class="v2-passport-actions">
-              <a href="${escapeHtml(libraryHref)}" class="v2-passport-button v2-passport-button--ghost">Back to My IRIS</a>
+              <form class="v2-passport-avatar-form" method="POST" action="/apps/iris/v3/avatar${sessionQuery}">
+                ${sessionHidden}
+                <input type="hidden" name="iris_id" value="${escapeHtml(params.item.iris_id)}" />
+                <button type="submit" class="v2-passport-button${isCurrentAvatar ? " is-active" : ""}" ${canSetAvatar ? "" : "disabled"}>
+                  ${escapeHtml(avatarButtonLabel)}
+                </button>
+              </form>
               <button type="button" class="v2-passport-button" id="iris-v3-transfer-open">Transfer</button>
               <button type="button" class="v2-passport-button v2-passport-button--ghost" id="iris-v3-sale-button">Sale</button>
             </div>
