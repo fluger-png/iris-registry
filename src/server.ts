@@ -3466,7 +3466,7 @@ const buildIrisAccountLibraryHtml = (params: {
         <div>
           <h1>My IRIS</h1>
           <p class="iris-library-stats">
-            <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total
+            <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold<span class="iris-library-acquisition-total" hidden> · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total</span>
           </p>
         </div>
       </section>
