@@ -2203,15 +2203,17 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .main-nav .header-shop-button,
         .main-nav .header-shop-button:visited {
           position:relative;
-          min-height:5.6rem;
+          min-height:4.2rem;
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:1.45rem 7.2rem;
+          padding:1.1rem 5.4rem;
           border:1px solid rgba(237,232,223,.92) !important;
-          border-radius:1.6rem;
+          border-radius:1.2rem;
           background:#111215;
           color:#ffffff !important;
+          font-size:1.2rem;
+          line-height:1;
           opacity:1 !important;
           overflow:hidden;
           isolation:isolate;
@@ -2248,7 +2250,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .main-nav .header-shop-button::after {
           inset:2px;
           z-index:1;
-          border-radius:1.35rem;
+          border-radius:1rem;
           background:
             radial-gradient(circle at 50% 0%, rgba(234,191,80,.25), rgba(234,191,80,0) 46%),
             linear-gradient(180deg, #161616 0%, #090909 100%);
@@ -3139,7 +3141,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         @media (max-width: 480px) {
           .main-nav { font-size:13px; gap:14px; }
           .main-nav .header-shop-button,
-          .main-nav .header-shop-button:visited { padding-left:4.8rem; padding-right:4.8rem; }
+          .main-nav .header-shop-button:visited { padding-left:3.6rem; padding-right:3.6rem; }
           h1 { font-size:36px; }
           .account-menu__trigger { gap:.8rem; }
           .account-avatar { width:4.2rem; height:4.2rem; }
