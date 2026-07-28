@@ -301,18 +301,28 @@ const IRIS_ACCOUNT_USER_SELECT = {
   profile_public: true
 } as const;
 
-const loadIrisAccountAvatarIrisId = async (userId: string): Promise<string | null> => {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ avatar_iris_id: string | null }>>`
-      SELECT "avatar_iris_id"
-      FROM "IrisUser"
-      WHERE "id" = ${userId}
-      LIMIT 1
-    `;
-    return rows[0]?.avatar_iris_id ?? null;
-  } catch {
-    return null;
+const loadIrisAccountAvatarIrisId = async (userId: string, email: string): Promise<string | null> => {
+  const events = await prisma.event.findMany({
+    where: {
+      type: "iris_account_avatar_set",
+      actor: normalizeEmail(email)
+    },
+    orderBy: { created_at: "desc" },
+    select: {
+      iris_id: true,
+      payload_json: true
+    },
+    take: 20
+  });
+
+  for (const event of events) {
+    const payload = event.payload_json;
+    if (payload && typeof payload === "object" && !Array.isArray(payload) && (payload as { user_id?: unknown }).user_id === userId) {
+      return event.iris_id;
+    }
   }
+
+  return null;
 };
 
 const withIrisAccountAvatar = async (user: {
@@ -323,7 +333,7 @@ const withIrisAccountAvatar = async (user: {
   profile_public: boolean;
 }): Promise<IrisAccountUserView> => ({
   ...user,
-  avatar_iris_id: await loadIrisAccountAvatarIrisId(user.id)
+  avatar_iris_id: await loadIrisAccountAvatarIrisId(user.id, user.email)
 });
 
 const usernameSeedFromEmail = (email: string): string => {
@@ -5417,11 +5427,6 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     try {
-      const updated = await prisma.irisUser.update({
-        where: { id: auth.user.id },
-        data: { avatar_iris_id: item.iris_id },
-        select: IRIS_ACCOUNT_USER_SELECT
-      });
       await prisma.event.create({
         data: {
           iris_id: item.iris_id,
@@ -5433,7 +5438,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           }
         }
       });
-      await renderIrisAccountLibrary(reply, { ...updated, avatar_iris_id: item.iris_id }, {
+      await renderIrisAccountLibrary(reply, { ...auth.user, avatar_iris_id: item.iris_id }, {
         sessionToken: auth.rawToken,
         message: `${formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id)} is now your avatar.`
       });
