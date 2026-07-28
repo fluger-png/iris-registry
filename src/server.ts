@@ -2421,6 +2421,29 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           font-size:19px;
         }
         .hero p:not(.eyebrow) { margin-bottom:0; }
+        .iris-library-hero {
+          display:block;
+          text-align:center;
+          border-bottom:0;
+          padding-bottom:2.8rem;
+        }
+        .iris-library-hero h1 {
+          max-width:none;
+          margin:0 auto;
+        }
+        .iris-library-stats {
+          max-width:none;
+          margin:1.7rem auto 0;
+          color:var(--iris-muted);
+          font-size:1.9rem;
+          line-height:1.5;
+        }
+        .iris-library-stats strong {
+          color:var(--iris-gold-bright);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-style:italic;
+          font-weight:400;
+        }
         .body { padding:34px 0 0; }
         .grid {
           display:grid;
@@ -3354,12 +3377,21 @@ const buildIrisAccountLibraryHtml = (params: {
     )
     .join("");
   const avatarUrl = selectIrisAccountAvatarUrl(params.items, params.user.avatar_iris_id);
+  const irisCountLabel = params.items.length.toLocaleString("en-US");
+  const totalGoldGrams = params.items.reduce((sum, item) => {
+    const weight = Number(item.weight_grams);
+    return Number.isFinite(weight) ? sum + weight : sum;
+  }, 0);
+  const totalGoldLabel = `${totalGoldGrams.toFixed(2)} g`;
   const body = `
     ${noticeHtml}
     <div class="wrap">
-      <section class="hero">
+      <section class="hero iris-library-hero">
         <div>
           <h1>My IRIS</h1>
+          <p class="iris-library-stats">
+            <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold
+          </p>
         </div>
       </section>
     </div>
