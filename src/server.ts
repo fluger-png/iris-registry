@@ -1927,6 +1927,7 @@ type IrisAccountItem = {
   image_url: string | null;
   rarity_code: string | null;
   weight_grams: number | null;
+  acquisition_price_cents: number | null;
   activated_at: Date | null;
   passport_url: string;
 };
@@ -1961,6 +1962,13 @@ const irisAccountShortDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric"
 });
 
+const irisAccountCurrencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0
+});
+
 const formatIrisAccountArchiveLabel = (irisId: string): string => {
   const clean = String(irisId || "").replace(/^IRIS-?/i, "").trim();
   return clean ? `IRIS No. ${clean}` : "IRIS No.";
@@ -1987,6 +1995,9 @@ const formatIrisAccountGold = (value: number | null): string => {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return `${Number(value).toFixed(2)} g (24K)`;
 };
+
+const formatIrisAccountCurrencyCents = (value: number): string =>
+  irisAccountCurrencyFormatter.format(Math.max(0, value) / 100);
 
 const buildIrisAccountHref = (
   path: string,
@@ -2434,13 +2445,15 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .iris-library-stats {
           max-width:none;
           margin:1.7rem auto 0;
-          color:var(--iris-muted);
+          color:var(--iris-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:1.9rem;
           line-height:1.5;
+          font-style:normal;
+          font-weight:400;
         }
         .iris-library-stats strong {
           color:var(--iris-gold-bright);
-          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-style:italic;
           font-weight:400;
         }
@@ -3383,6 +3396,11 @@ const buildIrisAccountLibraryHtml = (params: {
     return Number.isFinite(weight) ? sum + weight : sum;
   }, 0);
   const totalGoldLabel = `${totalGoldGrams.toFixed(2)} g`;
+  const acquisitionTotalCents = params.items.reduce((sum, item) => {
+    const price = Number(item.acquisition_price_cents);
+    return Number.isFinite(price) ? sum + Math.max(0, Math.round(price)) : sum;
+  }, 0);
+  const acquisitionTotalLabel = formatIrisAccountCurrencyCents(acquisitionTotalCents);
   const body = `
     ${noticeHtml}
     <div class="wrap">
@@ -3390,7 +3408,7 @@ const buildIrisAccountLibraryHtml = (params: {
         <div>
           <h1>My IRIS</h1>
           <p class="iris-library-stats">
-            <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold
+            <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total
           </p>
         </div>
       </section>
@@ -3786,7 +3804,8 @@ const loadIrisAccountItems = async (email: string) => {
         select: {
           slug: true,
           name: true,
-          edition_size: true
+          edition_size: true,
+          default_price_cents: true
         }
       }
     }
@@ -3798,6 +3817,7 @@ const loadIrisAccountItems = async (email: string) => {
     image_url: item.image_url,
     rarity_code: item.rarity_code,
     weight_grams: item.weight_grams,
+    acquisition_price_cents: item.collection?.default_price_cents ?? null,
     activated_at: item.activated_at,
     passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
   }));
@@ -3820,7 +3840,8 @@ const loadIrisAccountPassportItem = async (email: string, irisId: string): Promi
         select: {
           slug: true,
           name: true,
-          edition_size: true
+          edition_size: true,
+          default_price_cents: true
         }
       }
     }
@@ -3836,6 +3857,7 @@ const loadIrisAccountPassportItem = async (email: string, irisId: string): Promi
     image_url: item.image_url,
     rarity_code: item.rarity_code,
     weight_grams: item.weight_grams,
+    acquisition_price_cents: item.collection?.default_price_cents ?? null,
     activated_at: item.activated_at,
     passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
   };
