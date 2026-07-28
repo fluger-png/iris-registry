@@ -14,39 +14,65 @@ import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+const TROY_OUNCE_GRAMS = 31.1034768;
 let goldCache: { price: number; ts: number } | null = null;
 
 const loadLiveGoldPriceUsdG = async (): Promise<{ price: number; updatedAt: Date }> => {
-  if (!env.goldApiKey) {
-    throw new Error("gold_api_key_missing");
-  }
-
   const now = Date.now();
   if (goldCache && now - goldCache.ts < GOLD_CACHE_TTL_MS) {
     return { price: goldCache.price, updatedAt: new Date(goldCache.ts) };
   }
 
-  const res = await fetch("https://www.goldapi.io/api/XAU/USD", {
-    headers: {
-      "x-access-token": env.goldApiKey,
-      "Content-Type": "application/json"
+  let primaryError: unknown = null;
+  if (env.goldApiKey) {
+    try {
+      const res = await fetch("https://www.goldapi.io/api/XAU/USD", {
+        headers: {
+          "x-access-token": env.goldApiKey,
+          "Content-Type": "application/json"
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`goldapi_bad_status_${res.status}`);
+      }
+
+      const data = (await res.json()) as { price_gram_24k?: number | string | null; price?: number | string | null };
+      let perGram = data.price_gram_24k == null ? Number.NaN : Number(data.price_gram_24k);
+      if ((!Number.isFinite(perGram) || perGram <= 0) && data.price != null) {
+        perGram = Number(data.price) / TROY_OUNCE_GRAMS;
+      }
+      if (!Number.isFinite(perGram) || perGram <= 0) {
+        throw new Error("goldapi_missing_price");
+      }
+
+      goldCache = { price: perGram, ts: now };
+      return { price: perGram, updatedAt: new Date(now) };
+    } catch (error) {
+      primaryError = error;
     }
-  });
-  if (!res.ok) {
-    throw new Error(`goldapi_bad_status_${res.status}`);
   }
 
-  const data = (await res.json()) as { price_gram_24k?: number | string | null; price?: number | string | null };
-  let perGram = data.price_gram_24k == null ? Number.NaN : Number(data.price_gram_24k);
-  if ((!Number.isFinite(perGram) || perGram <= 0) && data.price != null) {
-    perGram = Number(data.price) / 31.1034768;
-  }
-  if (!Number.isFinite(perGram) || perGram <= 0) {
-    throw new Error("goldapi_missing_price");
-  }
+  try {
+    const fallbackRes = await fetch("https://api.gold-api.com/price/XAU", {
+      headers: { Accept: "application/json" }
+    });
+    if (!fallbackRes.ok) {
+      throw new Error(`gold_fallback_bad_status_${fallbackRes.status}`);
+    }
 
-  goldCache = { price: perGram, ts: now };
-  return { price: perGram, updatedAt: new Date(now) };
+    const fallbackData = (await fallbackRes.json()) as { price?: number | string | null; updatedAt?: string | null };
+    const ouncePrice = fallbackData.price == null ? Number.NaN : Number(fallbackData.price);
+    const perGram = ouncePrice / TROY_OUNCE_GRAMS;
+    if (!Number.isFinite(perGram) || perGram <= 0) {
+      throw new Error("gold_fallback_missing_price");
+    }
+
+    const updatedAt = parseDateValue(fallbackData.updatedAt) ?? new Date(now);
+    goldCache = { price: perGram, ts: now };
+    return { price: perGram, updatedAt };
+  } catch (fallbackError) {
+    throw primaryError ?? fallbackError;
+  }
 };
 
 const parseLimit = (value: unknown, fallback: number): number => {
