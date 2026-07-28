@@ -2284,8 +2284,8 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
             <nav class="footer-links" aria-label="Footer navigation">
               <a href="/pages/iris-archive">Gallery</a>
               <a href="/pages/what-is-iris">What Is IRIS</a>
-              <a href="/pages/affiliate-program">Partnership</a>
-              <a href="/pages/contact">Collaborate</a>
+              <a href="/pages/iris-points">Partnership</a>
+              <a href="/pages/collaborate">Collaborate</a>
               <a href="/policies/privacy-policy">Privacy Policy</a>
               <a href="/policies/terms-of-service">Terms Of Service</a>
             </nav>
