@@ -1863,7 +1863,105 @@ const buildPartnerDashboardHtml = (params: {
   return buildPartnerShell("IRIS Partner Dashboard", body);
 };
 
-const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
+const IRIS_ACCOUNT_DEFAULT_IMAGE = "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
+
+type IrisAccountItem = {
+  iris_id: string;
+  display_iris_id: string;
+  image_url: string | null;
+  rarity_code: string | null;
+  weight_grams: number | null;
+  activated_at: Date | null;
+  passport_url: string;
+};
+
+type IrisAccountUserView = {
+  id: string;
+  email: string;
+  username: string;
+  display_name: string | null;
+  profile_public: boolean;
+};
+
+const irisAccountLongDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: env.adminTimezone,
+  year: "numeric",
+  month: "long",
+  day: "numeric"
+});
+
+const irisAccountShortDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: env.adminTimezone,
+  year: "numeric",
+  month: "numeric",
+  day: "numeric"
+});
+
+const formatIrisAccountArchiveLabel = (irisId: string): string => {
+  const clean = String(irisId || "").replace(/^IRIS-?/i, "").trim();
+  return clean ? `IRIS No. ${clean}` : "IRIS No.";
+};
+
+const formatIrisAccountPassportTitle = (irisId: string): string => {
+  const clean = String(irisId || "").replace(/^IRIS-?/i, "").trim();
+  return clean ? `IRIS # ${clean}` : "IRIS #";
+};
+
+const formatIrisAccountLongDate = (value: Date | null): string => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : irisAccountLongDateFormatter.format(date);
+};
+
+const formatIrisAccountShortDate = (value: Date | null): string => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : irisAccountShortDateFormatter.format(date);
+};
+
+const formatIrisAccountGold = (value: number | null): string => {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  return `${Number(value).toFixed(2)} g (24K)`;
+};
+
+const buildIrisAccountHref = (
+  path: string,
+  sessionToken?: string,
+  params?: Record<string, string | null | undefined>
+): string => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value) query.set(key, value);
+  }
+  if (sessionToken) query.set("session", sessionToken);
+  const serialized = query.toString();
+  return serialized ? `${path}?${serialized}` : path;
+};
+
+const buildIrisArchiveCardHtml = (item: IrisAccountItem, href: string): string => {
+  const media = item.image_url
+    ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.iris_id)}" loading="lazy">`
+    : `<div class="v2-iris-archive__placeholder"></div>`;
+
+  return `
+    <li data-rarity="${escapeHtml(item.rarity_code || "Activated")}">
+      <a class="v2-iris-archive__card" href="${escapeHtml(href)}">
+        <div class="v2-iris-archive__media">
+          ${media}
+          <div class="v2-iris-archive__overlay">
+            <div class="v2-iris-archive__overlay-meta">Activated: ${escapeHtml(formatIrisAccountShortDate(item.activated_at))}<br>Gold content: ${escapeHtml(formatIrisAccountGold(item.weight_grams))}</div>
+          </div>
+        </div>
+        <div class="v2-iris-archive__body">
+          <div class="v2-iris-archive__iris">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
+          <div class="v2-iris-archive__meta">${escapeHtml(item.rarity_code || "Activated")}</div>
+        </div>
+      </a>
+    </li>
+  `;
+};
+
+const buildIrisAccountShell = (title: string, body: string, wrapClass = "") => `<!doctype html>
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -1890,13 +1988,14 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           --iris-success:#7bd88f;
           --page-width:1200px;
         }
-        html { min-height:100%; background:var(--iris-black); }
+        html { min-height:100%; background:var(--iris-black); font-size:62.5%; }
         body {
           margin:0;
           min-height:100vh;
           font-family:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           background:var(--iris-black);
           color:var(--iris-text);
+          font-size:1.6rem;
         }
         a { color:inherit; text-decoration:none; }
         .site {
@@ -1968,6 +2067,10 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           width:min(100%, var(--page-width));
           margin:0 auto;
           padding:56px 24px 72px;
+        }
+        .wrap--flush {
+          width:100%;
+          padding:0;
         }
         .hero {
           padding:58px 0 44px;
@@ -2097,6 +2200,426 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
         .success { color:var(--iris-success); }
         .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
         .mini { font-size:15px; color:var(--iris-soft); }
+        .account-top-actions {
+          display:flex;
+          flex-wrap:wrap;
+          align-items:center;
+          justify-content:flex-end;
+          gap:1.2rem;
+        }
+        .v2-iris-archive {
+          --v2-archive-gold:#c9a84c;
+          --v2-archive-gold-dim:#7a6330;
+          --v2-archive-bg:#000000;
+          --v2-archive-surface:#171717;
+          --v2-archive-surface-2:#1d1d1d;
+          --v2-archive-border:rgba(201,168,76,.16);
+          --v2-archive-text:#ede8df;
+          --v2-archive-text-mid:#a89f90;
+          --v2-archive-text-soft:rgba(237,232,223,.62);
+          background:var(--v2-archive-bg);
+          color:var(--v2-archive-text);
+          border-top:1px solid var(--v2-archive-border);
+          border-bottom:1px solid var(--v2-archive-border);
+        }
+        .v2-iris-archive--account {
+          margin-left:calc(50% - 50vw);
+          margin-right:calc(50% - 50vw);
+        }
+        .v2-iris-archive__wrap {
+          max-width:144rem;
+          margin:0 auto;
+          padding:11rem 4rem 12rem;
+        }
+        .v2-iris-archive__head {
+          text-align:center;
+          margin-bottom:4.8rem;
+        }
+        .v2-iris-archive__eyebrow {
+          margin:0 0 1.8rem;
+          color:var(--v2-archive-gold-dim);
+          text-transform:uppercase;
+          letter-spacing:.42rem;
+          font-size:1rem;
+        }
+        .v2-iris-archive__title {
+          margin:0;
+          color:var(--v2-archive-text) !important;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:clamp(3.2rem, 5vw, 6rem);
+          line-height:1.06;
+          letter-spacing:.03em;
+          font-weight:400;
+        }
+        .v2-iris-archive__title em {
+          color:var(--v2-archive-gold) !important;
+          font-style:italic;
+          font-weight:400;
+        }
+        .v2-iris-archive__description {
+          max-width:76rem;
+          margin:2rem auto 0;
+          color:var(--v2-archive-text-mid);
+          font-size:1.7rem;
+          line-height:1.8;
+        }
+        .v2-iris-archive__filters {
+          display:flex;
+          flex-wrap:wrap;
+          justify-content:center;
+          gap:1.2rem;
+          margin:0 0 5.2rem;
+        }
+        .v2-iris-archive__filter {
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          min-height:4.6rem;
+          padding:1.2rem 1.9rem;
+          border:1px solid var(--v2-archive-border);
+          background:rgba(201,168,76,.03);
+          color:var(--v2-archive-text-mid);
+          text-decoration:none;
+          text-transform:uppercase;
+          letter-spacing:.22rem;
+          font-size:1.05rem;
+          transition:all .24s ease;
+        }
+        .v2-iris-archive__filter:hover,
+        .v2-iris-archive__filter.is-active {
+          color:var(--v2-archive-gold);
+          border-color:rgba(201,168,76,.45);
+          background:rgba(201,168,76,.07);
+        }
+        .v2-iris-archive__status {
+          min-height:2.4rem;
+          text-align:center;
+          margin:0 0 3rem;
+          color:var(--v2-archive-text-soft);
+          font-size:1.35rem;
+          letter-spacing:.08rem;
+        }
+        .v2-iris-archive__status[hidden] { display:none; }
+        .v2-iris-archive__status--error { color:#de7b7b; }
+        .v2-iris-archive__grid {
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          gap:.4rem;
+          list-style:none;
+          padding:0;
+          margin:0;
+        }
+        .v2-iris-archive__card {
+          position:relative;
+          display:block;
+          background:var(--v2-archive-surface);
+          border:1px solid var(--v2-archive-border);
+          text-decoration:none;
+          color:inherit;
+          overflow:hidden;
+          transition:border-color .25s ease, transform .25s ease;
+        }
+        .v2-iris-archive__card:hover {
+          border-color:rgba(201,168,76,.4);
+          transform:translateY(-2px);
+        }
+        .v2-iris-archive__media {
+          position:relative;
+          aspect-ratio:1 / 1;
+          background:var(--v2-archive-surface-2);
+          overflow:hidden;
+        }
+        .v2-iris-archive__media img {
+          position:absolute;
+          inset:10%;
+          width:80%;
+          height:80%;
+          object-fit:contain;
+          display:block;
+          background:#242424;
+          transition:transform .45s ease;
+        }
+        .v2-iris-archive__card:hover .v2-iris-archive__media img {
+          transform:scale(1.035);
+        }
+        .v2-iris-archive__overlay {
+          position:absolute;
+          inset:0;
+          display:flex;
+          align-items:end;
+          padding:2rem;
+          background:linear-gradient(180deg, rgba(8,8,8,.02) 28%, rgba(8,8,8,.76) 100%);
+          opacity:0;
+          transition:opacity .24s ease;
+        }
+        .v2-iris-archive__card:hover .v2-iris-archive__overlay {
+          opacity:1;
+        }
+        .v2-iris-archive__overlay-meta {
+          color:var(--v2-archive-gold);
+          letter-spacing:.12rem;
+          font-size:.92rem;
+          line-height:1.7;
+          white-space:pre-line;
+        }
+        .v2-iris-archive__body {
+          padding:1.8rem 1.9rem 2rem;
+          display:flex;
+          flex-direction:column;
+          gap:.7rem;
+        }
+        .v2-iris-archive__iris {
+          color:var(--v2-archive-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.9rem;
+          line-height:1.1;
+          letter-spacing:.03em;
+        }
+        .v2-iris-archive__meta {
+          color:var(--v2-archive-gold);
+          text-transform:uppercase;
+          letter-spacing:.18rem;
+          font-size:.95rem;
+        }
+        .v2-iris-archive__placeholder {
+          position:absolute;
+          inset:10%;
+          background:linear-gradient(145deg, rgba(201,168,76,.1), rgba(255,255,255,.03));
+        }
+        .v2-passport-page {
+          --v2-gold:#c9a84c;
+          --v2-gold-dim:#7a6330;
+          --v2-surface:#000000;
+          --v2-surface-2:#101010;
+          --v2-surface-3:#171717;
+          --v2-border:rgba(201,168,76,.16);
+          --v2-text:#ede8df;
+          --v2-text-mid:#a89f90;
+          background:var(--v2-surface);
+          color:var(--v2-text);
+          border-top:1px solid var(--v2-border);
+          margin-left:calc(50% - 50vw);
+          margin-right:calc(50% - 50vw);
+        }
+        .v2-passport-shell {
+          max-width:136rem;
+          margin:0 auto;
+          padding:8rem 8rem 10rem;
+        }
+        .v2-passport-head { margin-bottom:4.8rem; }
+        .v2-passport-eyebrow {
+          margin:0 0 1.4rem;
+          color:var(--v2-gold-dim);
+          text-transform:uppercase;
+          letter-spacing:.42rem;
+          font-size:1rem;
+        }
+        .v2-passport-page__title {
+          margin:0;
+          color:var(--v2-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:clamp(3rem, 4.2vw, 5.6rem);
+          line-height:1.04;
+          letter-spacing:.03em;
+          font-weight:400;
+        }
+        .v2-passport-page__summary {
+          margin:1.8rem 0 0;
+          max-width:62rem;
+          color:var(--v2-text-mid);
+          font-size:1.7rem;
+          line-height:1.85;
+        }
+        .v2-passport-grid {
+          display:grid;
+          grid-template-columns:minmax(0, 1.04fr) minmax(36rem, .96fr);
+          gap:5.6rem;
+          align-items:start;
+        }
+        .v2-passport-media {
+          background:var(--v2-surface-2);
+          border:1px solid var(--v2-border);
+          padding:3.2rem;
+        }
+        .v2-passport-media__button {
+          display:block;
+          width:100%;
+          padding:0;
+          border:0;
+          background:transparent;
+          cursor:zoom-in;
+        }
+        .v2-passport-media__frame {
+          position:relative;
+          aspect-ratio:1 / 1;
+          background:#202020;
+          overflow:hidden;
+        }
+        .v2-passport-media__frame img {
+          width:100%;
+          height:100%;
+          object-fit:contain;
+          display:block;
+          background:#202020;
+        }
+        .v2-passport-panel {
+          background:var(--v2-surface-2);
+          border:1px solid var(--v2-border);
+          padding:3.6rem 3.2rem;
+        }
+        .v2-passport-panel__eyebrow {
+          margin:0 0 1.2rem;
+          color:var(--v2-gold-dim);
+          text-transform:uppercase;
+          letter-spacing:.34rem;
+          font-size:1rem;
+        }
+        .v2-passport-panel__title {
+          margin:0;
+          color:var(--v2-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:clamp(2.8rem, 3.4vw, 4.6rem);
+          line-height:1.02;
+          font-weight:400;
+        }
+        .v2-passport-panel__copy {
+          margin:1.6rem 0 0;
+          color:var(--v2-text-mid);
+          font-size:1.6rem;
+          line-height:1.8;
+        }
+        .v2-passport-meta {
+          margin-top:3.2rem;
+          border-top:1px solid var(--v2-border);
+        }
+        .v2-passport-meta__row {
+          display:flex;
+          justify-content:space-between;
+          gap:2rem;
+          padding:1.7rem 0;
+          border-bottom:1px solid var(--v2-border);
+        }
+        .v2-passport-meta__label {
+          color:var(--v2-text-mid);
+          text-transform:uppercase;
+          letter-spacing:.2rem;
+          font-size:1.02rem;
+        }
+        .v2-passport-meta__value {
+          color:var(--v2-text);
+          text-align:right;
+          font-size:1.55rem;
+          line-height:1.5;
+        }
+        .v2-passport-actions {
+          display:flex;
+          flex-wrap:wrap;
+          gap:1.4rem;
+          margin-top:3.2rem;
+        }
+        .v2-passport-button,
+        .v2-passport-button:visited {
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          min-height:5.6rem;
+          padding:1.6rem 2.8rem;
+          border:1px solid var(--v2-border);
+          background:rgba(201,168,76,.04);
+          color:var(--v2-gold);
+          text-decoration:none;
+          text-transform:uppercase;
+          letter-spacing:.24rem;
+          font-size:1.1rem;
+          cursor:pointer;
+          transition:all .25s ease;
+        }
+        .v2-passport-button:hover {
+          border-color:rgba(201,168,76,.5);
+          background:rgba(201,168,76,.08);
+        }
+        .v2-passport-button--ghost,
+        .v2-passport-button--ghost:visited {
+          background:transparent;
+        }
+        .v2-passport-note {
+          margin-top:1.8rem;
+          color:var(--v2-text-mid);
+          font-size:1.45rem;
+          line-height:1.7;
+        }
+        .v2-passport-error { margin-top:2rem; color:#d68f8f; font-size:1.45rem; }
+        .v2-passport-archive {
+          margin-top:8rem;
+          background:var(--v2-surface-2);
+          border-top:1px solid var(--v2-border);
+          margin-left:calc(50% - 50vw);
+          margin-right:calc(50% - 50vw);
+        }
+        .v2-passport-archive__wrap {
+          max-width:136rem;
+          margin:0 auto;
+          padding:7rem 8rem;
+        }
+        .v2-passport-modal {
+          position:fixed;
+          inset:0;
+          display:none;
+          align-items:center;
+          justify-content:center;
+          padding:2.4rem;
+          background:rgba(0,0,0,.8);
+          z-index:1000;
+        }
+        .v2-passport-modal__dialog {
+          position:relative;
+          width:min(100%, 100rem);
+          background:#080808;
+          border:1px solid var(--v2-border);
+        }
+        .v2-passport-modal__close {
+          position:absolute;
+          top:1rem;
+          right:1rem;
+          z-index:2;
+          border:1px solid var(--v2-border);
+          background:rgba(8,8,8,.8);
+          color:var(--v2-text);
+          padding:.8rem 1.2rem;
+          cursor:pointer;
+          text-transform:uppercase;
+          letter-spacing:.14rem;
+          font-size:1rem;
+        }
+        .v2-passport-modal__img {
+          width:100%;
+          height:auto;
+          display:block;
+        }
+        .iris-transfer-modal {
+          position:fixed;
+          inset:0;
+          display:none;
+          align-items:center;
+          justify-content:center;
+          padding:2.4rem;
+          background:rgba(0,0,0,.78);
+          z-index:1001;
+        }
+        .iris-transfer-modal[aria-hidden="false"] { display:flex; }
+        .iris-transfer-dialog {
+          width:min(100%, 52rem);
+          border:1px solid var(--iris-line-strong);
+          background:#080808;
+          padding:2.8rem;
+        }
+        .iris-transfer-status {
+          min-height:2.2rem;
+          margin:1.4rem 0 0;
+          color:var(--iris-muted);
+          font-size:1.55rem;
+        }
+        .iris-transfer-status.is-error { color:var(--iris-danger); }
         .iris-grid {
           display:grid;
           grid-template-columns:repeat(3,minmax(0,1fr));
@@ -2198,6 +2721,11 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           font-size:14px;
         }
         .gold-line { color:var(--iris-gold); }
+        @media (max-width: 1199px) {
+          .v2-iris-archive__grid {
+            grid-template-columns:repeat(3, minmax(0, 1fr));
+          }
+        }
         @media (max-width: 1100px) {
           .header-inner {
             grid-template-columns:100px 1fr 130px;
@@ -2211,6 +2739,10 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
             gap:14px;
             font-size:11px;
           }
+        }
+        @media (max-width: 989px) {
+          .v2-iris-archive__wrap { padding:9rem 3.2rem 10rem; }
+          .v2-iris-archive__grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 820px) {
           .header-inner {
@@ -2238,6 +2770,31 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           p { font-size:18px; }
           .grid, .iris-grid { grid-template-columns:1fr; }
           .card { padding:22px; }
+          .account-top-actions { justify-content:flex-start; margin-top:2rem; }
+          .v2-iris-archive__wrap { padding:7rem 2rem 8rem; }
+          .v2-iris-archive__grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+          .v2-iris-archive__description {
+            font-size:1.6rem;
+            line-height:1.75;
+          }
+          .v2-iris-archive__body { padding:1.4rem 1.2rem 1.6rem; }
+          .v2-iris-archive__filters { gap:.8rem; margin-bottom:4rem; }
+          .v2-iris-archive__filter {
+            width:calc(50% - .4rem);
+            padding-inline:1rem;
+            letter-spacing:.16rem;
+            font-size:.95rem;
+          }
+          .v2-passport-shell { padding:5.6rem 2rem 7rem; }
+          .v2-passport-grid { grid-template-columns:1fr; gap:3.2rem; }
+          .v2-passport-media,
+          .v2-passport-panel { padding:2rem; }
+          .v2-passport-meta__row { display:grid; gap:.4rem; }
+          .v2-passport-meta__value { text-align:left; }
+          .v2-passport-actions { flex-direction:column; }
+          .v2-passport-button,
+          .v2-passport-button:visited { width:100%; }
+          .v2-passport-archive__wrap { padding:7rem 2rem; }
           .footer-inner { grid-template-columns:1fr; gap:24px; }
           .footer-bottom { align-items:flex-start; flex-direction:column; padding-top:18px; padding-bottom:18px; }
         }
@@ -2247,6 +2804,9 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
+          .v2-iris-archive__iris { font-size:1.55rem; }
+          .v2-iris-archive__meta,
+          .v2-iris-archive__overlay-meta { font-size:.82rem; letter-spacing:.14rem; }
         }
       </style>
     </head>
@@ -2271,7 +2831,7 @@ const buildIrisAccountShell = (title: string, body: string) => `<!doctype html>
           </div>
         </header>
         <main class="page">
-          <div class="wrap">
+          <div class="wrap${wrapClass ? ` ${escapeHtml(wrapClass)}` : ""}">
             ${body}
           </div>
         </main>
@@ -2354,23 +2914,19 @@ const buildIrisAccountVerifyHtml = (params: { email: string; error?: string }) =
   return buildIrisAccountShell("Verify IRIS Account", body);
 };
 
-const buildIrisAccountProfileHtml = (params: {
-  email: string;
-  username: string;
-  displayName: string | null;
-  profilePublic: boolean;
+const buildIrisAccountSessionScript = (sessionToken?: string): string =>
+  sessionToken
+    ? `<script>
+        document.cookie = "${IRIS_ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(sessionToken)}; Path=/; Max-Age=${IRIS_ACCOUNT_SESSION_DAYS * 24 * 60 * 60}; SameSite=Lax; Secure";
+      </script>`
+    : "";
+
+const buildIrisAccountLibraryHtml = (params: {
+  user: IrisAccountUserView;
   sessionToken?: string;
   message?: string;
   error?: string;
-  items: Array<{
-    iris_id: string;
-    display_iris_id: string;
-    image_url: string | null;
-    rarity_code: string | null;
-    weight_grams: number | null;
-    activated_at: Date | null;
-    passport_url: string;
-  }>;
+  items: IrisAccountItem[];
 }) => {
   const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
   const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
@@ -2378,40 +2934,116 @@ const buildIrisAccountProfileHtml = (params: {
   const sessionHidden = params.sessionToken
     ? `<input type="hidden" name="session" value="${escapeHtml(params.sessionToken)}" />`
     : "";
-  const sessionScript = params.sessionToken
-    ? `<script>
-        document.cookie = "${IRIS_ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(params.sessionToken)}; Path=/; Max-Age=${IRIS_ACCOUNT_SESSION_DAYS * 24 * 60 * 60}; SameSite=Lax; Secure";
-      </script>`
-    : "";
   const cards = params.items
-    .map((item) => {
-      const image = item.image_url
-        ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id)}" />`
-        : `<span class="muted">No image</span>`;
-      return `
-        <article class="iris-card">
-          <a class="iris-media" href="${escapeHtml(item.passport_url)}">${image}</a>
-          <div class="iris-info">
-            <p class="iris-title">${escapeHtml(item.display_iris_id)}</p>
-            <div class="row"><span>Rarity</span><strong>${escapeHtml(item.rarity_code ?? "-")}</strong></div>
-            <div class="row"><span>Weight</span><strong>${item.weight_grams == null ? "-" : `${item.weight_grams.toFixed(2)} g`}</strong></div>
-            <div class="row"><span>Activated</span><strong>${item.activated_at ? item.activated_at.toISOString().slice(0, 10) : "-"}</strong></div>
-          </div>
-        </article>
-      `;
-    })
+    .map((item) =>
+      buildIrisArchiveCardHtml(
+        item,
+        buildIrisAccountHref("/apps/iris/v3/passport", params.sessionToken, { iris_id: item.iris_id })
+      )
+    )
     .join("");
+  const profileHref = buildIrisAccountHref("/apps/iris/v3/profile", params.sessionToken);
   const body = `
     <section class="hero">
       <div>
         <p class="eyebrow">IRIS Account</p>
-        <h1>@${escapeHtml(params.username)}</h1>
-        <p>${escapeHtml(params.email)}</p>
+        <h1>@${escapeHtml(params.user.username)}</h1>
+        <p>${escapeHtml(params.user.email)}</p>
       </div>
       <form method="POST" action="/apps/iris/v3/logout${sessionQuery}">
         ${sessionHidden}
-        <button class="btn secondary" type="submit">Log Out</button>
+        <div class="account-top-actions">
+          <a class="btn secondary" href="${escapeHtml(profileHref)}">Profile Settings</a>
+          <button class="btn secondary" type="submit">Log Out</button>
+        </div>
       </form>
+    </section>
+    <section class="body">
+      ${messageHtml}
+      ${errorHtml}
+      <section class="v2-iris-archive v2-iris-archive--account">
+        <div class="v2-iris-archive__wrap">
+          <div class="v2-iris-archive__head">
+            <p class="v2-iris-archive__eyebrow">Private Library</p>
+            <h1 class="v2-iris-archive__title">My <em>IRIS</em></h1>
+            <div class="v2-iris-archive__description">
+              Your activated works, gathered from the IRIS ownership record. Open any passport without leaving your IRIS account.
+            </div>
+          </div>
+
+          <div class="v2-iris-archive__filters" id="iris-v3-library-filters">
+            <a class="v2-iris-archive__filter iris-v3-filter is-active" data-rarity="all" href="#">All</a>
+            <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Common" href="#">Common</a>
+            <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Uncommon" href="#">Uncommon</a>
+            <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Rare" href="#">Rare</a>
+            <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Ultra Rare" href="#">Ultra Rare</a>
+            <a class="v2-iris-archive__filter iris-v3-filter" data-rarity="Artist Edition" href="#">Artist Edition</a>
+          </div>
+
+          <p id="iris-v3-library-empty" class="v2-iris-archive__status" ${params.items.length ? "hidden" : ""}>No IRIS activated yet.</p>
+          <ul id="iris-v3-library-grid" class="v2-iris-archive__grid">
+            ${cards}
+          </ul>
+        </div>
+      </section>
+      <script>
+        (function () {
+          var buttons = document.querySelectorAll('.iris-v3-filter');
+          var items = document.querySelectorAll('#iris-v3-library-grid > li');
+          var empty = document.getElementById('iris-v3-library-empty');
+          function applyFilter(rarity) {
+            var visible = 0;
+            items.forEach(function (item) {
+              var itemRarity = (item.getAttribute('data-rarity') || '').toLowerCase();
+              var show = rarity === 'all' || itemRarity === rarity.toLowerCase();
+              item.hidden = !show;
+              if (show) visible += 1;
+            });
+            if (empty) {
+              empty.hidden = visible > 0;
+              empty.textContent = rarity === 'all' ? 'No IRIS activated yet.' : 'No IRIS found for this rarity.';
+            }
+          }
+          buttons.forEach(function (button) {
+            button.addEventListener('click', function (event) {
+              event.preventDefault();
+              buttons.forEach(function (candidate) { candidate.classList.remove('is-active'); });
+              button.classList.add('is-active');
+              applyFilter(button.getAttribute('data-rarity') || 'all');
+            });
+          });
+        })();
+      </script>
+      ${buildIrisAccountSessionScript(params.sessionToken)}
+    </section>
+  `;
+  return buildIrisAccountShell("IRIS Account", body);
+};
+
+const buildIrisAccountSettingsHtml = (params: {
+  user: IrisAccountUserView;
+  sessionToken?: string;
+  message?: string;
+  error?: string;
+  libraryCount: number;
+}) => {
+  const messageHtml = params.message ? `<div class="success">${escapeHtml(params.message)}</div>` : "";
+  const errorHtml = params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : "";
+  const sessionQuery = params.sessionToken ? `?session=${encodeURIComponent(params.sessionToken)}` : "";
+  const sessionHidden = params.sessionToken
+    ? `<input type="hidden" name="session" value="${escapeHtml(params.sessionToken)}" />`
+    : "";
+  const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", params.sessionToken);
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Profile Settings</p>
+        <h1>@${escapeHtml(params.user.username)}</h1>
+        <p>${escapeHtml(params.user.email)}</p>
+      </div>
+      <div class="account-top-actions">
+        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My IRIS</a>
+      </div>
     </section>
     <section class="body">
       ${messageHtml}
@@ -2424,37 +3056,226 @@ const buildIrisAccountProfileHtml = (params: {
             ${sessionHidden}
             <div class="field">
               <label>Username</label>
-              <input type="text" name="username" value="${escapeHtml(params.username)}" minlength="3" maxlength="24" required />
+              <input type="text" name="username" value="${escapeHtml(params.user.username)}" minlength="3" maxlength="24" required />
             </div>
             <div class="field">
               <label>Display Name</label>
-              <input type="text" name="display_name" value="${escapeHtml(params.displayName ?? "")}" maxlength="80" />
+              <input type="text" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" maxlength="80" />
             </div>
             <label class="check">
-              <input type="checkbox" name="profile_public" ${params.profilePublic ? "checked" : ""} />
+              <input type="checkbox" name="profile_public" ${params.user.profile_public ? "checked" : ""} />
               Allow a future public gallery for this profile
             </label>
             <button class="btn" type="submit">Save Profile</button>
           </form>
         </section>
         <section class="card">
-          <h2>Next Layer</h2>
+          <h2>Account Layer</h2>
           <p>Order history can be connected by verified email. Ownership remains anchored in the IRIS passport record.</p>
-          <div class="row"><span>Visibility</span><strong>${params.profilePublic ? "Public-ready" : "Private"}</strong></div>
-          <div class="row"><span>Library</span><strong>${params.items.length}</strong></div>
+          <div class="row"><span>Visibility</span><strong>${params.user.profile_public ? "Public-ready" : "Private"}</strong></div>
+          <div class="row"><span>Library</span><strong>${params.libraryCount}</strong></div>
         </section>
       </div>
-      <section style="margin-top:24px;">
-        <h2>My IRIS</h2>
-        <p class="muted">Your activated IRIS works, gathered from the ownership record.</p>
-        <div class="iris-grid">
-          ${cards || `<div class="card"><p>No IRIS found for this email yet.</p></div>`}
-        </div>
-      </section>
-      ${sessionScript}
+      ${buildIrisAccountSessionScript(params.sessionToken)}
     </section>
   `;
-  return buildIrisAccountShell("IRIS Account", body);
+  return buildIrisAccountShell("IRIS Profile Settings", body);
+};
+
+const buildIrisAccountPassportHtml = (params: {
+  user: IrisAccountUserView;
+  item: IrisAccountItem;
+  sessionToken?: string;
+  transferPendingTo?: string | null;
+}) => {
+  const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", params.sessionToken);
+  const imageUrl = params.item.image_url || IRIS_ACCOUNT_DEFAULT_IMAGE;
+  const pendingNote = params.transferPendingTo
+    ? `<div class="v2-passport-note">Transfer code is pending for ${escapeHtml(params.transferPendingTo)}.</div>`
+    : "";
+  const body = `
+    <div class="v2-passport-page">
+      <div class="v2-passport-shell">
+        <div class="v2-passport-head">
+          <p class="v2-passport-eyebrow">Digital Passport</p>
+          <h1 class="v2-passport-page__title">IRIS Passport</h1>
+          <p class="v2-passport-page__summary">
+            The registered record of your revealed artwork. Each activated IRIS keeps its image, activation date,
+            and rarity commitment in one permanent place.
+          </p>
+        </div>
+
+        <div class="v2-passport-grid">
+          <div class="v2-passport-media">
+            <button type="button" class="v2-passport-media__button" id="iris-passport-img-trigger" aria-label="Open IRIS image">
+              <div class="v2-passport-media__frame">
+                <img id="iris-passport-img" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(params.item.iris_id)}">
+              </div>
+            </button>
+          </div>
+
+          <div class="v2-passport-panel">
+            <p class="v2-passport-panel__eyebrow">Activated Work</p>
+            <h2 class="v2-passport-panel__title">${escapeHtml(formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id))}</h2>
+            <div class="v2-passport-panel__copy">
+              This passport confirms the image, rarity, and gold content assigned to the activated work.
+            </div>
+
+            <div class="v2-passport-meta">
+              <div class="v2-passport-meta__row">
+                <div class="v2-passport-meta__label">Activated</div>
+                <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountLongDate(params.item.activated_at))}</div>
+              </div>
+              <div class="v2-passport-meta__row">
+                <div class="v2-passport-meta__label">Gold Content</div>
+                <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountGold(params.item.weight_grams))}</div>
+              </div>
+              <div class="v2-passport-meta__row">
+                <div class="v2-passport-meta__label">Rarity</div>
+                <div class="v2-passport-meta__value">${escapeHtml(params.item.rarity_code || "Hidden until activated")}</div>
+              </div>
+            </div>
+
+            <div class="v2-passport-actions">
+              <a href="${escapeHtml(libraryHref)}" class="v2-passport-button v2-passport-button--ghost">Back to My IRIS</a>
+              <button type="button" class="v2-passport-button" id="iris-v3-transfer-open">Transfer</button>
+              <button type="button" class="v2-passport-button v2-passport-button--ghost" id="iris-v3-sale-button">Sale</button>
+            </div>
+            ${pendingNote}
+            <div id="iris-v3-sale-status" class="v2-passport-note" hidden>Marketplace sale tools are in development.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="iris-passport-modal" class="v2-passport-modal">
+      <div class="v2-passport-modal__dialog">
+        <button type="button" id="iris-passport-modal-close" class="v2-passport-modal__close">Close</button>
+        <img id="iris-passport-modal-img" src="" alt="" class="v2-passport-modal__img">
+      </div>
+    </div>
+
+    <div class="iris-transfer-modal" id="iris-v3-transfer-modal" aria-hidden="true">
+      <div class="iris-transfer-dialog">
+        <h2>Transfer ${escapeHtml(formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id))}</h2>
+        <p class="muted">The new owner will receive a transfer code by email. They must scan the NFC tag and enter that code to claim this IRIS.</p>
+        <form id="iris-v3-transfer-form">
+          <input type="hidden" name="iris_id" value="${escapeHtml(params.item.iris_id)}" />
+          <input type="hidden" name="from_email" value="${escapeHtml(params.user.email)}" />
+          <div class="field">
+            <label>Recipient Email</label>
+            <input type="email" name="to_email" autocomplete="email" required />
+          </div>
+          <div class="actions">
+            <button class="btn" type="submit">Send Transfer Code</button>
+            <button class="btn secondary" type="button" id="iris-v3-transfer-cancel">Cancel</button>
+          </div>
+          <div id="iris-v3-transfer-status" class="iris-transfer-status"></div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var img = document.getElementById('iris-passport-img');
+        var imgTrigger = document.getElementById('iris-passport-img-trigger');
+        var modal = document.getElementById('iris-passport-modal');
+        var modalImg = document.getElementById('iris-passport-modal-img');
+        var modalClose = document.getElementById('iris-passport-modal-close');
+        if (imgTrigger && modal && modalImg && img) {
+          imgTrigger.addEventListener('click', function () {
+            modalImg.src = img.src;
+            modal.style.display = 'flex';
+          });
+        }
+        if (modal && modalClose) {
+          modalClose.addEventListener('click', function () { modal.style.display = 'none'; });
+          modal.addEventListener('click', function (event) {
+            if (event.target === modal) modal.style.display = 'none';
+          });
+        }
+
+        var saleButton = document.getElementById('iris-v3-sale-button');
+        var saleStatus = document.getElementById('iris-v3-sale-status');
+        if (saleButton && saleStatus) {
+          saleButton.addEventListener('click', function () {
+            saleStatus.hidden = false;
+          });
+        }
+
+        var transferOpen = document.getElementById('iris-v3-transfer-open');
+        var transferModal = document.getElementById('iris-v3-transfer-modal');
+        var transferCancel = document.getElementById('iris-v3-transfer-cancel');
+        var transferForm = document.getElementById('iris-v3-transfer-form');
+        var transferStatus = document.getElementById('iris-v3-transfer-status');
+        function setTransferStatus(message, isError) {
+          if (!transferStatus) return;
+          transferStatus.textContent = message || '';
+          transferStatus.classList.toggle('is-error', Boolean(isError));
+        }
+        if (transferOpen && transferModal) {
+          transferOpen.addEventListener('click', function () {
+            transferModal.setAttribute('aria-hidden', 'false');
+            setTransferStatus('', false);
+          });
+        }
+        if (transferCancel && transferModal) {
+          transferCancel.addEventListener('click', function () {
+            transferModal.setAttribute('aria-hidden', 'true');
+            setTransferStatus('', false);
+          });
+          transferModal.addEventListener('click', function (event) {
+            if (event.target === transferModal) transferModal.setAttribute('aria-hidden', 'true');
+          });
+        }
+        if (transferForm) {
+          transferForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var formData = new FormData(transferForm);
+            var payload = {
+              iris_id: formData.get('iris_id'),
+              from_email: formData.get('from_email'),
+              to_email: formData.get('to_email')
+            };
+            setTransferStatus('Sending transfer code...', false);
+            fetch('/apps/iris/transfer-request', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify(payload)
+            })
+              .then(function (res) {
+                return res.json().then(function (data) {
+                  if (!res.ok) {
+                    var error = new Error(data && data.error ? data.error : 'transfer_failed');
+                    error.data = data;
+                    throw error;
+                  }
+                  return data;
+                });
+              })
+              .then(function (data) {
+                setTransferStatus('Transfer code sent to ' + data.to_email + '. They must scan the NFC tag and enter that code to claim this IRIS.', false);
+              })
+              .catch(function (error) {
+                var code = error && error.message ? error.message : 'transfer_failed';
+                var message = 'Transfer could not be started. Please try again.';
+                if (code === 'owner_mismatch') message = 'This IRIS is not registered to this account.';
+                if (code === 'same_email') message = 'Enter a different email for the new owner.';
+                if (code === 'invalid_email') message = 'Please enter a valid email.';
+                if (code === 'transfer_email_failed') message = 'We could not send the transfer email. Please try again or contact support.';
+                setTransferStatus(message, true);
+              });
+          });
+        }
+      })();
+    </script>
+    ${buildIrisAccountSessionScript(params.sessionToken)}
+  `;
+  return buildIrisAccountShell(
+    `${formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id)} Passport`,
+    body,
+    "wrap--flush"
+  );
 };
 
 const loadIrisAccountItems = async (email: string) => {
@@ -2479,35 +3300,70 @@ const loadIrisAccountItems = async (email: string) => {
     }
   });
 
-  const generatedTokens = new Map<string, string>();
-  const missing = items.filter((item) => !item.proof_token);
-  if (missing.length > 0) {
-    await prisma.$transaction(async (tx) => {
-      for (const item of missing) {
-        const token = crypto.randomUUID();
-        await tx.artwork.update({
-          where: { iris_id: item.iris_id },
-          data: { proof_token: token }
-        });
-        generatedTokens.set(item.iris_id, token);
+  return items.map((item) => ({
+    iris_id: item.iris_id,
+    display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+    image_url: item.image_url,
+    rarity_code: item.rarity_code,
+    weight_grams: item.weight_grams,
+    activated_at: item.activated_at,
+    passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
+  }));
+};
+
+const loadIrisAccountPassportItem = async (email: string, irisId: string): Promise<IrisAccountItem | null> => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedIrisId = normalizeIrisIdInput(irisId);
+  const item = await prisma.artwork.findFirst({
+    where: {
+      iris_id: normalizedIrisId,
+      status: "activated",
+      OR: [
+        { owner_email: normalizedEmail },
+        { owner_email: null, assigned_customer_email: normalizedEmail }
+      ]
+    },
+    include: {
+      collection: {
+        select: {
+          slug: true,
+          name: true,
+          edition_size: true
+        }
       }
-    });
+    }
+  });
+
+  if (!item) {
+    return null;
   }
 
-  return items.map((item) => {
-    const proofToken = item.proof_token ?? generatedTokens.get(item.iris_id) ?? "";
-    return {
-      iris_id: item.iris_id,
-      display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-      image_url: item.image_url,
-      rarity_code: item.rarity_code,
-      weight_grams: item.weight_grams,
-      activated_at: item.activated_at,
-      passport_url: proofToken
-        ? `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}&token=${encodeURIComponent(proofToken)}`
-        : `/pages/iris-passport?iris_id=${encodeURIComponent(item.iris_id)}`
-    };
-  });
+  return {
+    iris_id: item.iris_id,
+    display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+    image_url: item.image_url,
+    rarity_code: item.rarity_code,
+    weight_grams: item.weight_grams,
+    activated_at: item.activated_at,
+    passport_url: buildIrisAccountHref("/apps/iris/v3/passport", undefined, { iris_id: item.iris_id })
+  };
+};
+
+const loadPendingTransferTo = async (irisId: string): Promise<string | null> => {
+  try {
+    const transfer = await prisma.ownershipTransfer.findFirst({
+      where: {
+        iris_id: irisId,
+        status: "pending",
+        expires_at: { gt: new Date() }
+      },
+      orderBy: { created_at: "desc" },
+      select: { to_email: true }
+    });
+    return transfer?.to_email ?? null;
+  } catch {
+    return null;
+  }
 };
 
 const buildAdminDetailHtml = (item: {
@@ -3994,28 +4850,38 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .type("text/html; charset=utf-8")
       .send(html);
 
-  const renderIrisAccountProfile = async (
+  const renderIrisAccountLibrary = async (
     reply: any,
-    user: {
-      email: string;
-      username: string;
-      display_name: string | null;
-      profile_public: boolean;
-    },
+    user: IrisAccountUserView,
     options?: { message?: string; error?: string; sessionToken?: string }
   ) => {
     const items = await loadIrisAccountItems(user.email);
     sendIrisAccountHtml(
       reply,
-      buildIrisAccountProfileHtml({
-        email: user.email,
-        username: user.username,
-        displayName: user.display_name,
-        profilePublic: user.profile_public,
+      buildIrisAccountLibraryHtml({
+        user,
         sessionToken: options?.sessionToken,
         message: options?.message,
         error: options?.error,
         items
+      })
+    );
+  };
+
+  const renderIrisAccountSettings = async (
+    reply: any,
+    user: IrisAccountUserView,
+    options?: { message?: string; error?: string; sessionToken?: string }
+  ) => {
+    const items = await loadIrisAccountItems(user.email);
+    sendIrisAccountHtml(
+      reply,
+      buildIrisAccountSettingsHtml({
+        user,
+        sessionToken: options?.sessionToken,
+        message: options?.message,
+        error: options?.error,
+        libraryCount: items.length
       })
     );
   };
@@ -4036,9 +4902,69 @@ export const createServer = async (): Promise<FastifyInstance> => {
         where: { id: auth.session.id },
         data: { last_seen_at: new Date() }
       });
-      await renderIrisAccountProfile(reply, auth.user, { sessionToken: auth.rawToken });
+      await renderIrisAccountLibrary(reply, auth.user, { sessionToken: auth.rawToken });
     } catch (error) {
       req.log.error({ err: error }, "IRIS Account V3 page failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.get("/apps/iris/v3/profile", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        reply.redirect(302, "/apps/iris/v3/account");
+        return;
+      }
+      await renderIrisAccountSettings(reply, auth.user, { sessionToken: auth.rawToken });
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account V3 profile page failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.get("/apps/iris/v3/passport", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        reply.redirect(302, "/apps/iris/v3/account");
+        return;
+      }
+      const query = (req.query as { iris_id?: unknown } | null) ?? {};
+      const irisId = normalizeIrisIdInput(readSingleValue(query.iris_id));
+      if (!irisId) {
+        await renderIrisAccountLibrary(reply, auth.user, {
+          sessionToken: auth.rawToken,
+          error: "IRIS passport could not be opened."
+        });
+        return;
+      }
+      const item = await loadIrisAccountPassportItem(auth.user.email, irisId);
+      if (!item) {
+        await renderIrisAccountLibrary(reply, auth.user, {
+          sessionToken: auth.rawToken,
+          error: "This IRIS is not registered to this account."
+        });
+        return;
+      }
+      const transferPendingTo = await loadPendingTransferTo(item.iris_id);
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountPassportHtml({
+          user: auth.user,
+          item,
+          sessionToken: auth.rawToken,
+          transferPendingTo
+        })
+      );
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account V3 passport page failed");
       sendIrisAccountHtml(
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
@@ -4171,7 +5097,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const profilePublic = Object.prototype.hasOwnProperty.call(body, "profile_public");
 
     if (!isValidUsername(username)) {
-      await renderIrisAccountProfile(reply, auth.user, {
+      await renderIrisAccountSettings(reply, auth.user, {
         sessionToken: auth.rawToken,
         error: "Username must be 3-24 characters, lowercase letters/numbers/hyphens, and cannot start or end with a hyphen."
       });
@@ -4187,13 +5113,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
           profile_public: profilePublic
         }
       });
-      await renderIrisAccountProfile(reply, updated, { message: "Profile saved.", sessionToken: auth.rawToken });
+      await renderIrisAccountSettings(reply, updated, { message: "Profile saved.", sessionToken: auth.rawToken });
     } catch (error) {
       const message =
         error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
           ? "This username is already taken."
           : "Profile could not be saved.";
-      await renderIrisAccountProfile(reply, auth.user, { error: message, sessionToken: auth.rawToken });
+      await renderIrisAccountSettings(reply, auth.user, { error: message, sessionToken: auth.rawToken });
     }
   });
 
