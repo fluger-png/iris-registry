@@ -2200,8 +2200,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           opacity:1;
           border-bottom-color:var(--iris-gold);
         }
-        .header-shop-button,
-        .header-shop-button:visited {
+        .main-nav .header-shop-button,
+        .main-nav .header-shop-button:visited {
           position:relative;
           min-height:5.6rem;
           display:inline-flex;
@@ -2217,18 +2217,18 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           isolation:isolate;
           box-shadow:0 0 0 1px rgba(234,191,80,.18), 0 1rem 2.6rem rgba(0,0,0,.34);
         }
-        .header-shop-button span {
+        .main-nav .header-shop-button span {
           position:relative;
           z-index:2;
           white-space:nowrap;
         }
-        .header-shop-button::before,
-        .header-shop-button::after {
+        .main-nav .header-shop-button::before,
+        .main-nav .header-shop-button::after {
           content:"";
           position:absolute;
           pointer-events:none;
         }
-        .header-shop-button::before {
+        .main-nav .header-shop-button::before {
           inset:-155%;
           z-index:0;
           opacity:.72;
@@ -2245,7 +2245,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           );
           animation:iris-shop-gold-spin 8s cubic-bezier(.56,.15,.28,.86) infinite;
         }
-        .header-shop-button::after {
+        .main-nav .header-shop-button::after {
           inset:2px;
           z-index:1;
           border-radius:1.35rem;
@@ -2253,13 +2253,13 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             radial-gradient(circle at 50% 0%, rgba(234,191,80,.25), rgba(234,191,80,0) 46%),
             linear-gradient(180deg, #161616 0%, #090909 100%);
         }
-        .header-shop-button:hover,
-        .header-shop-button:focus {
+        .main-nav .header-shop-button:hover,
+        .main-nav .header-shop-button:focus {
           border-color:#ffffff !important;
           color:#ffffff !important;
         }
-        .header-shop-button:hover::before,
-        .header-shop-button:focus::before {
+        .main-nav .header-shop-button:hover::before,
+        .main-nav .header-shop-button:focus::before {
           opacity:1;
         }
         @keyframes iris-shop-gold-spin {
@@ -3138,8 +3138,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         @media (max-width: 480px) {
           .main-nav { font-size:13px; gap:14px; }
-          .header-shop-button,
-          .header-shop-button:visited { padding-left:4.8rem; padding-right:4.8rem; }
+          .main-nav .header-shop-button,
+          .main-nav .header-shop-button:visited { padding-left:4.8rem; padding-right:4.8rem; }
           h1 { font-size:36px; }
           .account-menu__trigger { gap:.8rem; }
           .account-avatar { width:4.2rem; height:4.2rem; }
