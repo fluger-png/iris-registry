@@ -138,6 +138,58 @@ model OwnershipTransfer {
   @@index([expires_at])
 }
 
+model ShopifyOrder {
+  id                       String             @id @default(cuid())
+  shopify_order_id         String             @unique
+  order_name               String?
+  order_number             String?
+  email                    String?
+  financial_status         String?
+  fulfillment_status       String?
+  currency                 String?
+  subtotal_price_cents     Int?
+  total_price_cents        Int?
+  total_tax_cents          Int?
+  processed_at             DateTime?
+  created_at_shopify       DateTime?
+  updated_at_shopify       DateTime?
+  raw_json                 Json?
+  created_at               DateTime           @default(now())
+  updated_at               DateTime           @updatedAt
+
+  items                    ShopifyOrderItem[]
+
+  @@index([email])
+  @@index([order_name])
+  @@index([order_number])
+  @@index([created_at_shopify])
+}
+
+model ShopifyOrderItem {
+  id                       String       @id @default(cuid())
+  order_id                 String
+  shopify_line_item_id     String?
+  product_id               String?
+  variant_id               String?
+  title                    String?
+  variant_title            String?
+  sku                      String?
+  quantity                 Int          @default(1)
+  price_cents              Int?
+  total_discount_cents     Int?
+  currency                 String?
+  properties_json          Json?
+  created_at               DateTime     @default(now())
+  updated_at               DateTime     @updatedAt
+
+  order                    ShopifyOrder @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+  @@index([shopify_line_item_id])
+  @@index([product_id])
+  @@index([variant_id])
+}
+
 model IrisUser {
   id                  String               @id @default(cuid())
   email               String               @unique

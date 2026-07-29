@@ -1990,6 +1990,38 @@ type IrisAccountItem = {
   passport_url: string;
 };
 
+type IrisAccountOrderArtworkView = {
+  iris_id: string;
+  display_iris_id: string;
+  image_url: string | null;
+  rarity_code: string | null;
+  status: string;
+  activated_at: Date | null;
+};
+
+type IrisAccountOrderLineView = {
+  title: string | null;
+  variant_title: string | null;
+  quantity: number;
+  price_cents: number | null;
+};
+
+type IrisAccountOrderView = {
+  key: string;
+  source: "shopify" | "legacy";
+  shopify_order_id: string | null;
+  order_name: string | null;
+  order_number: string | null;
+  order_date: Date | null;
+  email: string | null;
+  financial_status: string | null;
+  fulfillment_status: string | null;
+  currency: string | null;
+  total_price_cents: number | null;
+  items: IrisAccountOrderLineView[];
+  artworks: IrisAccountOrderArtworkView[];
+};
+
 type IrisAccountUserView = {
   id: string;
   email: string;
@@ -2056,6 +2088,21 @@ const formatIrisAccountGold = (value: number | null): string => {
 
 const formatIrisAccountCurrencyUsd = (value: number): string =>
   irisAccountCurrencyFormatter.format(Math.max(0, value));
+
+const formatIrisAccountMoneyCents = (value: number | null, currency?: string | null): string => {
+  if (value == null || !Number.isFinite(value)) return "-";
+  const safeCurrency = currency?.trim() || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: safeCurrency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(Math.max(0, value) / 100);
+  } catch {
+    return irisAccountCurrencyFormatter.format(Math.max(0, value) / 100);
+  }
+};
 
 const buildIrisAccountHref = (
   path: string,
@@ -2147,6 +2194,7 @@ const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): st
     : "";
   const profileHref = buildIrisAccountHref("/apps/iris/v3/profile", options.sessionToken);
   const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", options.sessionToken);
+  const ordersHref = buildIrisAccountHref("/apps/iris/v3/orders", options.sessionToken);
   const avatarUrl = options.avatarUrl || IRIS_ACCOUNT_DEFAULT_IMAGE;
   const displayName = options.user.display_name || `@${options.user.username}`;
 
@@ -2163,6 +2211,7 @@ const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): st
         <div class="account-menu__dropdown">
           <a href="${escapeHtml(profileHref)}">My Profile</a>
           <a href="${escapeHtml(libraryHref)}">My IRIS</a>
+          <a href="${escapeHtml(ordersHref)}">My Orders</a>
           <button type="submit">Log Out</button>
         </div>
       </div>
@@ -3089,6 +3138,126 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
         }
         .row strong { text-align:right; }
+        .iris-orders {
+          display:grid;
+          gap:1.2rem;
+        }
+        .iris-order-card {
+          border:1px solid var(--iris-line);
+          background:var(--iris-surface);
+          padding:2.4rem;
+        }
+        .iris-order-card__head {
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) auto;
+          align-items:start;
+          gap:1.8rem;
+          margin-bottom:1.8rem;
+        }
+        .iris-order-card__eyebrow {
+          margin:0 0 .8rem;
+          color:var(--iris-gold);
+          text-transform:uppercase;
+          letter-spacing:.24rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1rem;
+        }
+        .iris-order-card__title {
+          margin:0;
+          color:var(--iris-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:2.4rem;
+          line-height:1.12;
+          font-weight:400;
+        }
+        .iris-order-card__total {
+          color:var(--iris-gold-bright);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:2.1rem;
+          font-style:italic;
+          white-space:nowrap;
+        }
+        .iris-order-card__meta {
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          border-top:1px solid var(--iris-line);
+          border-bottom:1px solid var(--iris-line);
+        }
+        .iris-order-card__meta-item {
+          min-width:0;
+          padding:1.5rem 1.4rem;
+          border-right:1px solid var(--iris-line);
+        }
+        .iris-order-card__meta-item:last-child { border-right:0; }
+        .iris-order-card__label {
+          margin:0 0 .6rem;
+          color:var(--iris-soft);
+          text-transform:uppercase;
+          letter-spacing:.18rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:.9rem;
+        }
+        .iris-order-card__value {
+          margin:0;
+          color:var(--iris-text);
+          font-size:1.65rem;
+          line-height:1.35;
+        }
+        .iris-order-card__section {
+          margin-top:1.8rem;
+        }
+        .iris-order-card__section-title {
+          margin:0 0 1rem;
+          color:var(--iris-gold);
+          text-transform:uppercase;
+          letter-spacing:.2rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1rem;
+        }
+        .iris-order-lines,
+        .iris-order-artworks {
+          display:grid;
+          gap:.8rem;
+        }
+        .iris-order-line,
+        .iris-order-artwork {
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) auto;
+          align-items:center;
+          gap:1rem;
+          color:var(--iris-muted);
+          font-size:1.6rem;
+        }
+        .iris-order-artwork {
+          grid-template-columns:auto minmax(0, 1fr) auto;
+          color:var(--iris-text);
+        }
+        .iris-order-artwork__thumb {
+          width:4.6rem;
+          height:4.6rem;
+          border:1px solid var(--iris-line);
+          background:var(--iris-surface-2);
+          display:block;
+          object-fit:cover;
+        }
+        .iris-order-artwork__name {
+          color:var(--iris-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.35rem;
+        }
+        .iris-order-artwork__meta {
+          margin-top:.2rem;
+          color:var(--iris-muted);
+          font-size:1.35rem;
+        }
+        .iris-order-artwork__link,
+        .iris-order-artwork__link:visited {
+          color:var(--iris-gold);
+          text-transform:uppercase;
+          letter-spacing:.18rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:.95rem;
+        }
         .site-footer {
           border-top:1px solid rgba(201,168,76,.14);
           background:var(--iris-black);
@@ -3287,6 +3456,12 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .v2-passport-button,
           .v2-passport-button:visited { width:100%; }
           .v2-passport-archive__wrap { padding:7rem 2rem; }
+          .iris-order-card { padding:2rem; }
+          .iris-order-card__head { grid-template-columns:1fr; }
+          .iris-order-card__total { white-space:normal; }
+          .iris-order-card__meta { grid-template-columns:1fr 1fr; }
+          .iris-order-card__meta-item:nth-child(2n) { border-right:0; }
+          .iris-order-card__meta-item:nth-child(n+3) { border-top:1px solid var(--iris-line); }
           .footer-inner { grid-template-columns:1fr; gap:24px; }
           .footer-bottom { align-items:flex-start; flex-direction:column; padding-top:18px; padding-bottom:18px; }
         }
@@ -3312,6 +3487,16 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           h1 { font-size:36px; }
           .account-menu__trigger { font-size:1rem; }
           .account-avatar { width:3.85rem; height:3.85rem; }
+          .iris-order-card__meta { grid-template-columns:1fr; }
+          .iris-order-card__meta-item,
+          .iris-order-card__meta-item:nth-child(2n) { border-right:0; }
+          .iris-order-card__meta-item + .iris-order-card__meta-item { border-top:1px solid var(--iris-line); }
+          .iris-order-line,
+          .iris-order-artwork {
+            grid-template-columns:1fr;
+            align-items:start;
+          }
+          .iris-order-artwork__thumb { display:none; }
           .actions .btn,
           form .btn { width:100%; }
           .footer-links { grid-template-columns:1fr; }
@@ -3934,6 +4119,309 @@ const loadPendingTransferTo = async (irisId: string): Promise<string | null> => 
   }
 };
 
+const normalizeOrderLookupKey = (value: string | null | undefined): string =>
+  String(value || "").trim().toLowerCase();
+
+const collectOrderLookupKeys = (order: {
+  shopify_order_id?: string | null;
+  order_name?: string | null;
+  order_number?: string | null;
+}): string[] =>
+  Array.from(
+    new Set(
+      [order.shopify_order_id, order.order_name, order.order_number]
+        .map((value) => normalizeOrderLookupKey(value))
+        .filter(Boolean)
+    )
+  );
+
+const formatIrisAccountOrderStatus = (value: string | null): string => {
+  if (!value) return "-";
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+};
+
+const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken?: string): string => {
+  const orderTitle = order.order_name ?? (order.order_number ? `#${order.order_number}` : order.shopify_order_id) ?? "Order";
+  const orderDateLabel = formatIrisAccountLongDate(order.order_date);
+  const totalLabel = formatIrisAccountMoneyCents(order.total_price_cents, order.currency);
+  const sourceLabel = order.source === "shopify" ? "Shopify Order" : "IRIS Assignment";
+  const linesHtml = order.items.length
+    ? order.items
+        .map((item) => {
+          const title = item.title ?? "IRIS";
+          const variant = item.variant_title ? ` · ${item.variant_title}` : "";
+          const price = formatIrisAccountMoneyCents(item.price_cents, order.currency);
+          return `
+            <div class="iris-order-line">
+              <span>${escapeHtml(title)}${escapeHtml(variant)} × ${escapeHtml(String(item.quantity))}</span>
+              <strong>${escapeHtml(price)}</strong>
+            </div>
+          `;
+        })
+        .join("")
+    : `<p class="muted">Line items are waiting for Shopify sync.</p>`;
+  const artworksHtml = order.artworks.length
+    ? order.artworks
+        .map((item) => {
+          const passportHref = buildIrisAccountHref("/apps/iris/v3/passport", sessionToken, { iris_id: item.iris_id });
+          const thumb = item.image_url
+            ? `<img class="iris-order-artwork__thumb" src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id || item.iris_id)}" loading="lazy">`
+            : `<span class="iris-order-artwork__thumb"></span>`;
+          const action =
+            item.status === "activated"
+              ? `<a class="iris-order-artwork__link" href="${escapeHtml(passportHref)}">View Passport</a>`
+              : `<span class="iris-order-artwork__link">${escapeHtml(formatIrisAccountOrderStatus(item.status))}</span>`;
+          return `
+            <div class="iris-order-artwork">
+              ${thumb}
+              <div>
+                <div class="iris-order-artwork__name">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
+                <div class="iris-order-artwork__meta">${escapeHtml(item.rarity_code || formatIrisAccountOrderStatus(item.status))} · Activated ${escapeHtml(formatIrisAccountShortDate(item.activated_at))}</div>
+              </div>
+              ${action}
+            </div>
+          `;
+        })
+        .join("")
+    : `<p class="muted">No IRIS has been linked to this order yet.</p>`;
+
+  return `
+    <article class="iris-order-card">
+      <div class="iris-order-card__head">
+        <div>
+          <p class="iris-order-card__eyebrow">${escapeHtml(sourceLabel)}</p>
+          <h2 class="iris-order-card__title">${escapeHtml(orderTitle)}</h2>
+        </div>
+        <div class="iris-order-card__total">${escapeHtml(totalLabel)}</div>
+      </div>
+      <div class="iris-order-card__meta">
+        <div class="iris-order-card__meta-item">
+          <p class="iris-order-card__label">Order Date</p>
+          <p class="iris-order-card__value">${escapeHtml(orderDateLabel)}</p>
+        </div>
+        <div class="iris-order-card__meta-item">
+          <p class="iris-order-card__label">Payment</p>
+          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountOrderStatus(order.financial_status))}</p>
+        </div>
+        <div class="iris-order-card__meta-item">
+          <p class="iris-order-card__label">Fulfillment</p>
+          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountOrderStatus(order.fulfillment_status))}</p>
+        </div>
+        <div class="iris-order-card__meta-item">
+          <p class="iris-order-card__label">IRIS Linked</p>
+          <p class="iris-order-card__value">${escapeHtml(String(order.artworks.length))}</p>
+        </div>
+      </div>
+      <div class="iris-order-card__section">
+        <p class="iris-order-card__section-title">Items</p>
+        <div class="iris-order-lines">${linesHtml}</div>
+      </div>
+      <div class="iris-order-card__section">
+        <p class="iris-order-card__section-title">IRIS Records</p>
+        <div class="iris-order-artworks">${artworksHtml}</div>
+      </div>
+    </article>
+  `;
+};
+
+const buildIrisAccountOrdersHtml = (params: {
+  user: IrisAccountUserView;
+  sessionToken?: string;
+  avatarUrl?: string | null;
+  orders: IrisAccountOrderView[];
+}) => {
+  const libraryHref = buildIrisAccountHref("/apps/iris/v3/account", params.sessionToken);
+  const ordersHtml = params.orders.length
+    ? `<div class="iris-orders">${params.orders
+        .map((order) => buildIrisAccountOrderCardHtml(order, params.sessionToken))
+        .join("")}</div>`
+    : `<p class="v2-iris-archive__status">No Shopify orders are linked to this IRIS account yet.</p>`;
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Account Layer</p>
+        <h1>My Orders</h1>
+        <p>Orders connected by verified email. Ownership remains anchored in each IRIS passport.</p>
+      </div>
+      <div class="account-top-actions">
+        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My IRIS</a>
+      </div>
+    </section>
+    <section class="body">
+      ${ordersHtml}
+      ${buildIrisAccountSessionScript(params.sessionToken)}
+    </section>
+  `;
+  return buildIrisAccountShell("IRIS Orders", body, {
+    user: params.user,
+    sessionToken: params.sessionToken,
+    avatarUrl: params.avatarUrl
+  });
+};
+
+const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderView[]> => {
+  const normalizedEmail = normalizeEmail(email);
+  const assignedArtworks = await prisma.artwork.findMany({
+    where: {
+      assigned_order_id: { not: null },
+      assigned_customer_email: { equals: normalizedEmail, mode: "insensitive" },
+      status: { in: ["assigned", "activated", "shopify_failed"] }
+    },
+    orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+    include: {
+      collection: {
+        select: {
+          slug: true,
+          name: true,
+          edition_size: true
+        }
+      }
+    },
+    take: 200
+  });
+  const assignedIrisIds = assignedArtworks.map((item) => item.iris_id);
+  const assignedEvents = assignedIrisIds.length
+    ? await prisma.event.findMany({
+        where: { iris_id: { in: assignedIrisIds }, type: "assigned" },
+        orderBy: { created_at: "desc" }
+      })
+    : [];
+  const assignedEventByIrisId = new Map<string, (typeof assignedEvents)[number]>();
+  for (const event of assignedEvents) {
+    if (!assignedEventByIrisId.has(event.iris_id)) {
+      assignedEventByIrisId.set(event.iris_id, event);
+    }
+  }
+  const artworkViews = assignedArtworks.map((item) => ({
+    iris_id: item.iris_id,
+    display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+    image_url: item.image_url,
+    rarity_code: item.rarity_code,
+    status: item.status,
+    activated_at: item.activated_at
+  }));
+  const artworkByOrderKey = new Map<string, IrisAccountOrderArtworkView[]>();
+  for (const item of assignedArtworks) {
+    const key = normalizeOrderLookupKey(item.assigned_order_id);
+    if (!key) continue;
+    const display = artworkViews.find((view) => view.iris_id === item.iris_id);
+    if (!display) continue;
+    const list = artworkByOrderKey.get(key) ?? [];
+    list.push(display);
+    artworkByOrderKey.set(key, list);
+  }
+
+  let persistedOrders: Array<{
+    id: string;
+    shopify_order_id: string;
+    order_name: string | null;
+    order_number: string | null;
+    email: string | null;
+    financial_status: string | null;
+    fulfillment_status: string | null;
+    currency: string | null;
+    total_price_cents: number | null;
+    processed_at: Date | null;
+    created_at_shopify: Date | null;
+    updated_at_shopify: Date | null;
+    created_at: Date;
+    items: Array<{
+      title: string | null;
+      variant_title: string | null;
+      quantity: number;
+      price_cents: number | null;
+    }>;
+  }> = [];
+  try {
+    persistedOrders = await prisma.shopifyOrder.findMany({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+      include: {
+        items: {
+          select: {
+            title: true,
+            variant_title: true,
+            quantity: true,
+            price_cents: true
+          },
+          orderBy: { created_at: "asc" }
+        }
+      },
+      orderBy: [{ created_at_shopify: "desc" }, { created_at: "desc" }],
+      take: 50
+    });
+  } catch {
+    persistedOrders = [];
+  }
+
+  const claimedLegacyKeys = new Set<string>();
+  const orders = persistedOrders.map<IrisAccountOrderView>((order) => {
+    const lookupKeys = collectOrderLookupKeys(order);
+    const artworks = lookupKeys.flatMap((key) => artworkByOrderKey.get(key) ?? []);
+    lookupKeys.forEach((key) => claimedLegacyKeys.add(key));
+    return {
+      key: `shopify:${order.id}`,
+      source: "shopify",
+      shopify_order_id: order.shopify_order_id,
+      order_name: order.order_name,
+      order_number: order.order_number,
+      order_date: order.created_at_shopify ?? order.processed_at ?? order.updated_at_shopify,
+      email: order.email,
+      financial_status: order.financial_status,
+      fulfillment_status: order.fulfillment_status,
+      currency: order.currency,
+      total_price_cents: order.total_price_cents,
+      items: order.items,
+      artworks: Array.from(new Map(artworks.map((item) => [item.iris_id, item])).values())
+    };
+  });
+
+  const legacyGroups = new Map<string, typeof assignedArtworks>();
+  for (const item of assignedArtworks) {
+    const key = normalizeOrderLookupKey(item.assigned_order_id);
+    if (!key || claimedLegacyKeys.has(key)) continue;
+    const group = legacyGroups.get(key) ?? [];
+    group.push(item);
+    legacyGroups.set(key, group);
+  }
+  for (const [key, group] of legacyGroups) {
+    const first = group[0];
+    const firstEvent = first ? assignedEventByIrisId.get(first.iris_id) : null;
+    const orderDate = firstEvent ? extractAssignedEventOrderDate(firstEvent) : first?.updated_at ?? null;
+    orders.push({
+      key: `legacy:${key}`,
+      source: "legacy",
+      shopify_order_id: null,
+      order_name: first?.assigned_order_id ?? null,
+      order_number: first?.assigned_order_id?.replace(/^#/, "") ?? null,
+      order_date: orderDate,
+      email: normalizedEmail,
+      financial_status: "paid",
+      fulfillment_status: null,
+      currency: null,
+      total_price_cents: null,
+      items: [],
+      artworks: group.map((item) => ({
+        iris_id: item.iris_id,
+        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+        image_url: item.image_url,
+        rarity_code: item.rarity_code,
+        status: item.status,
+        activated_at: item.activated_at
+      }))
+    });
+  }
+
+  return orders.sort((a, b) => {
+    const aTime = a.order_date ? a.order_date.getTime() : 0;
+    const bTime = b.order_date ? b.order_date.getTime() : 0;
+    return bTime - aTime;
+  });
+};
+
 const buildAdminDetailHtml = (item: {
   iris_id: string;
   display_iris_id: string;
@@ -4022,14 +4510,103 @@ const buildAdminDetailHtml = (item: {
 const extractCustomerEmail = (order: Record<string, unknown>): string | null => {
   const email = order.email;
   if (typeof email === "string" && email.trim()) {
-    return email.trim();
+    return normalizeEmail(email);
   }
   const customer = order.customer as Record<string, unknown> | undefined;
   const customerEmail = customer?.email;
   if (typeof customerEmail === "string" && customerEmail.trim()) {
-    return customerEmail.trim();
+    return normalizeEmail(customerEmail);
   }
   return null;
+};
+
+const readShopifyString = (value: unknown): string | null => {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+};
+
+const parseShopifyMoneyCents = (value: unknown): number | null => {
+  const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  return Number.isFinite(raw) ? Math.round(raw * 100) : null;
+};
+
+const toPrismaJson = (value: unknown): any => {
+  if (value == null) return Prisma.JsonNull;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return Prisma.JsonNull;
+  }
+};
+
+const extractShopifyOrderLineItems = (order: Record<string, unknown>): Array<Record<string, unknown>> =>
+  Array.isArray(order.line_items) ? (order.line_items as Array<Record<string, unknown>>) : [];
+
+const saveShopifyOrderSnapshot = async (order: Record<string, unknown>) => {
+  const shopifyOrderId =
+    readShopifyString(order.id) ?? readShopifyString(order.admin_graphql_api_id) ?? readShopifyString(order.name);
+  if (!shopifyOrderId) {
+    throw new Error("shopify_order_id_missing");
+  }
+
+  const currency = readShopifyString(order.currency) ?? "USD";
+  const lineItems = extractShopifyOrderLineItems(order).map((item) => {
+    const rawQuantity = Number(item.quantity ?? 1);
+    return {
+      shopify_line_item_id: readShopifyString(item.id),
+      product_id: readShopifyString(item.product_id),
+      variant_id: readShopifyString(item.variant_id),
+      title: readShopifyString(item.title) ?? readShopifyString(item.name),
+      variant_title: readShopifyString(item.variant_title),
+      sku: readShopifyString(item.sku),
+      quantity: Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1,
+      price_cents: parseShopifyMoneyCents(item.price),
+      total_discount_cents: parseShopifyMoneyCents(item.total_discount),
+      currency,
+      properties_json: toPrismaJson(item.properties)
+    };
+  });
+
+  await prisma.shopifyOrder.upsert({
+    where: { shopify_order_id: shopifyOrderId },
+    create: {
+      shopify_order_id: shopifyOrderId,
+      order_name: readShopifyString(order.name),
+      order_number: readShopifyString(order.order_number),
+      email: extractCustomerEmail(order),
+      financial_status: readShopifyString(order.financial_status),
+      fulfillment_status: readShopifyString(order.fulfillment_status),
+      currency,
+      subtotal_price_cents: parseShopifyMoneyCents(order.current_subtotal_price ?? order.subtotal_price),
+      total_price_cents: parseShopifyMoneyCents(order.current_total_price ?? order.total_price),
+      total_tax_cents: parseShopifyMoneyCents(order.current_total_tax ?? order.total_tax),
+      processed_at: parseDateValue(order.processed_at),
+      created_at_shopify: parseDateValue(order.created_at),
+      updated_at_shopify: parseDateValue(order.updated_at),
+      raw_json: toPrismaJson(order),
+      items: { create: lineItems }
+    },
+    update: {
+      order_name: readShopifyString(order.name),
+      order_number: readShopifyString(order.order_number),
+      email: extractCustomerEmail(order),
+      financial_status: readShopifyString(order.financial_status),
+      fulfillment_status: readShopifyString(order.fulfillment_status),
+      currency,
+      subtotal_price_cents: parseShopifyMoneyCents(order.current_subtotal_price ?? order.subtotal_price),
+      total_price_cents: parseShopifyMoneyCents(order.current_total_price ?? order.total_price),
+      total_tax_cents: parseShopifyMoneyCents(order.current_total_tax ?? order.total_tax),
+      processed_at: parseDateValue(order.processed_at),
+      created_at_shopify: parseDateValue(order.created_at),
+      updated_at_shopify: parseDateValue(order.updated_at),
+      raw_json: toPrismaJson(order),
+      items: {
+        deleteMany: {},
+        create: lineItems
+      }
+    }
+  });
 };
 
 const shopifyGraphQL = async (query: string, variables: Record<string, unknown>) => {
@@ -4508,6 +5085,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const orderCreatedAtIso = orderCreatedAt ? orderCreatedAt.toISOString() : null;
     const failed: Array<{ token: string; error: string }> = [];
     const collectionLookupCache = new Map<string, Awaited<ReturnType<typeof resolveCollection>>>();
+
+    try {
+      await saveShopifyOrderSnapshot(order);
+    } catch (error) {
+      req.log.error({ err: error, orderId, orderNumber: orderNumberDisplay }, "Shopify order snapshot failed");
+    }
 
     const resolveLineItemCollection = async (
       productId: string | null,
@@ -5463,6 +6046,26 @@ export const createServer = async (): Promise<FastifyInstance> => {
     );
   };
 
+  const renderIrisAccountOrders = async (
+    reply: any,
+    user: IrisAccountUserView,
+    options?: { sessionToken?: string }
+  ) => {
+    const [items, orders] = await Promise.all([
+      loadIrisAccountItems(user.email),
+      loadIrisAccountOrders(user.email)
+    ]);
+    sendIrisAccountHtml(
+      reply,
+      buildIrisAccountOrdersHtml({
+        user,
+        sessionToken: options?.sessionToken,
+        avatarUrl: selectIrisAccountAvatarUrl(items, user.avatar_iris_id),
+        orders
+      })
+    );
+  };
+
   const renderIrisAccountMarketplace = async (
     reply: any,
     user: IrisAccountUserView,
@@ -5519,6 +6122,23 @@ export const createServer = async (): Promise<FastifyInstance> => {
       await renderIrisAccountSettings(reply, auth.user, { sessionToken: auth.rawToken });
     } catch (error) {
       req.log.error({ err: error }, "IRIS Account V3 profile page failed");
+      sendIrisAccountHtml(
+        reply,
+        buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
+      );
+    }
+  });
+
+  app.get("/apps/iris/v3/orders", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        reply.redirect(302, "/apps/iris/v3/account");
+        return;
+      }
+      await renderIrisAccountOrders(reply, auth.user, { sessionToken: auth.rawToken });
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account V3 orders page failed");
       sendIrisAccountHtml(
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
