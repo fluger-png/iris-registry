@@ -4485,6 +4485,12 @@ const readIrisAccountGraphqlCurrency = (value: unknown): string | null => {
 
 const extractIrisAccountGraphqlFulfillmentStatus = (order: Record<string, unknown>): string | null => {
   const fulfillments = Array.isArray(order.fulfillments) ? (order.fulfillments as Array<Record<string, unknown>>) : [];
+  for (const fulfillment of fulfillments) {
+    if (parseDateValue(fulfillment.deliveredAt)) return "DELIVERED";
+  }
+  for (const fulfillment of fulfillments) {
+    if (parseDateValue(fulfillment.inTransitAt)) return "IN_TRANSIT";
+  }
   const preferredKeys = new Set(["delivered", "in_transit", "out_for_delivery"]);
   for (const fulfillment of fulfillments) {
     const status = readIrisAccountShopifyFallbackString(fulfillment.displayStatus) ??
@@ -4611,6 +4617,8 @@ const loadIrisAccountShopifyGraphqlOrderFallback = async (
             fulfillments(first: 10) {
               status
               displayStatus
+              deliveredAt
+              inTransitAt
             }
           }
         }
@@ -5042,6 +5050,12 @@ const extractShopifyOrderLineItems = (order: Record<string, unknown>): Array<Rec
 
 const extractShopifyFulfillmentStatus = (order: Record<string, unknown>): string | null => {
   const fulfillments = Array.isArray(order.fulfillments) ? (order.fulfillments as Array<Record<string, unknown>>) : [];
+  for (const fulfillment of fulfillments) {
+    if (parseDateValue(fulfillment.delivered_at ?? fulfillment.deliveredAt)) return "delivered";
+  }
+  for (const fulfillment of fulfillments) {
+    if (parseDateValue(fulfillment.in_transit_at ?? fulfillment.inTransitAt)) return "in_transit";
+  }
   for (const fulfillment of fulfillments) {
     const shipmentStatus = readShopifyString(fulfillment.shipment_status);
     if (shipmentStatus) return shipmentStatus;
