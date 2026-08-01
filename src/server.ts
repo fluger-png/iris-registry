@@ -8145,51 +8145,85 @@ export const createServer = async (): Promise<FastifyInstance> => {
       new Set([rawOrderNumber, lookupName, searchName, `#${searchName}`].filter(Boolean))
     );
 
-    const localOrders = await prisma.shopifyOrder.findMany({
-      where: {
-        OR: [
-          { shopify_order_id: { in: lookupVariants } },
-          { order_name: { in: lookupVariants } },
-          { order_number: { in: lookupVariants } }
-        ]
-      },
-      select: {
-        id: true,
-        shopify_order_id: true,
-        order_name: true,
-        order_number: true,
-        email: true,
-        financial_status: true,
-        fulfillment_status: true,
-        currency: true,
-        total_price_cents: true,
-        processed_at: true,
-        created_at_shopify: true,
-        updated_at_shopify: true,
-        updated_at: true,
-        items: {
-          select: {
-            title: true,
-            quantity: true,
-            price_cents: true
+    let localOrders: Array<{
+      id: string;
+      shopify_order_id: string;
+      order_name: string | null;
+      order_number: string | null;
+      email: string | null;
+      financial_status: string | null;
+      fulfillment_status: string | null;
+      currency: string | null;
+      total_price_cents: number | null;
+      processed_at: Date | null;
+      created_at_shopify: Date | null;
+      updated_at_shopify: Date | null;
+      updated_at: Date;
+      items: Array<{ title: string | null; quantity: number; price_cents: number | null }>;
+    }> = [];
+    let localOrdersError: string | null = null;
+    try {
+      localOrders = await prisma.shopifyOrder.findMany({
+        where: {
+          OR: [
+            { shopify_order_id: { in: lookupVariants } },
+            { order_name: { in: lookupVariants } },
+            { order_number: { in: lookupVariants } }
+          ]
+        },
+        select: {
+          id: true,
+          shopify_order_id: true,
+          order_name: true,
+          order_number: true,
+          email: true,
+          financial_status: true,
+          fulfillment_status: true,
+          currency: true,
+          total_price_cents: true,
+          processed_at: true,
+          created_at_shopify: true,
+          updated_at_shopify: true,
+          updated_at: true,
+          items: {
+            select: {
+              title: true,
+              quantity: true,
+              price_cents: true
+            }
           }
         }
-      }
-    });
+      });
+    } catch (error) {
+      localOrdersError = error instanceof Error ? error.message : String(error);
+    }
 
-    const artworks = await prisma.artwork.findMany({
-      where: { assigned_order_id: { in: lookupVariants } },
-      select: {
-        iris_id: true,
-        status: true,
-        assigned_order_id: true,
-        assigned_customer_email: true,
-        owner_email: true,
-        activated_at: true
-      },
-      orderBy: { iris_id: "asc" },
-      take: 50
-    });
+    let artworks: Array<{
+      iris_id: string;
+      status: string;
+      assigned_order_id: string | null;
+      assigned_customer_email: string | null;
+      owner_email: string | null;
+      activated_at: Date | null;
+    }> = [];
+    let artworksError: string | null = null;
+    try {
+      artworks = await prisma.artwork.findMany({
+        where: { assigned_order_id: { in: lookupVariants } },
+        select: {
+          iris_id: true,
+          status: true,
+          assigned_order_id: true,
+          assigned_customer_email: true,
+          owner_email: true,
+          activated_at: true
+        },
+        orderBy: { iris_id: "asc" },
+        take: 50
+      });
+    } catch (error) {
+      artworksError = error instanceof Error ? error.message : String(error);
+    }
 
     const graphqlProbes: Array<Record<string, unknown>> = [];
     const graphqlQueries = Array.from(new Set([searchName, lookupName, `"${searchName}"`].filter(Boolean)));
@@ -8227,13 +8261,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     let combinedFallback: IrisAccountShopifyOrderFallback | null = null;
+    let combinedFallbackError: string | null = null;
     try {
       const fallbackMap = await loadIrisAccountShopifyOrderFallbacksByName([rawOrderNumber]);
       combinedFallback = fallbackMap.get(normalizeOrderLookupKey(rawOrderNumber)) ??
         fallbackMap.get(normalizeIrisAccountOrderNameKey(rawOrderNumber)) ??
         fallbackMap.get(normalizeOrderLookupKey(lookupName)) ??
         null;
-    } catch {
+    } catch (error) {
+      combinedFallbackError = error instanceof Error ? error.message : String(error);
       combinedFallback = null;
     }
 
@@ -8242,6 +8278,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       lookup_name: lookupName,
       search_name: searchName,
       lookup_variants: lookupVariants,
+      local_orders_error: localOrdersError,
       local_orders: localOrders.map((order) => ({
         ...order,
         displayed_fulfillment: formatIrisAccountFulfillmentStatus(order.fulfillment_status),
@@ -8266,9 +8303,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
           artworks: []
         })
       })),
+      assigned_artworks_error: artworksError,
       assigned_artworks: artworks,
       graphql_probes: graphqlProbes,
       rest_probes: restProbes,
+      combined_fallback_error: combinedFallbackError,
       combined_fallback: combinedFallback,
       combined_displayed_fulfillment: combinedFallback
         ? formatIrisAccountFulfillmentStatus(combinedFallback.fulfillment_status)
