@@ -4250,6 +4250,9 @@ const loadPendingTransferTo = async (irisId: string): Promise<string | null> => 
 const normalizeOrderLookupKey = (value: string | null | undefined): string =>
   String(value || "").trim().toLowerCase();
 
+const normalizeIrisAccountOrderNameKey = (value: string | null | undefined): string =>
+  normalizeOrderLookupKey(value).replace(/^#/, "");
+
 const collectOrderLookupKeys = (order: {
   shopify_order_id?: string | null;
   order_name?: string | null;
@@ -4258,7 +4261,7 @@ const collectOrderLookupKeys = (order: {
   Array.from(
     new Set(
       [order.shopify_order_id, order.order_name, order.order_number]
-        .map((value) => normalizeOrderLookupKey(value))
+        .flatMap((value) => [normalizeOrderLookupKey(value), normalizeIrisAccountOrderNameKey(value)])
         .filter(Boolean)
     )
   );
@@ -4305,6 +4308,7 @@ const getIrisAccountOrderTotalCents = (order: IrisAccountOrderView): number | nu
 const formatIrisAccountPaymentLabel = (order: IrisAccountOrderView): string => {
   const status = formatIrisAccountPaymentStatus(order.financial_status);
   const amount = formatIrisAccountOrderMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
+  if (amount === "-" && normalizeIrisAccountStatusKey(order.financial_status) === "paid") return "Paid $0.00";
   return amount === "-" ? status : `${status} ${amount}`;
 };
 
@@ -4584,7 +4588,8 @@ const extractIrisAccountShopifyFallbackOrder = (
 };
 
 const loadIrisAccountShopifyGraphqlOrderFallback = async (
-  lookupName: string
+  searchName: string,
+  expectedName: string
 ): Promise<IrisAccountShopifyOrderFallback | null> => {
   const q = `
     query IrisAccountOrderFallback($query: String!) {
@@ -4612,16 +4617,19 @@ const loadIrisAccountShopifyGraphqlOrderFallback = async (
       }
     }
   `;
-  const data = await shopifyGraphQL(q, { query: `name:${lookupName}` });
+  const data = await shopifyGraphQL(q, { query: `name:${searchName}` });
   const node = data?.orders?.edges?.[0]?.node;
   if (!node) return null;
   const fallback = extractIrisAccountShopifyGraphqlFallbackOrder(node);
   if (!fallback) return null;
-  return normalizeOrderLookupKey(fallback.order_name) === normalizeOrderLookupKey(lookupName) ? fallback : null;
+  return normalizeIrisAccountOrderNameKey(fallback.order_name) === normalizeIrisAccountOrderNameKey(expectedName)
+    ? fallback
+    : null;
 };
 
 const loadIrisAccountShopifyRestOrderFallback = async (
-  lookupName: string
+  lookupName: string,
+  expectedName: string
 ): Promise<IrisAccountShopifyOrderFallback | null> => {
   const url = new URL(`https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/orders.json`);
   url.searchParams.set("status", "any");
@@ -4659,7 +4667,9 @@ const loadIrisAccountShopifyRestOrderFallback = async (
   const data = (await res.json()) as { orders?: Array<Record<string, unknown>> };
   const fallback = data.orders?.[0] ? extractIrisAccountShopifyFallbackOrder(data.orders[0]) : null;
   if (!fallback) return null;
-  return normalizeOrderLookupKey(fallback.order_name) === normalizeOrderLookupKey(lookupName) ? fallback : null;
+  return normalizeIrisAccountOrderNameKey(fallback.order_name) === normalizeIrisAccountOrderNameKey(expectedName)
+    ? fallback
+    : null;
 };
 
 const loadIrisAccountShopifyOrderFallbacksByName = async (
@@ -4676,16 +4686,21 @@ const loadIrisAccountShopifyOrderFallbacksByName = async (
 
   for (const orderName of uniqueNames) {
     const lookupName = orderName.startsWith("#") ? orderName : `#${orderName}`;
+    const searchName = normalizeIrisAccountOrderNameKey(lookupName);
     let graphqlFallback: IrisAccountShopifyOrderFallback | null = null;
-    try {
-      graphqlFallback = await loadIrisAccountShopifyGraphqlOrderFallback(lookupName);
-    } catch {
-      graphqlFallback = null;
+    const graphqlQueries = Array.from(new Set([searchName, lookupName, `"${searchName}"`].filter(Boolean)));
+    for (const queryName of graphqlQueries) {
+      try {
+        graphqlFallback = await loadIrisAccountShopifyGraphqlOrderFallback(queryName, lookupName);
+      } catch {
+        graphqlFallback = null;
+      }
+      if (graphqlFallback) break;
     }
     let restFallback: IrisAccountShopifyOrderFallback | null = null;
     if (!graphqlFallback || !hasSpecificIrisAccountFulfillmentStatus(graphqlFallback.fulfillment_status)) {
       try {
-        restFallback = await loadIrisAccountShopifyRestOrderFallback(lookupName);
+        restFallback = await loadIrisAccountShopifyRestOrderFallback(lookupName, lookupName);
       } catch {
         restFallback = null;
       }
@@ -4697,7 +4712,12 @@ const loadIrisAccountShopifyOrderFallbacksByName = async (
       order_name: fallback.order_name,
       order_number: fallback.order_number
     });
-    keys.push(normalizeOrderLookupKey(orderName), normalizeOrderLookupKey(lookupName));
+    keys.push(
+      normalizeOrderLookupKey(orderName),
+      normalizeIrisAccountOrderNameKey(orderName),
+      normalizeOrderLookupKey(lookupName),
+      normalizeIrisAccountOrderNameKey(lookupName)
+    );
     for (const key of keys.filter(Boolean)) {
       fallbacks.set(key, fallback);
     }
