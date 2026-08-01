@@ -4699,10 +4699,14 @@ const loadIrisAccountShopifyOrderFallbacksByName = async (
     }
     let restFallback: IrisAccountShopifyOrderFallback | null = null;
     if (!graphqlFallback || !hasSpecificIrisAccountFulfillmentStatus(graphqlFallback.fulfillment_status)) {
-      try {
-        restFallback = await loadIrisAccountShopifyRestOrderFallback(lookupName, lookupName);
-      } catch {
-        restFallback = null;
+      const restNames = Array.from(new Set([searchName, lookupName].filter(Boolean)));
+      for (const restName of restNames) {
+        try {
+          restFallback = await loadIrisAccountShopifyRestOrderFallback(restName, lookupName);
+        } catch {
+          restFallback = null;
+        }
+        if (restFallback) break;
       }
     }
     const fallback = mergeIrisAccountShopifyOrderFallbacks(graphqlFallback, restFallback);
