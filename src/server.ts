@@ -3810,32 +3810,51 @@ const buildIrisAccountSettingsHtml = (params: {
     <section class="body">
       ${messageHtml}
       ${errorHtml}
-      <section class="card visibility-card">
-        <h2>Visibility</h2>
-        <p class="muted">If your profile is public, your username may appear on marketplace listings when you use marketplace tools. Your email stays private.</p>
-        <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
-          ${sessionHidden}
-          <input type="hidden" name="username" value="${escapeHtml(params.user.username)}" />
-          <input type="hidden" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" />
-          <div class="visibility-options" role="radiogroup" aria-label="Profile visibility">
-            <label class="visibility-option">
-              <input type="radio" name="profile_public" value="false" ${params.user.profile_public ? "" : "checked"} />
-              <span class="visibility-option__panel">
-                <span class="visibility-option__title">Private</span>
-                <span class="visibility-option__copy">Your IRIS library stays visible only inside your account.</span>
-              </span>
-            </label>
-            <label class="visibility-option">
-              <input type="radio" name="profile_public" value="true" ${params.user.profile_public ? "checked" : ""} />
-              <span class="visibility-option__panel">
-                <span class="visibility-option__title">Public</span>
-                <span class="visibility-option__copy">Your username can appear with future marketplace activity.</span>
-              </span>
-            </label>
-          </div>
-          <button class="btn" type="submit">Save Visibility</button>
-        </form>
-      </section>
+      <div class="grid">
+        <section class="card">
+          <h2>Profile</h2>
+          <p class="muted">Your IRIS identity for future marketplace tools and optional public galleries.</p>
+          <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
+            ${sessionHidden}
+            <input type="hidden" name="profile_public" value="${params.user.profile_public ? "true" : "false"}" />
+            <div class="field">
+              <label>Username</label>
+              <input type="text" name="username" value="${escapeHtml(params.user.username)}" minlength="3" maxlength="24" required />
+            </div>
+            <div class="field">
+              <label>Display Name</label>
+              <input type="text" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" maxlength="80" />
+            </div>
+            <button class="btn" type="submit">Save Profile</button>
+          </form>
+        </section>
+        <section class="card visibility-card">
+          <h2>Visibility</h2>
+          <p class="muted">If your profile is public, your username may appear on marketplace listings when you use marketplace tools. Your email stays private.</p>
+          <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
+            ${sessionHidden}
+            <input type="hidden" name="username" value="${escapeHtml(params.user.username)}" />
+            <input type="hidden" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" />
+            <div class="visibility-options" role="radiogroup" aria-label="Profile visibility">
+              <label class="visibility-option">
+                <input type="radio" name="profile_public" value="false" ${params.user.profile_public ? "" : "checked"} />
+                <span class="visibility-option__panel">
+                  <span class="visibility-option__title">Private</span>
+                  <span class="visibility-option__copy">Your IRIS library stays visible only inside your account.</span>
+                </span>
+              </label>
+              <label class="visibility-option">
+                <input type="radio" name="profile_public" value="true" ${params.user.profile_public ? "checked" : ""} />
+                <span class="visibility-option__panel">
+                  <span class="visibility-option__title">Public</span>
+                  <span class="visibility-option__copy">Your username can appear with future marketplace activity.</span>
+                </span>
+              </label>
+            </div>
+            <button class="btn" type="submit">Save Visibility</button>
+          </form>
+        </section>
+      </div>
       ${buildIrisAccountSessionScript(params.sessionToken)}
     </section>
   `;
@@ -4248,9 +4267,22 @@ const formatIrisAccountPaymentStatus = (value: string | null): string => {
   return formatIrisAccountOrderStatus(value);
 };
 
+const getIrisAccountOrderTotalCents = (order: IrisAccountOrderView): number | null => {
+  if (order.total_price_cents != null && Number.isFinite(order.total_price_cents)) {
+    return order.total_price_cents;
+  }
+  const lineTotal = order.items.reduce((sum, item) => {
+    const price = Number(item.price_cents);
+    const quantity = Number(item.quantity);
+    if (!Number.isFinite(price) || !Number.isFinite(quantity)) return sum;
+    return sum + Math.max(0, price) * Math.max(1, Math.floor(quantity));
+  }, 0);
+  return lineTotal > 0 ? lineTotal : null;
+};
+
 const formatIrisAccountPaymentLabel = (order: IrisAccountOrderView): string => {
   const status = formatIrisAccountPaymentStatus(order.financial_status);
-  const amount = formatIrisAccountMoneyCents(order.total_price_cents, order.currency);
+  const amount = formatIrisAccountMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
   return amount === "-" ? status : `${status} ${amount}`;
 };
 
@@ -4274,7 +4306,7 @@ const formatIrisAccountOrderArtworkStatus = (item: IrisAccountOrderArtworkView):
 const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken?: string): string => {
   const orderTitle = order.order_name ?? (order.order_number ? `#${order.order_number}` : order.shopify_order_id) ?? "Order";
   const orderDateLabel = formatIrisAccountLongDate(order.order_date);
-  const totalLabel = formatIrisAccountMoneyCents(order.total_price_cents, order.currency);
+  const totalLabel = formatIrisAccountMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
   const sourceLabel = order.source === "shopify" ? "Shopify Order" : "IRIS Assignment";
   const artworksHtml = order.artworks.length
     ? order.artworks
@@ -4354,7 +4386,7 @@ const buildIrisAccountOrdersHtml = (params: {
   const body = `
     <section class="hero">
       <div>
-        <p class="eyebrow">Account Layer</p>
+        <p class="eyebrow">IRIS Account</p>
         <h1>My Orders</h1>
         <p>Orders connected by verified email. Ownership remains anchored in each IRIS passport.</p>
       </div>
@@ -4372,6 +4404,131 @@ const buildIrisAccountOrdersHtml = (params: {
     sessionToken: params.sessionToken,
     avatarUrl: params.avatarUrl
   });
+};
+
+type IrisAccountShopifyOrderFallback = {
+  shopify_order_id: string | null;
+  order_name: string | null;
+  order_number: string | null;
+  order_date: Date | null;
+  email: string | null;
+  financial_status: string | null;
+  fulfillment_status: string | null;
+  currency: string | null;
+  total_price_cents: number | null;
+  items: IrisAccountOrderLineView[];
+};
+
+const readIrisAccountShopifyFallbackString = (value: unknown): string | null => {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+};
+
+const parseIrisAccountShopifyFallbackMoneyCents = (value: unknown): number | null => {
+  const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  return Number.isFinite(raw) ? Math.round(raw * 100) : null;
+};
+
+const extractIrisAccountShopifyFallbackOrder = (
+  order: Record<string, unknown>
+): IrisAccountShopifyOrderFallback | null => {
+  const shopifyOrderId =
+    readIrisAccountShopifyFallbackString(order.id) ??
+    readIrisAccountShopifyFallbackString(order.admin_graphql_api_id) ??
+    readIrisAccountShopifyFallbackString(order.name);
+  if (!shopifyOrderId) return null;
+
+  const currency = readIrisAccountShopifyFallbackString(order.currency) ?? "USD";
+  const lineItems = Array.isArray(order.line_items) ? (order.line_items as Array<Record<string, unknown>>) : [];
+  return {
+    shopify_order_id: shopifyOrderId,
+    order_name: readIrisAccountShopifyFallbackString(order.name),
+    order_number: readIrisAccountShopifyFallbackString(order.order_number),
+    order_date: extractShopifyOrderDate(order),
+    email: extractCustomerEmail(order),
+    financial_status: readIrisAccountShopifyFallbackString(order.financial_status),
+    fulfillment_status: extractShopifyFulfillmentStatus(order),
+    currency,
+    total_price_cents: parseIrisAccountShopifyFallbackMoneyCents(order.current_total_price ?? order.total_price),
+    items: lineItems.map((item) => {
+      const rawQuantity = Number(item.quantity ?? 1);
+      return {
+        title: readIrisAccountShopifyFallbackString(item.title) ?? readIrisAccountShopifyFallbackString(item.name),
+        variant_title: readIrisAccountShopifyFallbackString(item.variant_title),
+        quantity: Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1,
+        price_cents: parseIrisAccountShopifyFallbackMoneyCents(item.price)
+      };
+    })
+  };
+};
+
+const loadIrisAccountShopifyOrderFallbacksByName = async (
+  orderNames: string[]
+): Promise<Map<string, IrisAccountShopifyOrderFallback>> => {
+  const fallbacks = new Map<string, IrisAccountShopifyOrderFallback>();
+  const uniqueNames = Array.from(
+    new Set(
+      orderNames
+        .map((name) => String(name || "").trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 25);
+
+  for (const orderName of uniqueNames) {
+    try {
+      const lookupName = orderName.startsWith("#") ? orderName : `#${orderName}`;
+      const url = new URL(`https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/orders.json`);
+      url.searchParams.set("status", "any");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("name", lookupName);
+      url.searchParams.set(
+        "fields",
+        [
+          "id",
+          "admin_graphql_api_id",
+          "name",
+          "order_number",
+          "email",
+          "contact_email",
+          "customer",
+          "financial_status",
+          "fulfillment_status",
+          "currency",
+          "current_total_price",
+          "total_price",
+          "processed_at",
+          "created_at",
+          "updated_at",
+          "line_items",
+          "fulfillments"
+        ].join(",")
+      );
+      const res = await fetch(url, {
+        headers: {
+          "X-Shopify-Access-Token": env.shopifyAdminToken,
+          Accept: "application/json"
+        }
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { orders?: Array<Record<string, unknown>> };
+      const fallback = data.orders?.[0] ? extractIrisAccountShopifyFallbackOrder(data.orders[0]) : null;
+      if (!fallback) continue;
+      const keys = collectOrderLookupKeys({
+        shopify_order_id: fallback.shopify_order_id,
+        order_name: fallback.order_name,
+        order_number: fallback.order_number
+      });
+      keys.push(normalizeOrderLookupKey(orderName), normalizeOrderLookupKey(lookupName));
+      for (const key of keys.filter(Boolean)) {
+        fallbacks.set(key, fallback);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return fallbacks;
 };
 
 const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderView[]> => {
@@ -4516,23 +4673,29 @@ const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderVie
     group.push(item);
     legacyGroups.set(key, group);
   }
+  const legacyShopifyFallbacks = await loadIrisAccountShopifyOrderFallbacksByName(
+    Array.from(legacyGroups.values())
+      .map((group) => group[0]?.assigned_order_id)
+      .filter((value): value is string => Boolean(value))
+  );
   for (const [key, group] of legacyGroups) {
     const first = group[0];
     const firstEvent = first ? assignedEventByIrisId.get(first.iris_id) : null;
+    const shopifyFallback = legacyShopifyFallbacks.get(key);
     const orderDate = firstEvent ? extractAssignedEventOrderDate(firstEvent) : first?.updated_at ?? null;
     orders.push({
       key: `legacy:${key}`,
       source: "legacy",
-      shopify_order_id: null,
-      order_name: first?.assigned_order_id ?? null,
-      order_number: first?.assigned_order_id?.replace(/^#/, "") ?? null,
-      order_date: orderDate,
-      email: normalizedEmail,
-      financial_status: "paid",
-      fulfillment_status: null,
-      currency: null,
-      total_price_cents: null,
-      items: [],
+      shopify_order_id: shopifyFallback?.shopify_order_id ?? null,
+      order_name: shopifyFallback?.order_name ?? first?.assigned_order_id ?? null,
+      order_number: shopifyFallback?.order_number ?? first?.assigned_order_id?.replace(/^#/, "") ?? null,
+      order_date: shopifyFallback?.order_date ?? orderDate,
+      email: shopifyFallback?.email ?? normalizedEmail,
+      financial_status: shopifyFallback?.financial_status ?? "paid",
+      fulfillment_status: shopifyFallback?.fulfillment_status ?? null,
+      currency: shopifyFallback?.currency ?? null,
+      total_price_cents: shopifyFallback?.total_price_cents ?? null,
+      items: shopifyFallback?.items ?? [],
       artworks: group.map((item) => ({
         iris_id: item.iris_id,
         display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
