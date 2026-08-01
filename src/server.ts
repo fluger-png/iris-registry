@@ -1995,8 +1995,10 @@ type IrisAccountOrderArtworkView = {
   display_iris_id: string;
   image_url: string | null;
   rarity_code: string | null;
+  weight_grams: number | null;
   status: string;
   activated_at: Date | null;
+  transfer_pending: boolean;
 };
 
 type IrisAccountOrderLineView = {
@@ -2084,6 +2086,11 @@ const formatIrisAccountShortDate = (value: Date | null): string => {
 const formatIrisAccountGold = (value: number | null): string => {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return `${Number(value).toFixed(2)} g (24K)`;
+};
+
+const formatIrisAccountWeight = (value: number | null): string => {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  return `${Number(value).toFixed(2)} g`;
 };
 
 const formatIrisAccountCurrencyUsd = (value: number): string =>
@@ -2608,6 +2615,55 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           text-transform:none;
           font-family:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           font-size:18px;
+        }
+        .visibility-card {
+          width:min(100%, 78rem);
+          margin:0 auto;
+        }
+        .visibility-options {
+          display:grid;
+          grid-template-columns:repeat(2, minmax(0, 1fr));
+          gap:1rem;
+          margin:2.2rem 0 2rem;
+        }
+        .visibility-option {
+          display:block;
+          margin:0;
+          color:var(--iris-muted);
+          font-family:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          text-transform:none;
+          cursor:pointer;
+        }
+        .visibility-option input {
+          position:absolute;
+          opacity:0;
+          pointer-events:none;
+        }
+        .visibility-option__panel {
+          display:block;
+          min-height:11rem;
+          border:1px solid var(--iris-line);
+          background:#030303;
+          padding:1.8rem;
+          transition:border-color .18s ease, background .18s ease;
+        }
+        .visibility-option input:checked + .visibility-option__panel {
+          border-color:var(--iris-gold-bright);
+          background:rgba(201,168,76,.08);
+        }
+        .visibility-option__title {
+          display:block;
+          margin:0 0 .8rem;
+          color:var(--iris-text);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.2rem;
+          text-transform:uppercase;
+        }
+        .visibility-option__copy {
+          display:block;
+          color:var(--iris-muted);
+          font-size:1.7rem;
+          line-height:1.45;
         }
         .btn {
           min-height:54px;
@@ -3462,6 +3518,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .iris-order-card__meta { grid-template-columns:1fr 1fr; }
           .iris-order-card__meta-item:nth-child(2n) { border-right:0; }
           .iris-order-card__meta-item:nth-child(n+3) { border-top:1px solid var(--iris-line); }
+          .visibility-options { grid-template-columns:1fr; }
           .footer-inner { grid-template-columns:1fr; gap:24px; }
           .footer-bottom { align-items:flex-start; flex-direction:column; padding-top:18px; padding-bottom:18px; }
         }
@@ -3543,10 +3600,44 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           </div>
           <div class="footer-bottom">
             <span>© 2026 IRIS NYC</span>
-            <span class="gold-line">24K Gold · Au 79 · Embedded in every piece</span>
+            <span class="gold-line" data-iris-account-gold-price>24K Gold · live price loading</span>
           </div>
         </footer>
       </div>
+      <script>
+        (function () {
+          var node = document.querySelector('[data-iris-account-gold-price]');
+          if (!node) return;
+          function renderGoldPrice(value) {
+            var price = Number(value);
+            if (!Number.isFinite(price) || price <= 0) return;
+            node.textContent = '24K Gold · $' + price.toFixed(2) + ' / g';
+          }
+          try {
+            var cached = window.localStorage && window.localStorage.getItem('iris_goldapi_usd_g');
+            if (cached) {
+              var parsed = JSON.parse(cached);
+              if (parsed && Date.now() - Number(parsed.ts || 0) < 900000) renderGoldPrice(parsed.price);
+            }
+          } catch (error) {}
+          fetch('/apps/iris/gold-price', { headers: { Accept: 'application/json' } })
+            .then(function (response) {
+              if (!response.ok) throw new Error('gold_price_failed');
+              return response.json();
+            })
+            .then(function (data) {
+              renderGoldPrice(data.price_usd_g);
+              try {
+                if (window.localStorage) {
+                  window.localStorage.setItem('iris_goldapi_usd_g', JSON.stringify({ price: data.price_usd_g, ts: Date.now() }));
+                }
+              } catch (error) {}
+            })
+            .catch(function () {
+              if (node.textContent.indexOf('loading') !== -1) node.textContent = '24K Gold · price unavailable';
+            });
+        })();
+      </script>
     </body>
   </html>`;
 };
@@ -3719,34 +3810,32 @@ const buildIrisAccountSettingsHtml = (params: {
     <section class="body">
       ${messageHtml}
       ${errorHtml}
-      <div class="grid">
-        <section class="card">
-          <h2>Profile</h2>
-          <p class="muted">Your IRIS identity for future marketplace tools and optional public galleries.</p>
-          <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
-            ${sessionHidden}
-            <div class="field">
-              <label>Username</label>
-              <input type="text" name="username" value="${escapeHtml(params.user.username)}" minlength="3" maxlength="24" required />
-            </div>
-            <div class="field">
-              <label>Display Name</label>
-              <input type="text" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" maxlength="80" />
-            </div>
-            <label class="check">
-              <input type="checkbox" name="profile_public" ${params.user.profile_public ? "checked" : ""} />
-              Allow a future public gallery for this profile
+      <section class="card visibility-card">
+        <h2>Visibility</h2>
+        <p class="muted">If your profile is public, your username may appear on marketplace listings when you use marketplace tools. Your email stays private.</p>
+        <form method="POST" action="/apps/iris/v3/profile${sessionQuery}">
+          ${sessionHidden}
+          <input type="hidden" name="username" value="${escapeHtml(params.user.username)}" />
+          <input type="hidden" name="display_name" value="${escapeHtml(params.user.display_name ?? "")}" />
+          <div class="visibility-options" role="radiogroup" aria-label="Profile visibility">
+            <label class="visibility-option">
+              <input type="radio" name="profile_public" value="false" ${params.user.profile_public ? "" : "checked"} />
+              <span class="visibility-option__panel">
+                <span class="visibility-option__title">Private</span>
+                <span class="visibility-option__copy">Your IRIS library stays visible only inside your account.</span>
+              </span>
             </label>
-            <button class="btn" type="submit">Save Profile</button>
-          </form>
-        </section>
-        <section class="card">
-          <h2>Account Layer</h2>
-          <p>Order history can be connected by verified email. Ownership remains anchored in the IRIS passport record.</p>
-          <div class="row"><span>Visibility</span><strong>${params.user.profile_public ? "Public-ready" : "Private"}</strong></div>
-          <div class="row"><span>Library</span><strong>${params.libraryCount}</strong></div>
-        </section>
-      </div>
+            <label class="visibility-option">
+              <input type="radio" name="profile_public" value="true" ${params.user.profile_public ? "checked" : ""} />
+              <span class="visibility-option__panel">
+                <span class="visibility-option__title">Public</span>
+                <span class="visibility-option__copy">Your username can appear with future marketplace activity.</span>
+              </span>
+            </label>
+          </div>
+          <button class="btn" type="submit">Save Visibility</button>
+        </form>
+      </section>
       ${buildIrisAccountSessionScript(params.sessionToken)}
     </section>
   `;
@@ -4144,26 +4233,49 @@ const formatIrisAccountOrderStatus = (value: string | null): string => {
     .join(" ");
 };
 
+const normalizeIrisAccountStatusKey = (value: string | null): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+const formatIrisAccountPaymentStatus = (value: string | null): string => {
+  const key = normalizeIrisAccountStatusKey(value);
+  if (!key) return "Pending";
+  if (key === "paid") return "Paid";
+  if (key === "partially_paid") return "Partially Paid";
+  if (key === "refunded") return "Refunded";
+  return formatIrisAccountOrderStatus(value);
+};
+
+const formatIrisAccountPaymentLabel = (order: IrisAccountOrderView): string => {
+  const status = formatIrisAccountPaymentStatus(order.financial_status);
+  const amount = formatIrisAccountMoneyCents(order.total_price_cents, order.currency);
+  return amount === "-" ? status : `${status} ${amount}`;
+};
+
+const formatIrisAccountFulfillmentStatus = (value: string | null): string => {
+  const key = normalizeIrisAccountStatusKey(value);
+  if (!key || key === "unfulfilled" || key === "open" || key === "pending") return "Preparing";
+  if (key === "in_transit" || key === "out_for_delivery") return "In Transit";
+  if (key === "fulfilled" || key === "delivered" || key === "success") return "Delivered";
+  return formatIrisAccountOrderStatus(value);
+};
+
+const formatIrisAccountOrderArtworkStatus = (item: IrisAccountOrderArtworkView): string => {
+  if (item.transfer_pending) return "Pending Transfer";
+  if (item.status === "activated") {
+    const date = formatIrisAccountShortDate(item.activated_at);
+    return date === "-" ? "Activated" : `Activated ${date}`;
+  }
+  return "Not Activated";
+};
+
 const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken?: string): string => {
   const orderTitle = order.order_name ?? (order.order_number ? `#${order.order_number}` : order.shopify_order_id) ?? "Order";
   const orderDateLabel = formatIrisAccountLongDate(order.order_date);
   const totalLabel = formatIrisAccountMoneyCents(order.total_price_cents, order.currency);
   const sourceLabel = order.source === "shopify" ? "Shopify Order" : "IRIS Assignment";
-  const linesHtml = order.items.length
-    ? order.items
-        .map((item) => {
-          const title = item.title ?? "IRIS";
-          const variant = item.variant_title ? ` · ${item.variant_title}` : "";
-          const price = formatIrisAccountMoneyCents(item.price_cents, order.currency);
-          return `
-            <div class="iris-order-line">
-              <span>${escapeHtml(title)}${escapeHtml(variant)} × ${escapeHtml(String(item.quantity))}</span>
-              <strong>${escapeHtml(price)}</strong>
-            </div>
-          `;
-        })
-        .join("")
-    : `<p class="muted">Line items are waiting for Shopify sync.</p>`;
   const artworksHtml = order.artworks.length
     ? order.artworks
         .map((item) => {
@@ -4174,20 +4286,23 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
           const action =
             item.status === "activated"
               ? `<a class="iris-order-artwork__link" href="${escapeHtml(passportHref)}">View Passport</a>`
-              : `<span class="iris-order-artwork__link">${escapeHtml(formatIrisAccountOrderStatus(item.status))}</span>`;
+              : `<span class="iris-order-artwork__link">Not Activated</span>`;
+          const rarity = item.rarity_code || "-";
+          const weight = formatIrisAccountWeight(item.weight_grams);
+          const status = formatIrisAccountOrderArtworkStatus(item);
           return `
             <div class="iris-order-artwork">
               ${thumb}
               <div>
                 <div class="iris-order-artwork__name">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
-                <div class="iris-order-artwork__meta">${escapeHtml(item.rarity_code || formatIrisAccountOrderStatus(item.status))} · Activated ${escapeHtml(formatIrisAccountShortDate(item.activated_at))}</div>
+                <div class="iris-order-artwork__meta">Rarity: ${escapeHtml(rarity)} · Weight: ${escapeHtml(weight)} · Status: ${escapeHtml(status)}</div>
               </div>
               ${action}
             </div>
           `;
         })
         .join("")
-    : `<p class="muted">No IRIS has been linked to this order yet.</p>`;
+    : `<p class="muted">No IRIS linked yet.</p>`;
 
   return `
     <article class="iris-order-card">
@@ -4205,11 +4320,11 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
         </div>
         <div class="iris-order-card__meta-item">
           <p class="iris-order-card__label">Payment</p>
-          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountOrderStatus(order.financial_status))}</p>
+          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountPaymentLabel(order))}</p>
         </div>
         <div class="iris-order-card__meta-item">
           <p class="iris-order-card__label">Fulfillment</p>
-          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountOrderStatus(order.fulfillment_status))}</p>
+          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountFulfillmentStatus(order.fulfillment_status))}</p>
         </div>
         <div class="iris-order-card__meta-item">
           <p class="iris-order-card__label">IRIS Linked</p>
@@ -4218,10 +4333,6 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
       </div>
       <div class="iris-order-card__section">
         <p class="iris-order-card__section-title">Items</p>
-        <div class="iris-order-lines">${linesHtml}</div>
-      </div>
-      <div class="iris-order-card__section">
-        <p class="iris-order-card__section-title">IRIS Records</p>
         <div class="iris-order-artworks">${artworksHtml}</div>
       </div>
     </article>
@@ -4296,13 +4407,31 @@ const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderVie
       assignedEventByIrisId.set(event.iris_id, event);
     }
   }
+  let pendingTransferIrisIds = new Set<string>();
+  if (assignedIrisIds.length) {
+    try {
+      const pendingTransfers = await prisma.ownershipTransfer.findMany({
+        where: {
+          iris_id: { in: assignedIrisIds },
+          status: "pending",
+          expires_at: { gt: new Date() }
+        },
+        select: { iris_id: true }
+      });
+      pendingTransferIrisIds = new Set(pendingTransfers.map((transfer) => transfer.iris_id));
+    } catch {
+      pendingTransferIrisIds = new Set();
+    }
+  }
   const artworkViews = assignedArtworks.map((item) => ({
     iris_id: item.iris_id,
     display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
     image_url: item.image_url,
     rarity_code: item.rarity_code,
+    weight_grams: item.weight_grams,
     status: item.status,
-    activated_at: item.activated_at
+    activated_at: item.activated_at,
+    transfer_pending: pendingTransferIrisIds.has(item.iris_id)
   }));
   const artworkByOrderKey = new Map<string, IrisAccountOrderArtworkView[]>();
   for (const item of assignedArtworks) {
@@ -4409,8 +4538,10 @@ const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderVie
         display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
         image_url: item.image_url,
         rarity_code: item.rarity_code,
+        weight_grams: item.weight_grams,
         status: item.status,
-        activated_at: item.activated_at
+        activated_at: item.activated_at,
+        transfer_pending: pendingTransferIrisIds.has(item.iris_id)
       }))
     });
   }
@@ -4543,6 +4674,22 @@ const toPrismaJson = (value: unknown): any => {
 const extractShopifyOrderLineItems = (order: Record<string, unknown>): Array<Record<string, unknown>> =>
   Array.isArray(order.line_items) ? (order.line_items as Array<Record<string, unknown>>) : [];
 
+const extractShopifyFulfillmentStatus = (order: Record<string, unknown>): string | null => {
+  const fulfillments = Array.isArray(order.fulfillments) ? (order.fulfillments as Array<Record<string, unknown>>) : [];
+  for (const fulfillment of fulfillments) {
+    const shipmentStatus = readShopifyString(fulfillment.shipment_status);
+    if (shipmentStatus) return shipmentStatus;
+  }
+  const direct = readShopifyString(order.fulfillment_status);
+  if (direct) return direct;
+
+  for (const fulfillment of fulfillments) {
+    const status = readShopifyString(fulfillment.status);
+    if (status) return status;
+  }
+  return null;
+};
+
 const saveShopifyOrderSnapshot = async (order: Record<string, unknown>) => {
   const shopifyOrderId =
     readShopifyString(order.id) ?? readShopifyString(order.admin_graphql_api_id) ?? readShopifyString(order.name);
@@ -4551,6 +4698,7 @@ const saveShopifyOrderSnapshot = async (order: Record<string, unknown>) => {
   }
 
   const currency = readShopifyString(order.currency) ?? "USD";
+  const fulfillmentStatus = extractShopifyFulfillmentStatus(order);
   const lineItems = extractShopifyOrderLineItems(order).map((item) => {
     const rawQuantity = Number(item.quantity ?? 1);
     return {
@@ -4576,7 +4724,7 @@ const saveShopifyOrderSnapshot = async (order: Record<string, unknown>) => {
       order_number: readShopifyString(order.order_number),
       email: extractCustomerEmail(order),
       financial_status: readShopifyString(order.financial_status),
-      fulfillment_status: readShopifyString(order.fulfillment_status),
+      fulfillment_status: fulfillmentStatus,
       currency,
       subtotal_price_cents: parseShopifyMoneyCents(order.current_subtotal_price ?? order.subtotal_price),
       total_price_cents: parseShopifyMoneyCents(order.current_total_price ?? order.total_price),
@@ -4592,7 +4740,7 @@ const saveShopifyOrderSnapshot = async (order: Record<string, unknown>) => {
       order_number: readShopifyString(order.order_number),
       email: extractCustomerEmail(order),
       financial_status: readShopifyString(order.financial_status),
-      fulfillment_status: readShopifyString(order.fulfillment_status),
+      fulfillment_status: fulfillmentStatus,
       currency,
       subtotal_price_cents: parseShopifyMoneyCents(order.current_subtotal_price ?? order.subtotal_price),
       total_price_cents: parseShopifyMoneyCents(order.current_total_price ?? order.total_price),
@@ -6390,7 +6538,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const username = normalizeUsername(body.username);
     const displayName = readSingleValue(body.display_name).trim().slice(0, 80) || null;
-    const profilePublic = Object.prototype.hasOwnProperty.call(body, "profile_public");
+    const profilePublicValue = readSingleValue(body.profile_public).trim().toLowerCase();
+    const profilePublic =
+      profilePublicValue === "true" || profilePublicValue === "public" || profilePublicValue === "on";
 
     if (!isValidUsername(username)) {
       await renderIrisAccountSettings(reply, auth.user, {
