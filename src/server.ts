@@ -2111,6 +2111,26 @@ const formatIrisAccountMoneyCents = (value: number | null, currency?: string | n
   }
 };
 
+const formatIrisAccountOrderMoneyCents = (value: number | null, currency?: string | null): string => {
+  if (value == null || !Number.isFinite(value)) return "-";
+  const safeCurrency = currency?.trim() || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: safeCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Math.max(0, value) / 100);
+  } catch {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Math.max(0, value) / 100);
+  }
+};
+
 const buildIrisAccountHref = (
   path: string,
   sessionToken?: string,
@@ -4271,26 +4291,39 @@ const getIrisAccountOrderTotalCents = (order: IrisAccountOrderView): number | nu
   if (order.total_price_cents != null && Number.isFinite(order.total_price_cents)) {
     return order.total_price_cents;
   }
+  let hasLinePrice = false;
   const lineTotal = order.items.reduce((sum, item) => {
     const price = Number(item.price_cents);
     const quantity = Number(item.quantity);
     if (!Number.isFinite(price) || !Number.isFinite(quantity)) return sum;
+    hasLinePrice = true;
     return sum + Math.max(0, price) * Math.max(1, Math.floor(quantity));
   }, 0);
-  return lineTotal > 0 ? lineTotal : null;
+  return hasLinePrice ? lineTotal : null;
 };
 
 const formatIrisAccountPaymentLabel = (order: IrisAccountOrderView): string => {
   const status = formatIrisAccountPaymentStatus(order.financial_status);
-  const amount = formatIrisAccountMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
+  const amount = formatIrisAccountOrderMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
   return amount === "-" ? status : `${status} ${amount}`;
 };
 
 const formatIrisAccountFulfillmentStatus = (value: string | null): string => {
   const key = normalizeIrisAccountStatusKey(value);
-  if (!key || key === "unfulfilled" || key === "open" || key === "pending") return "Preparing";
-  if (key === "in_transit" || key === "out_for_delivery") return "In Transit";
-  if (key === "fulfilled" || key === "delivered" || key === "success") return "Delivered";
+  if (!key || key === "unfulfilled" || key === "open" || key === "pending" || key === "pending_fulfillment") {
+    return "Preparing";
+  }
+  if (
+    key === "in_transit" ||
+    key === "out_for_delivery" ||
+    key === "confirmed" ||
+    key === "label_printed" ||
+    key === "label_purchased" ||
+    key === "partially_fulfilled"
+  ) {
+    return "In Transit";
+  }
+  if (key === "fulfilled" || key === "delivered" || key === "success" || key === "marked_as_fulfilled") return "Delivered";
   return formatIrisAccountOrderStatus(value);
 };
 
@@ -4306,7 +4339,7 @@ const formatIrisAccountOrderArtworkStatus = (item: IrisAccountOrderArtworkView):
 const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken?: string): string => {
   const orderTitle = order.order_name ?? (order.order_number ? `#${order.order_number}` : order.shopify_order_id) ?? "Order";
   const orderDateLabel = formatIrisAccountLongDate(order.order_date);
-  const totalLabel = formatIrisAccountMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
+  const totalLabel = formatIrisAccountOrderMoneyCents(getIrisAccountOrderTotalCents(order), order.currency);
   const sourceLabel = order.source === "shopify" ? "Shopify Order" : "IRIS Assignment";
   const artworksHtml = order.artworks.length
     ? order.artworks
@@ -4430,6 +4463,93 @@ const parseIrisAccountShopifyFallbackMoneyCents = (value: unknown): number | nul
   return Number.isFinite(raw) ? Math.round(raw * 100) : null;
 };
 
+const readIrisAccountGraphqlMoneyCents = (value: unknown): number | null => {
+  const moneySet = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const shopMoney = moneySet.shopMoney && typeof moneySet.shopMoney === "object"
+    ? (moneySet.shopMoney as Record<string, unknown>)
+    : {};
+  return parseIrisAccountShopifyFallbackMoneyCents(shopMoney.amount);
+};
+
+const readIrisAccountGraphqlCurrency = (value: unknown): string | null => {
+  const moneySet = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const shopMoney = moneySet.shopMoney && typeof moneySet.shopMoney === "object"
+    ? (moneySet.shopMoney as Record<string, unknown>)
+    : {};
+  return readIrisAccountShopifyFallbackString(shopMoney.currencyCode);
+};
+
+const extractIrisAccountGraphqlFulfillmentStatus = (order: Record<string, unknown>): string | null => {
+  const fulfillments = Array.isArray(order.fulfillments) ? (order.fulfillments as Array<Record<string, unknown>>) : [];
+  const preferredKeys = new Set(["delivered", "in_transit", "out_for_delivery"]);
+  for (const fulfillment of fulfillments) {
+    const status = readIrisAccountShopifyFallbackString(fulfillment.displayStatus) ??
+      readIrisAccountShopifyFallbackString(fulfillment.status);
+    if (preferredKeys.has(normalizeIrisAccountStatusKey(status))) return status;
+  }
+  for (const fulfillment of fulfillments) {
+    const status = readIrisAccountShopifyFallbackString(fulfillment.displayStatus) ??
+      readIrisAccountShopifyFallbackString(fulfillment.status);
+    if (status) return status;
+  }
+  return readIrisAccountShopifyFallbackString(order.displayFulfillmentStatus);
+};
+
+const hasSpecificIrisAccountFulfillmentStatus = (value: string | null): boolean => {
+  const key = normalizeIrisAccountStatusKey(value);
+  return key === "delivered" || key === "in_transit" || key === "out_for_delivery";
+};
+
+const mergeIrisAccountShopifyOrderFallbacks = (
+  primary: IrisAccountShopifyOrderFallback | null,
+  secondary: IrisAccountShopifyOrderFallback | null
+): IrisAccountShopifyOrderFallback | null => {
+  if (!primary) return secondary;
+  if (!secondary) return primary;
+  return {
+    shopify_order_id: primary.shopify_order_id ?? secondary.shopify_order_id,
+    order_name: primary.order_name ?? secondary.order_name,
+    order_number: primary.order_number ?? secondary.order_number,
+    order_date: primary.order_date ?? secondary.order_date,
+    email: primary.email ?? secondary.email,
+    financial_status: primary.financial_status ?? secondary.financial_status,
+    fulfillment_status: hasSpecificIrisAccountFulfillmentStatus(secondary.fulfillment_status)
+      ? secondary.fulfillment_status
+      : primary.fulfillment_status ?? secondary.fulfillment_status,
+    currency: primary.currency ?? secondary.currency,
+    total_price_cents: primary.total_price_cents ?? secondary.total_price_cents,
+    items: primary.items.length ? primary.items : secondary.items
+  };
+};
+
+const extractIrisAccountShopifyGraphqlFallbackOrder = (
+  order: Record<string, unknown>
+): IrisAccountShopifyOrderFallback | null => {
+  const shopifyOrderId =
+    readIrisAccountShopifyFallbackString(order.legacyResourceId) ??
+    readIrisAccountShopifyFallbackString(order.id) ??
+    readIrisAccountShopifyFallbackString(order.name);
+  if (!shopifyOrderId) return null;
+
+  const totalMoney = order.currentTotalPriceSet ?? order.totalPriceSet;
+  const currency = readIrisAccountGraphqlCurrency(totalMoney) ??
+    readIrisAccountShopifyFallbackString(order.currencyCode) ??
+    "USD";
+  const orderName = readIrisAccountShopifyFallbackString(order.name);
+  return {
+    shopify_order_id: shopifyOrderId,
+    order_name: orderName,
+    order_number: orderName?.replace(/^#/, "") ?? null,
+    order_date: parseDateValue(order.createdAt) ?? parseDateValue(order.processedAt) ?? parseDateValue(order.updatedAt),
+    email: readIrisAccountShopifyFallbackString(order.email),
+    financial_status: readIrisAccountShopifyFallbackString(order.displayFinancialStatus),
+    fulfillment_status: extractIrisAccountGraphqlFulfillmentStatus(order),
+    currency,
+    total_price_cents: readIrisAccountGraphqlMoneyCents(totalMoney),
+    items: []
+  };
+};
+
 const extractIrisAccountShopifyFallbackOrder = (
   order: Record<string, unknown>
 ): IrisAccountShopifyOrderFallback | null => {
@@ -4463,6 +4583,85 @@ const extractIrisAccountShopifyFallbackOrder = (
   };
 };
 
+const loadIrisAccountShopifyGraphqlOrderFallback = async (
+  lookupName: string
+): Promise<IrisAccountShopifyOrderFallback | null> => {
+  const q = `
+    query IrisAccountOrderFallback($query: String!) {
+      orders(first: 1, query: $query, sortKey: CREATED_AT, reverse: true) {
+        edges {
+          node {
+            id
+            legacyResourceId
+            name
+            email
+            displayFinancialStatus
+            displayFulfillmentStatus
+            currencyCode
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
+            totalPriceSet { shopMoney { amount currencyCode } }
+            createdAt
+            processedAt
+            updatedAt
+            fulfillments(first: 10) {
+              status
+              displayStatus
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await shopifyGraphQL(q, { query: `name:${lookupName}` });
+  const node = data?.orders?.edges?.[0]?.node;
+  if (!node) return null;
+  const fallback = extractIrisAccountShopifyGraphqlFallbackOrder(node);
+  if (!fallback) return null;
+  return normalizeOrderLookupKey(fallback.order_name) === normalizeOrderLookupKey(lookupName) ? fallback : null;
+};
+
+const loadIrisAccountShopifyRestOrderFallback = async (
+  lookupName: string
+): Promise<IrisAccountShopifyOrderFallback | null> => {
+  const url = new URL(`https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/orders.json`);
+  url.searchParams.set("status", "any");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("name", lookupName);
+  url.searchParams.set(
+    "fields",
+    [
+      "id",
+      "admin_graphql_api_id",
+      "name",
+      "order_number",
+      "email",
+      "contact_email",
+      "customer",
+      "financial_status",
+      "fulfillment_status",
+      "currency",
+      "current_total_price",
+      "total_price",
+      "processed_at",
+      "created_at",
+      "updated_at",
+      "line_items",
+      "fulfillments"
+    ].join(",")
+  );
+  const res = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": env.shopifyAdminToken,
+      Accept: "application/json"
+    }
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { orders?: Array<Record<string, unknown>> };
+  const fallback = data.orders?.[0] ? extractIrisAccountShopifyFallbackOrder(data.orders[0]) : null;
+  if (!fallback) return null;
+  return normalizeOrderLookupKey(fallback.order_name) === normalizeOrderLookupKey(lookupName) ? fallback : null;
+};
+
 const loadIrisAccountShopifyOrderFallbacksByName = async (
   orderNames: string[]
 ): Promise<Map<string, IrisAccountShopifyOrderFallback>> => {
@@ -4476,55 +4675,31 @@ const loadIrisAccountShopifyOrderFallbacksByName = async (
   ).slice(0, 25);
 
   for (const orderName of uniqueNames) {
+    const lookupName = orderName.startsWith("#") ? orderName : `#${orderName}`;
+    let graphqlFallback: IrisAccountShopifyOrderFallback | null = null;
     try {
-      const lookupName = orderName.startsWith("#") ? orderName : `#${orderName}`;
-      const url = new URL(`https://${env.shopifyShopDomain}/admin/api/${env.shopifyApiVersion}/orders.json`);
-      url.searchParams.set("status", "any");
-      url.searchParams.set("limit", "1");
-      url.searchParams.set("name", lookupName);
-      url.searchParams.set(
-        "fields",
-        [
-          "id",
-          "admin_graphql_api_id",
-          "name",
-          "order_number",
-          "email",
-          "contact_email",
-          "customer",
-          "financial_status",
-          "fulfillment_status",
-          "currency",
-          "current_total_price",
-          "total_price",
-          "processed_at",
-          "created_at",
-          "updated_at",
-          "line_items",
-          "fulfillments"
-        ].join(",")
-      );
-      const res = await fetch(url, {
-        headers: {
-          "X-Shopify-Access-Token": env.shopifyAdminToken,
-          Accept: "application/json"
-        }
-      });
-      if (!res.ok) continue;
-      const data = (await res.json()) as { orders?: Array<Record<string, unknown>> };
-      const fallback = data.orders?.[0] ? extractIrisAccountShopifyFallbackOrder(data.orders[0]) : null;
-      if (!fallback) continue;
-      const keys = collectOrderLookupKeys({
-        shopify_order_id: fallback.shopify_order_id,
-        order_name: fallback.order_name,
-        order_number: fallback.order_number
-      });
-      keys.push(normalizeOrderLookupKey(orderName), normalizeOrderLookupKey(lookupName));
-      for (const key of keys.filter(Boolean)) {
-        fallbacks.set(key, fallback);
-      }
+      graphqlFallback = await loadIrisAccountShopifyGraphqlOrderFallback(lookupName);
     } catch {
-      continue;
+      graphqlFallback = null;
+    }
+    let restFallback: IrisAccountShopifyOrderFallback | null = null;
+    if (!graphqlFallback || !hasSpecificIrisAccountFulfillmentStatus(graphqlFallback.fulfillment_status)) {
+      try {
+        restFallback = await loadIrisAccountShopifyRestOrderFallback(lookupName);
+      } catch {
+        restFallback = null;
+      }
+    }
+    const fallback = mergeIrisAccountShopifyOrderFallbacks(graphqlFallback, restFallback);
+    if (!fallback) continue;
+    const keys = collectOrderLookupKeys({
+      shopify_order_id: fallback.shopify_order_id,
+      order_name: fallback.order_name,
+      order_number: fallback.order_number
+    });
+    keys.push(normalizeOrderLookupKey(orderName), normalizeOrderLookupKey(lookupName));
+    for (const key of keys.filter(Boolean)) {
+      fallbacks.set(key, fallback);
     }
   }
 
@@ -4643,24 +4818,33 @@ const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderVie
     persistedOrders = [];
   }
 
+  const shopifyFallbacks = await loadIrisAccountShopifyOrderFallbacksByName([
+    ...persistedOrders.flatMap((order) => [
+      order.order_name,
+      order.order_number ? `#${order.order_number}` : null
+    ]),
+    ...assignedArtworks.map((item) => item.assigned_order_id)
+  ].filter((value): value is string => Boolean(value)));
+
   const claimedLegacyKeys = new Set<string>();
   const orders = persistedOrders.map<IrisAccountOrderView>((order) => {
     const lookupKeys = collectOrderLookupKeys(order);
     const artworks = lookupKeys.flatMap((key) => artworkByOrderKey.get(key) ?? []);
+    const shopifyFallback = lookupKeys.map((key) => shopifyFallbacks.get(key)).find(Boolean);
     lookupKeys.forEach((key) => claimedLegacyKeys.add(key));
     return {
       key: `shopify:${order.id}`,
       source: "shopify",
-      shopify_order_id: order.shopify_order_id,
-      order_name: order.order_name,
-      order_number: order.order_number,
-      order_date: order.created_at_shopify ?? order.processed_at ?? order.updated_at_shopify,
-      email: order.email,
-      financial_status: order.financial_status,
-      fulfillment_status: order.fulfillment_status,
-      currency: order.currency,
-      total_price_cents: order.total_price_cents,
-      items: order.items,
+      shopify_order_id: shopifyFallback?.shopify_order_id ?? order.shopify_order_id,
+      order_name: shopifyFallback?.order_name ?? order.order_name,
+      order_number: shopifyFallback?.order_number ?? order.order_number,
+      order_date: shopifyFallback?.order_date ?? order.created_at_shopify ?? order.processed_at ?? order.updated_at_shopify,
+      email: shopifyFallback?.email ?? order.email,
+      financial_status: shopifyFallback?.financial_status ?? order.financial_status,
+      fulfillment_status: shopifyFallback?.fulfillment_status ?? order.fulfillment_status,
+      currency: shopifyFallback?.currency ?? order.currency,
+      total_price_cents: shopifyFallback?.total_price_cents ?? order.total_price_cents,
+      items: shopifyFallback?.items.length ? shopifyFallback.items : order.items,
       artworks: Array.from(new Map(artworks.map((item) => [item.iris_id, item])).values())
     };
   });
@@ -4673,15 +4857,10 @@ const loadIrisAccountOrders = async (email: string): Promise<IrisAccountOrderVie
     group.push(item);
     legacyGroups.set(key, group);
   }
-  const legacyShopifyFallbacks = await loadIrisAccountShopifyOrderFallbacksByName(
-    Array.from(legacyGroups.values())
-      .map((group) => group[0]?.assigned_order_id)
-      .filter((value): value is string => Boolean(value))
-  );
   for (const [key, group] of legacyGroups) {
     const first = group[0];
     const firstEvent = first ? assignedEventByIrisId.get(first.iris_id) : null;
-    const shopifyFallback = legacyShopifyFallbacks.get(key);
+    const shopifyFallback = shopifyFallbacks.get(key);
     const orderDate = firstEvent ? extractAssignedEventOrderDate(firstEvent) : first?.updated_at ?? null;
     orders.push({
       key: `legacy:${key}`,
