@@ -8130,6 +8130,152 @@ export const createServer = async (): Promise<FastifyInstance> => {
       );
   });
 
+  app.get("/admin/order-debug/:orderNumber", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+    const params = req.params as { orderNumber: string };
+    const rawOrderNumber = String(params.orderNumber || "").trim();
+    if (!rawOrderNumber) {
+      sendJson(reply, 400, { error: "missing_order_number" });
+      return;
+    }
+
+    const lookupName = rawOrderNumber.startsWith("#") ? rawOrderNumber : `#${rawOrderNumber}`;
+    const searchName = normalizeIrisAccountOrderNameKey(lookupName);
+    const lookupVariants = Array.from(
+      new Set([rawOrderNumber, lookupName, searchName, `#${searchName}`].filter(Boolean))
+    );
+
+    const localOrders = await prisma.shopifyOrder.findMany({
+      where: {
+        OR: [
+          { shopify_order_id: { in: lookupVariants } },
+          { order_name: { in: lookupVariants } },
+          { order_number: { in: lookupVariants } }
+        ]
+      },
+      select: {
+        id: true,
+        shopify_order_id: true,
+        order_name: true,
+        order_number: true,
+        email: true,
+        financial_status: true,
+        fulfillment_status: true,
+        currency: true,
+        total_price_cents: true,
+        processed_at: true,
+        created_at_shopify: true,
+        updated_at_shopify: true,
+        updated_at: true,
+        items: {
+          select: {
+            title: true,
+            quantity: true,
+            price_cents: true
+          }
+        }
+      }
+    });
+
+    const artworks = await prisma.artwork.findMany({
+      where: { assigned_order_id: { in: lookupVariants } },
+      select: {
+        iris_id: true,
+        status: true,
+        assigned_order_id: true,
+        assigned_customer_email: true,
+        owner_email: true,
+        activated_at: true
+      },
+      orderBy: { iris_id: "asc" },
+      take: 50
+    });
+
+    const graphqlProbes: Array<Record<string, unknown>> = [];
+    const graphqlQueries = Array.from(new Set([searchName, lookupName, `"${searchName}"`].filter(Boolean)));
+    for (const queryName of graphqlQueries) {
+      try {
+        const fallback = await loadIrisAccountShopifyGraphqlOrderFallback(queryName, lookupName);
+        graphqlProbes.push({
+          query: `name:${queryName}`,
+          fallback,
+          displayed_fulfillment: fallback ? formatIrisAccountFulfillmentStatus(fallback.fulfillment_status) : null
+        });
+      } catch (error) {
+        graphqlProbes.push({
+          query: `name:${queryName}`,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const restProbes: Array<Record<string, unknown>> = [];
+    for (const restName of Array.from(new Set([searchName, lookupName].filter(Boolean)))) {
+      try {
+        const fallback = await loadIrisAccountShopifyRestOrderFallback(restName, lookupName);
+        restProbes.push({
+          name: restName,
+          fallback,
+          displayed_fulfillment: fallback ? formatIrisAccountFulfillmentStatus(fallback.fulfillment_status) : null
+        });
+      } catch (error) {
+        restProbes.push({
+          name: restName,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    let combinedFallback: IrisAccountShopifyOrderFallback | null = null;
+    try {
+      const fallbackMap = await loadIrisAccountShopifyOrderFallbacksByName([rawOrderNumber]);
+      combinedFallback = fallbackMap.get(normalizeOrderLookupKey(rawOrderNumber)) ??
+        fallbackMap.get(normalizeIrisAccountOrderNameKey(rawOrderNumber)) ??
+        fallbackMap.get(normalizeOrderLookupKey(lookupName)) ??
+        null;
+    } catch {
+      combinedFallback = null;
+    }
+
+    sendJson(reply, 200, {
+      order_number: rawOrderNumber,
+      lookup_name: lookupName,
+      search_name: searchName,
+      lookup_variants: lookupVariants,
+      local_orders: localOrders.map((order) => ({
+        ...order,
+        displayed_fulfillment: formatIrisAccountFulfillmentStatus(order.fulfillment_status),
+        displayed_payment: formatIrisAccountPaymentLabel({
+          key: order.id,
+          source: "shopify",
+          shopify_order_id: order.shopify_order_id,
+          order_name: order.order_name,
+          order_number: order.order_number,
+          order_date: order.created_at_shopify ?? order.processed_at ?? order.updated_at_shopify,
+          email: order.email,
+          financial_status: order.financial_status,
+          fulfillment_status: order.fulfillment_status,
+          currency: order.currency,
+          total_price_cents: order.total_price_cents,
+          items: order.items.map((item) => ({
+            title: item.title,
+            variant_title: null,
+            quantity: item.quantity,
+            price_cents: item.price_cents
+          })),
+          artworks: []
+        })
+      })),
+      assigned_artworks: artworks,
+      graphql_probes: graphqlProbes,
+      rest_probes: restProbes,
+      combined_fallback: combinedFallback,
+      combined_displayed_fulfillment: combinedFallback
+        ? formatIrisAccountFulfillmentStatus(combinedFallback.fulfillment_status)
+        : null
+    });
+  });
+
   app.get("/admin/iris/:irisId", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
     const params = req.params as { irisId: string };
