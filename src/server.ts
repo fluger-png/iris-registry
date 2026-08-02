@@ -6155,7 +6155,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   const handleActivateVerify = async (req: any, reply: any) => {
-    const body = req.body as { iris_id?: string; pin?: string; email?: string; token?: string };
+    const body = req.body as {
+      iris_id?: string;
+      pin?: string;
+      email?: string;
+      token?: string;
+      iris_account_session?: string;
+      session?: string;
+    };
     let irisId = body?.iris_id?.toUpperCase().trim() ?? "";
     let token = body?.token?.trim() ?? "";
     const tokenMatch = irisId.match(/^IRIS-\d{4}-(.+)$/i);
@@ -6165,9 +6172,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
     const pin = body?.pin?.trim();
     const submittedEmail = normalizeEmail(body?.email);
+    const submittedSessionToken = readSingleValue(body?.iris_account_session || body?.session).trim();
     let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
     try {
-      irisAccountAuth = await getIrisAccountAuth(req);
+      irisAccountAuth = await getIrisAccountAuth(req, submittedSessionToken);
     } catch (error) {
       req.log.warn({ err: error }, "IRIS Account auth check skipped during activation");
     }
@@ -7304,12 +7312,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
       token?: string;
       email?: string;
       transfer_code?: string;
+      iris_account_session?: string;
+      session?: string;
     };
     const rawIrisId = readSingleValue(body.iris_id);
     const token = readSingleValue(body.token).trim();
     let irisId = rawIrisId ? normalizeIrisIdInput(rawIrisId) : "";
     const email = normalizeEmail(body.email);
     const transferCode = normalizeTransferCode(readSingleValue(body.transfer_code));
+    const submittedSessionToken = readSingleValue(body.iris_account_session || body.session).trim();
 
     if ((!irisId && !token) || !email || !transferCode) {
       sendJson(reply, 400, { error: "missing_required_fields" });
@@ -7323,7 +7334,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     try {
       let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
       try {
-        irisAccountAuth = await getIrisAccountAuth(req);
+        irisAccountAuth = await getIrisAccountAuth(req, submittedSessionToken);
       } catch (error) {
         req.log.warn({ err: error }, "IRIS Account auth check skipped during transfer claim");
       }
