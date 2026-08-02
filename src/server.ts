@@ -3255,7 +3255,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .iris-order-card__meta {
           display:grid;
-          grid-template-columns:repeat(4, minmax(0, 1fr));
+          grid-template-columns:repeat(3, minmax(0, 1fr));
           border-top:1px solid var(--iris-line);
           border-bottom:1px solid var(--iris-line);
         }
@@ -4390,10 +4390,6 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
         <div class="iris-order-card__meta-item">
           <p class="iris-order-card__label">Payment</p>
           <p class="iris-order-card__value">${escapeHtml(formatIrisAccountPaymentLabel(order))}</p>
-        </div>
-        <div class="iris-order-card__meta-item">
-          <p class="iris-order-card__label">Fulfillment</p>
-          <p class="iris-order-card__value">${escapeHtml(formatIrisAccountFulfillmentStatus(order.fulfillment_status))}</p>
         </div>
         <div class="iris-order-card__meta-item">
           <p class="iris-order-card__label">IRIS Linked</p>
