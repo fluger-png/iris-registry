@@ -7311,6 +7311,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     try {
+      let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
+      try {
+        irisAccountAuth = await getIrisAccountAuth(req);
+      } catch (error) {
+        req.log.warn({ err: error }, "IRIS Account auth check skipped during transfer claim");
+      }
+
       let artwork = irisId
         ? await prisma.artwork.findUnique({
             where: { iris_id: irisId },
@@ -7471,6 +7478,40 @@ export const createServer = async (): Promise<FastifyInstance> => {
         });
       });
 
+      let irisAccount: Record<string, unknown> = {
+        authenticated: false,
+        email,
+        account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`
+      };
+      try {
+        if (irisAccountAuth && irisAccountAuth.user.email === email) {
+          irisAccount = {
+            authenticated: true,
+            email,
+            account_url: "/apps/iris/v3/account"
+          };
+        } else {
+          const loginCode = await startIrisAccountLoginCode(email, { reuseActiveCode: true });
+          irisAccount = {
+            authenticated: false,
+            email,
+            account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`,
+            code_status: loginCode.status,
+            ...(loginCode.status === "send_failed"
+              ? { code_error: loginCode.reason }
+              : { verify_url: loginCode.verifyUrl })
+          };
+        }
+      } catch (error) {
+        req.log.warn({ err: error, email }, "IRIS Account login code could not be started after transfer claim");
+        irisAccount = {
+          authenticated: false,
+          email,
+          account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`,
+          code_status: "send_failed"
+        };
+      }
+
       sendJson(reply, 200, {
         status: "ok",
         iris_id: artwork.iris_id,
@@ -7482,7 +7523,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         passport_url: `/pages/iris-passport?iris_id=${encodeURIComponent(artwork.iris_id)}&token=${encodeURIComponent(
           proofToken
         )}`,
-        collection: artwork.collection
+        collection: artwork.collection,
+        iris_account: irisAccount
       });
     } catch (error) {
       req.log.error({ err: error, irisId }, "Transfer claim failed");
