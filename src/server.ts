@@ -771,6 +771,7 @@ const startIrisAccountLoginCode = async (
       where: {
         email: normalizedEmail,
         consumed_at: null,
+        attempts: { lt: IRIS_LOGIN_CODE_MAX_ATTEMPTS },
         expires_at: { gt: now }
       },
       orderBy: { created_at: "desc" },
@@ -809,6 +810,16 @@ const startIrisAccountLoginCode = async (
     expiresAt
   });
   if (!emailResult.sent) {
+    await prisma.irisAccountLoginCode.updateMany({
+      where: {
+        email: normalizedEmail,
+        code_hash: hashLoginCode(normalizedEmail, code),
+        consumed_at: null
+      },
+      data: {
+        consumed_at: new Date()
+      }
+    });
     return {
       status: "send_failed",
       email: normalizedEmail,
@@ -6321,9 +6332,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
             authenticated: false,
             email,
             account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`,
-            verify_url: loginCode.verifyUrl,
             code_status: loginCode.status,
-            ...(loginCode.status === "send_failed" ? { code_error: loginCode.reason } : {})
+            ...(loginCode.status === "send_failed"
+              ? { code_error: loginCode.reason }
+              : { verify_url: loginCode.verifyUrl })
           };
         }
       } catch (error) {
