@@ -3147,8 +3147,10 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           color:var(--v2-gold);
           text-decoration:none;
           text-transform:uppercase;
-          letter-spacing:.24rem;
-          font-size:1.1rem;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          letter-spacing:0;
+          font-size:1.4rem;
+          font-weight:700;
           cursor:pointer;
           transition:all .25s ease;
         }
