@@ -3771,6 +3771,11 @@ const buildIrisAccountLoginHtml = (options?: { error?: string; success?: string;
       </form>
       <p class="mini">Access is currently available by direct invite.</p>
     </section>
+    <script>
+      try {
+        window.localStorage && window.localStorage.removeItem("iris_account_session");
+      } catch (error) {}
+    </script>
   `;
   return buildIrisAccountShell("IRIS Account", body);
 };
@@ -3807,6 +3812,9 @@ const buildIrisAccountSessionScript = (sessionToken?: string): string =>
   sessionToken
     ? `<script>
         document.cookie = "${IRIS_ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(sessionToken)}; Path=/; Max-Age=${IRIS_ACCOUNT_SESSION_DAYS * 24 * 60 * 60}; SameSite=Lax; Secure";
+        try {
+          window.localStorage && window.localStorage.setItem("iris_account_session", "${encodeURIComponent(sessionToken)}");
+        } catch (error) {}
       </script>`
     : "";
 
