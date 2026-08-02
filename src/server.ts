@@ -751,6 +751,75 @@ const sendIrisAccountLoginCodeEmailBestEffort = async (params: {
   return { sent: true, reason: "sent" };
 };
 
+const buildIrisAccountVerifyUrl = (email: string): string =>
+  `/apps/iris/v3/login/verify?email=${encodeURIComponent(normalizeEmail(email))}`;
+
+const startIrisAccountLoginCode = async (
+  email: string,
+  options?: { reuseActiveCode?: boolean }
+): Promise<
+  | { status: "sent"; email: string; verifyUrl: string; expiresAt: Date }
+  | { status: "already_sent"; email: string; verifyUrl: string; expiresAt: Date }
+  | { status: "send_failed"; email: string; verifyUrl: string; reason: string }
+> => {
+  const normalizedEmail = normalizeEmail(email);
+  const verifyUrl = buildIrisAccountVerifyUrl(normalizedEmail);
+  const now = new Date();
+
+  if (options?.reuseActiveCode) {
+    const activeCode = await prisma.irisAccountLoginCode.findFirst({
+      where: {
+        email: normalizedEmail,
+        consumed_at: null,
+        expires_at: { gt: now }
+      },
+      orderBy: { created_at: "desc" },
+      select: { expires_at: true }
+    });
+    if (activeCode) {
+      return { status: "already_sent", email: normalizedEmail, verifyUrl, expiresAt: activeCode.expires_at };
+    }
+  }
+
+  const code = generateLoginCode();
+  const expiresAt = new Date(Date.now() + IRIS_LOGIN_CODE_TTL_MINUTES * 60 * 1000);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.irisAccountLoginCode.updateMany({
+      where: {
+        email: normalizedEmail,
+        consumed_at: null
+      },
+      data: {
+        consumed_at: now
+      }
+    });
+    await tx.irisAccountLoginCode.create({
+      data: {
+        email: normalizedEmail,
+        code_hash: hashLoginCode(normalizedEmail, code),
+        expires_at: expiresAt
+      }
+    });
+  });
+
+  const emailResult = await sendIrisAccountLoginCodeEmailBestEffort({
+    email: normalizedEmail,
+    code,
+    expiresAt
+  });
+  if (!emailResult.sent) {
+    return {
+      status: "send_failed",
+      email: normalizedEmail,
+      verifyUrl,
+      reason: emailResult.reason
+    };
+  }
+
+  return { status: "sent", email: normalizedEmail, verifyUrl, expiresAt };
+};
+
 const createCollaboratorSession = async (userId: string) => {
   const rawToken = createOpaqueToken();
   const expiresAt = new Date(Date.now() + env.partnerSessionTtlDays * 24 * 60 * 60 * 1000);
@@ -6074,10 +6143,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
       if (!token) token = tokenMatch[1];
     }
     const pin = body?.pin?.trim();
-    const email = body?.email?.trim().toLowerCase();
+    const submittedEmail = normalizeEmail(body?.email);
+    let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
+    try {
+      irisAccountAuth = await getIrisAccountAuth(req);
+    } catch (error) {
+      req.log.warn({ err: error }, "IRIS Account auth check skipped during activation");
+    }
+    const email = irisAccountAuth?.user.email ?? submittedEmail;
 
     if ((!irisId && !token) || !pin || !email) {
       sendJson(reply, 400, { error: "missing_required_fields" });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      sendJson(reply, 400, { error: "invalid_email" });
       return;
     }
 
@@ -6223,6 +6303,39 @@ export const createServer = async (): Promise<FastifyInstance> => {
         });
       });
 
+      let irisAccount: Record<string, unknown> = {
+        authenticated: false,
+        email,
+        account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`
+      };
+      try {
+        if (irisAccountAuth && irisAccountAuth.user.email === email) {
+          irisAccount = {
+            authenticated: true,
+            email,
+            account_url: "/apps/iris/v3/account"
+          };
+        } else {
+          const loginCode = await startIrisAccountLoginCode(email, { reuseActiveCode: true });
+          irisAccount = {
+            authenticated: false,
+            email,
+            account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`,
+            verify_url: loginCode.verifyUrl,
+            code_status: loginCode.status,
+            ...(loginCode.status === "send_failed" ? { code_error: loginCode.reason } : {})
+          };
+        }
+      } catch (error) {
+        req.log.warn({ err: error, email }, "IRIS Account login code could not be started after activation");
+        irisAccount = {
+          authenticated: false,
+          email,
+          account_url: `/apps/iris/v3/account?email=${encodeURIComponent(email)}`,
+          code_status: "send_failed"
+        };
+      }
+
       sendJson(reply, 200, {
         status: "ok",
         iris_id: artwork.iris_id,
@@ -6232,7 +6345,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         rarity_code: artwork.rarity_code,
         weight_grams: artwork.weight_grams,
         passport_url: `/pages/iris-passport?iris_id=${encodeURIComponent(artwork.iris_id)}`,
-        collection: artwork.collection
+        collection: artwork.collection,
+        iris_account: irisAccount
       });
     } catch (error) {
       req.log.error({ err: error }, "Activation verify failed");
@@ -6626,7 +6740,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
     try {
       const auth = await getIrisAccountAuth(req);
       if (!auth) {
-        sendIrisAccountHtml(reply, buildIrisAccountLoginHtml());
+        const query = (req.query as { email?: unknown } | null) ?? {};
+        const email = normalizeEmail(query.email);
+        sendIrisAccountHtml(reply, buildIrisAccountLoginHtml({ email }));
         return;
       }
 
@@ -6641,6 +6757,37 @@ export const createServer = async (): Promise<FastifyInstance> => {
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
       );
+    }
+  });
+
+  app.get("/apps/iris/v3/session", async (req, reply) => {
+    try {
+      const auth = await getIrisAccountAuth(req);
+      if (!auth) {
+        reply.code(200).type("application/json; charset=utf-8").send({
+          authenticated: false,
+          account_url: "/apps/iris/v3/account"
+        });
+        return;
+      }
+
+      await prisma.irisAccountSession.update({
+        where: { id: auth.session.id },
+        data: { last_seen_at: new Date() }
+      });
+      reply.code(200).type("application/json; charset=utf-8").send({
+        authenticated: true,
+        email: auth.user.email,
+        username: auth.user.username,
+        display_name: auth.user.display_name,
+        account_url: "/apps/iris/v3/account"
+      });
+    } catch (error) {
+      req.log.error({ err: error }, "IRIS Account session check failed");
+      reply.code(200).type("application/json; charset=utf-8").send({
+        authenticated: false,
+        account_url: "/apps/iris/v3/account"
+      });
     }
   });
 
@@ -6807,36 +6954,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
 
-    const code = generateLoginCode();
-    const expiresAt = new Date(Date.now() + IRIS_LOGIN_CODE_TTL_MINUTES * 60 * 1000);
-    const now = new Date();
-
     try {
-      await prisma.$transaction(async (tx) => {
-        await tx.irisAccountLoginCode.updateMany({
-          where: {
-            email,
-            consumed_at: null
-          },
-          data: {
-            consumed_at: now
-          }
-        });
-        await tx.irisAccountLoginCode.create({
-          data: {
-            email,
-            code_hash: hashLoginCode(email, code),
-            expires_at: expiresAt
-          }
-        });
-      });
-
-      const emailResult = await sendIrisAccountLoginCodeEmailBestEffort({ email, code, expiresAt });
-      if (!emailResult.sent) {
+      const loginCode = await startIrisAccountLoginCode(email);
+      if (loginCode.status === "send_failed") {
         sendIrisAccountHtml(
           reply,
           buildIrisAccountLoginHtml({
-            error: `We could not send the login code (${emailResult.reason}).`,
+            error: `We could not send the login code (${loginCode.reason}).`,
             email
           })
         );
@@ -6851,6 +6975,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration.", email })
       );
     }
+  });
+
+  app.get("/apps/iris/v3/login/verify", async (req, reply) => {
+    const query = (req.query as { email?: unknown } | null) ?? {};
+    const email = normalizeEmail(query.email);
+    if (!email || !isValidEmail(email)) {
+      reply.redirect(302, "/apps/iris/v3/account");
+      return;
+    }
+    const auth = await getIrisAccountAuth(req);
+    if (auth && auth.user.email === email) {
+      reply.redirect(302, "/apps/iris/v3/account");
+      return;
+    }
+    sendIrisAccountHtml(reply, buildIrisAccountVerifyHtml({ email }));
   });
 
   app.post("/apps/iris/v3/login/verify", async (req, reply) => {
