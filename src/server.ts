@@ -1978,6 +1978,7 @@ const buildPartnerDashboardHtml = (params: {
 };
 
 const IRIS_ACCOUNT_DEFAULT_IMAGE = "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
+const IRIS_ACCOUNT_UNREVEALED_IMAGE = IRIS_ACCOUNT_DEFAULT_IMAGE;
 const IRIS_MARKETPLACE_PREVIEW_EMAIL = "info@gugoco.com";
 
 type IrisAccountItem = {
@@ -3316,6 +3317,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           display:block;
           object-fit:cover;
         }
+        .iris-order-artwork__thumb--unrevealed {
+          object-fit:contain;
+          padding:.65rem;
+          background:#020202;
+        }
         .iris-order-artwork__name {
           color:var(--iris-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -4349,11 +4355,13 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
     ? order.artworks
         .map((item) => {
           const passportHref = buildIrisAccountHref("/apps/iris/v3/passport", sessionToken, { iris_id: item.iris_id });
-          const thumb = item.image_url
-            ? `<img class="iris-order-artwork__thumb" src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id || item.iris_id)}" loading="lazy">`
+          const isActivated = item.status === "activated";
+          const thumbUrl = isActivated ? item.image_url : IRIS_ACCOUNT_UNREVEALED_IMAGE;
+          const thumb = thumbUrl
+            ? `<img class="iris-order-artwork__thumb${isActivated ? "" : " iris-order-artwork__thumb--unrevealed"}" src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(isActivated ? item.display_iris_id || item.iris_id : "Unrevealed IRIS")}" loading="lazy">`
             : `<span class="iris-order-artwork__thumb"></span>`;
           const action =
-            item.status === "activated"
+            isActivated
               ? `<a class="iris-order-artwork__link" href="${escapeHtml(passportHref)}">View Passport</a>`
               : `<span class="iris-order-artwork__link">Not Activated</span>`;
           const rarity = item.rarity_code || "-";
