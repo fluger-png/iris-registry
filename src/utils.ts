@@ -63,10 +63,20 @@ export const parseReservationTokens = (order: unknown): string[] => {
 export type ShopifyLineItemSummary = {
   productId: string | null;
   handle: string | null;
+  title: string | null;
+  name: string | null;
+  sku: string | null;
+  variantTitle: string | null;
   quantity: number;
   irisIds: string[];
   collectionSlugs: string[];
   reservationTokens: string[];
+};
+
+const readLineItemString = (value: unknown): string | null => {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
 };
 
 export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] => {
@@ -133,20 +143,16 @@ export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] 
       }
     }
 
-    const productId =
-      typeof item.product_id === "number" || typeof item.product_id === "string"
-        ? String(item.product_id)
-        : null;
-    const itemHandle =
-      typeof item.handle === "string" && item.handle.trim()
-        ? item.handle.trim()
-        : typeof item.product_handle === "string" && item.product_handle.trim()
-          ? item.product_handle.trim()
-          : null;
+    const productId = readLineItemString(item.product_id);
+    const itemHandle = readLineItemString(item.handle) ?? readLineItemString(item.product_handle);
     const handle = itemHandle ?? propertyProductHandle;
     return {
       productId,
       handle,
+      title: readLineItemString(item.title),
+      name: readLineItemString(item.name),
+      sku: readLineItemString(item.sku),
+      variantTitle: readLineItemString(item.variant_title),
       quantity: Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1,
       irisIds: Array.from(new Set(irisIds)),
       collectionSlugs: Array.from(new Set(collectionSlugs)),

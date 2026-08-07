@@ -5130,6 +5130,32 @@ const parseShopifyMoneyCents = (value: unknown): number | null => {
   return Number.isFinite(raw) ? Math.round(raw * 100) : null;
 };
 
+const buildOrderLookupValues = (...values: Array<string | null | undefined>): string[] => {
+  const variants = new Set<string>();
+  for (const value of values) {
+    const clean = value?.trim();
+    if (!clean) continue;
+    variants.add(clean);
+    if (clean.startsWith("#") && clean.slice(1)) {
+      variants.add(clean.slice(1));
+    } else if (/^\d+$/.test(clean)) {
+      variants.add(`#${clean}`);
+    }
+  }
+  return Array.from(variants);
+};
+
+const shouldAssignForShopifyOrderWebhook = (topic: string, order: Record<string, unknown>): boolean => {
+  const normalizedTopic = topic.toLowerCase();
+  if (normalizedTopic.includes("orders/paid")) {
+    return true;
+  }
+
+  const financialStatus = readShopifyString(order.financial_status)?.toLowerCase();
+  const displayFinancialStatus = readShopifyString(order.displayFinancialStatus)?.toLowerCase();
+  return financialStatus === "paid" || financialStatus === "partially_refunded" || displayFinancialStatus === "paid";
+};
+
 const toPrismaJson = (value: unknown): any => {
   if (value == null) return Prisma.JsonNull;
   try {
@@ -5346,6 +5372,16 @@ type IrisCollectionDisplayMeta = {
 const isCoreCollectionAlias = (value: string | null | undefined): boolean => {
   if (!value) return false;
   return CORE_COLLECTION_ALIASES.has(normalizeCollectionSlug(value));
+};
+
+const isCoreProductIdentity = (value: string | null | undefined): boolean => {
+  if (!value) return false;
+  const slug = normalizeCollectionSlug(value);
+  return (
+    CORE_COLLECTION_ALIASES.has(slug) ||
+    slug === `${CORE_COLLECTION_SLUG}-default-title` ||
+    slug.startsWith(`${CORE_COLLECTION_SLUG}-`)
+  );
 };
 
 const displayWidthForCollection = (collection: IrisCollectionDisplayMeta): number | null => {
@@ -5702,6 +5738,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         ? String(order.order_number)
         : null;
     const orderNumberDisplay = orderName ?? orderNumber ?? orderId;
+    const orderLookupValues = buildOrderLookupValues(orderName, orderNumber, orderId, orderNumberDisplay);
     const customerEmail = extractCustomerEmail(order);
     const orderCreatedAt = extractShopifyOrderDate(order);
     const orderCreatedAtIso = orderCreatedAt ? orderCreatedAt.toISOString() : null;
@@ -5712,6 +5749,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
       await saveShopifyOrderSnapshot(order);
     } catch (error) {
       req.log.error({ err: error, orderId, orderNumber: orderNumberDisplay }, "Shopify order snapshot failed");
+    }
+
+    if (!shouldAssignForShopifyOrderWebhook(String(topicHeader), order)) {
+      reply.send({ status: "snapshot_only", reason: "order_not_paid" });
+      return;
     }
 
     const resolveLineItemCollection = async (
@@ -5923,6 +5965,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
               source: "product_mapping",
               shopify_product_id: lineItem.productId,
               shopify_handle: lineItem.handle,
+              line_item_title: lineItem.title,
+              line_item_name: lineItem.name,
+              line_item_sku: lineItem.sku,
+              line_item_variant_title: lineItem.variantTitle,
               line_item_iris_ids: lineItem.irisIds,
               line_item_collection_slugs: lineItem.collectionSlugs,
               core_collection: pool.kind === "core"
@@ -5978,9 +6024,24 @@ export const createServer = async (): Promise<FastifyInstance> => {
       | { kind: "core" }
       | { kind: "none" };
 
+    const poolKey = (pool: LineItemPool): string =>
+      pool.kind === "collection" ? `collection:${pool.collection.id}` : pool.kind;
+
+    const countExistingAssignmentsForPool = async (pool: Exclude<LineItemPool, { kind: "none" }>) =>
+      prisma.artwork.count({
+        where: {
+          assigned_order_id: { in: orderLookupValues },
+          ...(pool.kind === "collection" ? { collection_id: pool.collection.id } : { collection_id: null })
+        }
+      });
+
     const resolveLineItemPool = async (item: {
       productId: string | null;
       handle: string | null;
+      title: string | null;
+      name: string | null;
+      sku: string | null;
+      variantTitle: string | null;
       quantity: number;
       irisIds: string[];
       collectionSlugs: string[];
@@ -6000,7 +6061,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
       if (collection) {
         return { kind: "collection", collection };
       }
-      if (isCoreCollectionAlias(item.handle)) {
+      if (
+        isCoreCollectionAlias(item.handle) ||
+        [item.handle, item.title, item.name, item.sku, item.variantTitle].some(isCoreProductIdentity)
+      ) {
         return { kind: "core" };
       }
 
@@ -6047,14 +6111,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
 
+    const desiredQuantityByPool = new Map<string, number>();
+
     try {
       for (const { item, pool } of relevantLineItems) {
-        let successfulAssignments = 0;
-
         for (const token of item.reservationTokens) {
           try {
             await confirmReservation(token);
-            successfulAssignments += 1;
           } catch (error) {
             const message = error instanceof Error ? error.message : "unknown";
             if (message === "reservation_expired" || message === "reservation_not_active") {
@@ -6065,23 +6128,32 @@ export const createServer = async (): Promise<FastifyInstance> => {
           }
         }
 
-        const missingCount = Math.max(0, item.quantity - successfulAssignments);
-        if (missingCount === 0) {
-          continue;
-        }
-
         if (pool.kind === "none") {
+          const unresolvedMissingCount = Math.max(0, item.quantity - item.reservationTokens.length);
           req.log.warn(
             {
               orderId,
               productId: item.productId,
               handle: item.handle,
+              title: item.title,
+              name: item.name,
+              sku: item.sku,
+              variantTitle: item.variantTitle,
               irisIds: item.irisIds,
               collectionSlugs: item.collectionSlugs,
-              missingCount
+              missingCount: unresolvedMissingCount
             },
             "Unable to recover missing reservation without a pool mapping"
           );
+          continue;
+        }
+
+        const key = poolKey(pool);
+        const desiredQuantity = (desiredQuantityByPool.get(key) ?? 0) + item.quantity;
+        desiredQuantityByPool.set(key, desiredQuantity);
+        const existingAssignments = await countExistingAssignmentsForPool(pool);
+        const missingCount = Math.max(0, desiredQuantity - existingAssignments);
+        if (missingCount === 0) {
           continue;
         }
 

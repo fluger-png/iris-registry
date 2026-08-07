@@ -40,6 +40,10 @@ describe("parseShopifyLineItems", () => {
       {
         productId: "123",
         handle: "iris-the-unseen-edition",
+        title: null,
+        name: null,
+        sku: null,
+        variantTitle: null,
         quantity: 2,
         irisIds: ["IRIS-1001"],
         collectionSlugs: ["iris-the-unseen-edition"],
@@ -69,10 +73,41 @@ describe("parseShopifyLineItems", () => {
     expect(parsed[0]).toMatchObject({
       productId: "456",
       handle: "sayat-nova",
+      title: null,
+      name: null,
+      sku: null,
+      variantTitle: null,
       quantity: 1,
       irisIds: ["SN-001"],
       collectionSlugs: ["sayat-nova"],
       reservationTokens: ["token-2"]
+    });
+  });
+
+  it("keeps product identity fields for sales channels that drop custom properties", () => {
+    const parsed = parseShopifyLineItems({
+      line_items: [
+        {
+          product_id: null,
+          title: "IRIS - The Unseen Edition",
+          name: "IRIS - The Unseen Edition - Default Title",
+          sku: "IRIS-UNSEEN",
+          variant_title: "Default Title",
+          quantity: 1,
+          properties: []
+        }
+      ]
+    });
+
+    expect(parsed[0]).toMatchObject({
+      productId: null,
+      handle: null,
+      title: "IRIS - The Unseen Edition",
+      name: "IRIS - The Unseen Edition - Default Title",
+      sku: "IRIS-UNSEEN",
+      variantTitle: "Default Title",
+      quantity: 1,
+      reservationTokens: []
     });
   });
 });
