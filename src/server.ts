@@ -1503,6 +1503,7 @@ const buildAdminAllHtml = (
     iris_id: string;
     display_iris_id: string;
     status: string;
+    order_date: Date | null;
     owner_email: string | null;
     activated_at: Date | null;
     image_url: string | null;
@@ -1526,6 +1527,7 @@ const buildAdminAllHtml = (
         <tr>
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.display_iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
+          <td>${item.order_date ? formatDate(item.order_date) : "-"}</td>
           <td>${item.owner_email ?? "-"}</td>
           <td>${item.activated_at ? formatDate(item.activated_at) : "-"}</td>
           <td>${item.pin_code ?? "-"}</td>
@@ -1577,6 +1579,7 @@ const buildAdminAllHtml = (
           <tr>
             <th>IRIS ID</th>
             <th>Status</th>
+            <th>Order Date</th>
             <th>Owner Email</th>
             <th>Activated At</th>
             <th>PIN</th>
@@ -1587,7 +1590,7 @@ const buildAdminAllHtml = (
           </tr>
         </thead>
         <tbody>
-          ${rows || "<tr><td colspan='9'>No records</td></tr>"}
+          ${rows || "<tr><td colspan='10'>No records</td></tr>"}
         </tbody>
       </table>
     </div>
@@ -1598,6 +1601,26 @@ const buildAdminAllHtml = (
     </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, "all-iris");
+};
+
+const parseAdminOrderNumberSortValue = (value: string | null | undefined): number => {
+  const number = Number(String(value ?? "").replace(/\D/g, ""));
+  return Number.isFinite(number) ? number : 0;
+};
+
+const compareAdminArchiveItemsByOrderDate = (
+  a: { iris_id: string; assigned_order_id: string | null },
+  b: { iris_id: string; assigned_order_id: string | null },
+  orderDateById: Map<string, Date>
+): number => {
+  const dateDiff = (orderDateById.get(b.iris_id)?.getTime() ?? 0) - (orderDateById.get(a.iris_id)?.getTime() ?? 0);
+  if (dateDiff !== 0) return dateDiff;
+
+  const orderNumberDiff =
+    parseAdminOrderNumberSortValue(b.assigned_order_id) - parseAdminOrderNumberSortValue(a.assigned_order_id);
+  if (orderNumberDiff !== 0) return orderNumberDiff;
+
+  return b.iris_id.localeCompare(a.iris_id);
 };
 
 type AdminOrderArtworkView = {
@@ -5246,14 +5269,20 @@ const buildAdminDetailHtml = (item: {
   image_url: string | null;
   pin_code: string | null;
   activation_token: string | null;
+  previous_iris_id: string | null;
+  next_iris_id: string | null;
 }) => {
   const displayId = item.display_iris_id.toUpperCase().startsWith("IRIS-")
     ? item.display_iris_id.replace(/^IRIS-/i, "#")
     : item.display_iris_id;
-    const activationToken = item.activation_token ? item.activation_token : null;
-    const activationLink = activationToken
-      ? `${env.baseStorefrontUrl}/pages/activate?token=${activationToken}`
-      : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
+  const activationToken = item.activation_token ? item.activation_token : null;
+  const activationLink = activationToken
+    ? `${env.baseStorefrontUrl}/pages/activate?token=${activationToken}`
+    : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
+  const navButton = (label: string, targetIrisId: string | null) =>
+    targetIrisId
+      ? `<a class="btn secondary" href="/admin/iris/${encodeURIComponent(targetIrisId)}" style="width:34px;height:28px;padding:0;font-size:14px;">${label}</a>`
+      : `<span class="btn secondary" style="width:34px;height:28px;padding:0;font-size:14px;opacity:.35;pointer-events:none;">${label}</span>`;
   const imageBox = item.image_url
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
     : `<div class="muted">Upload Image</div>`;
@@ -5267,7 +5296,13 @@ const buildAdminDetailHtml = (item: {
     </div>
     <div class="card passport" style="max-width:760px;margin:0 auto;">
       <div>
-        <h2>IRIS ${displayId}</h2>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+          <h2 style="margin:0;">IRIS ${displayId}</h2>
+          <div style="display:flex;gap:8px;">
+            ${navButton("&lt;", item.previous_iris_id)}
+            ${navButton("&gt;", item.next_iris_id)}
+          </div>
+        </div>
         <dl>
           <dt>Status</dt><dd>${statusPill(item.status)}</dd>
           <dt>Weight (g)</dt>
@@ -5314,7 +5349,7 @@ const buildAdminDetailHtml = (item: {
       </div>
     </div>
   `;
-  return buildAdminShell(`IRIS ${item.iris_id}`, body, "", "all");
+  return buildAdminShell(`IRIS ${item.iris_id}`, body, "", "all-iris");
 };
 
 const extractCustomerEmail = (order: Record<string, unknown>): string | null => {
@@ -8682,13 +8717,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const page = Math.max(1, Number(query.page ?? 1));
     const take = 20;
-    const skip = (page - 1) * take;
+    const fetchLimit = Math.max(12000, page * take + take + 1);
 
     const items = await prisma.artwork.findMany({
       where,
-      orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-      skip,
-      take: take + 1,
+      orderBy: [{ iris_id: "desc" }],
+      take: fetchLimit,
       include: {
         collection: {
           select: {
@@ -8699,8 +8733,30 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     });
 
-    const hasNext = items.length > take;
-    const slice = hasNext ? items.slice(0, take) : items;
+    const itemIds = items.map((item) => item.iris_id);
+    const orderEvents = itemIds.length
+      ? await prisma.event.findMany({
+          where: { iris_id: { in: itemIds }, type: "assigned" },
+          orderBy: { created_at: "desc" }
+        })
+      : [];
+    const orderDateById = new Map<string, Date>();
+    for (const event of orderEvents) {
+      if (!orderDateById.has(event.iris_id)) {
+        orderDateById.set(event.iris_id, extractAssignedEventOrderDate(event));
+      }
+    }
+    for (const item of items) {
+      if (!orderDateById.has(item.iris_id)) {
+        orderDateById.set(item.iris_id, item.created_at);
+      }
+    }
+
+    items.sort((a, b) => compareAdminArchiveItemsByOrderDate(a, b, orderDateById));
+
+    const start = (page - 1) * take;
+    const slice = items.slice(start, start + take);
+    const hasNext = items.length > start + take;
     const hasPrev = page > 1;
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId(slice.map((item) => item.iris_id));
 
@@ -8713,6 +8769,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             iris_id: item.iris_id,
             display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
             status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
+            order_date: orderDateById.get(item.iris_id) ?? null,
             owner_email: item.owner_email,
             activated_at: item.activated_at,
             image_url: item.image_url,
@@ -8894,6 +8951,44 @@ export const createServer = async (): Promise<FastifyInstance> => {
       orderBy: { created_at: "desc" }
     });
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId([item.iris_id]);
+    const archiveNavigationItems = await prisma.artwork.findMany({
+      where: {
+        status: { in: ["assigned", "activated", "shopify_failed"] }
+      },
+      select: {
+        iris_id: true,
+        assigned_order_id: true,
+        created_at: true
+      },
+      orderBy: [{ iris_id: "desc" }],
+      take: 12000
+    });
+    const archiveNavigationEvents = archiveNavigationItems.length
+      ? await prisma.event.findMany({
+          where: { iris_id: { in: archiveNavigationItems.map((navItem) => navItem.iris_id) }, type: "assigned" },
+          orderBy: { created_at: "desc" }
+        })
+      : [];
+    const archiveNavigationOrderDateById = new Map<string, Date>();
+    for (const event of archiveNavigationEvents) {
+      if (!archiveNavigationOrderDateById.has(event.iris_id)) {
+        archiveNavigationOrderDateById.set(event.iris_id, extractAssignedEventOrderDate(event));
+      }
+    }
+    for (const navItem of archiveNavigationItems) {
+      if (!archiveNavigationOrderDateById.has(navItem.iris_id)) {
+        archiveNavigationOrderDateById.set(navItem.iris_id, navItem.created_at);
+      }
+    }
+    archiveNavigationItems.sort((a, b) =>
+      compareAdminArchiveItemsByOrderDate(a, b, archiveNavigationOrderDateById)
+    );
+    const archiveIndex = archiveNavigationItems.findIndex((navItem) => navItem.iris_id === item.iris_id);
+    const previousIrisId = archiveIndex > 0 ? archiveNavigationItems[archiveIndex - 1]?.iris_id ?? null : null;
+    const nextIrisId =
+      archiveIndex >= 0 && archiveIndex < archiveNavigationItems.length - 1
+        ? archiveNavigationItems[archiveIndex + 1]?.iris_id ?? null
+        : null;
 
     reply
       .code(200)
@@ -8912,7 +9007,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
           order_date: assignedEvent ? extractAssignedEventOrderDate(assignedEvent) : null,
           image_url: item.image_url,
           pin_code: item.pin_code,
-          activation_token: item.activation_token
+          activation_token: item.activation_token,
+          previous_iris_id: previousIrisId,
+          next_iris_id: nextIrisId
         })
       );
   });
