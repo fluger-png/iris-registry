@@ -764,9 +764,6 @@ type OrderAssignmentEmailItem = {
 const ORDER_ASSIGNMENT_UNREVEALED_IMAGE =
   "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
 
-const formatOrderAssignmentWeight = (value: number | null): string =>
-  typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} g` : "-";
-
 const formatOrderAssignmentStatus = (item: OrderAssignmentEmailItem): string => {
   if (item.status === "activated") return "Activated";
   if (item.status === "assigned") return "Awaiting activation";
@@ -797,6 +794,9 @@ const sendOrderAssignmentEmailBestEffort = async (params: {
     .map((item) => {
       const isActivated = item.status === "activated";
       const imageUrl = isActivated && item.imageUrl ? item.imageUrl : ORDER_ASSIGNMENT_UNREVEALED_IMAGE;
+      const metaLabel = isActivated
+        ? `Status: ${formatOrderAssignmentStatus(item)} · Rarity: ${item.rarityCode || "-"} · Weight: ${formatIrisAccountWeight(item.weightGrams)}`
+        : `Status: ${formatOrderAssignmentStatus(item)} · Details reveal after activation`;
       return `
         <tr>
           <td style="padding:18px 0;border-top:1px solid #E5E7EB;vertical-align:middle;width:86px;">
@@ -809,9 +809,7 @@ const sendOrderAssignmentEmailBestEffort = async (params: {
               item.displayIrisId
             )}</div>
             <div style="margin-top:7px;font-size:14px;line-height:1.6;color:#6B7280;">
-              Status: ${escapeHtml(formatOrderAssignmentStatus(item))} · Rarity: ${escapeHtml(
-                item.rarityCode || "-"
-              )} · Weight: ${escapeHtml(formatOrderAssignmentWeight(item.weightGrams))}
+              ${escapeHtml(metaLabel)}
             </div>
           </td>
         </tr>
@@ -4811,15 +4809,16 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
             isActivated
               ? `<a class="iris-order-artwork__link" href="${escapeHtml(passportHref)}">View Passport</a>`
               : `<span class="iris-order-artwork__link">Not Activated</span>`;
-          const rarity = item.rarity_code || "-";
-          const weight = formatIrisAccountWeight(item.weight_grams);
           const status = formatIrisAccountOrderArtworkStatus(item);
+          const meta = isActivated
+            ? `Rarity: ${item.rarity_code || "-"} · Weight: ${formatIrisAccountWeight(item.weight_grams)} · Status: ${status}`
+            : `Status: ${status} · Details reveal after activation`;
           return `
             <div class="iris-order-artwork">
               ${thumb}
               <div>
                 <div class="iris-order-artwork__name">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
-                <div class="iris-order-artwork__meta">Rarity: ${escapeHtml(rarity)} · Weight: ${escapeHtml(weight)} · Status: ${escapeHtml(status)}</div>
+                <div class="iris-order-artwork__meta">${escapeHtml(meta)}</div>
               </div>
               ${action}
             </div>
