@@ -5924,7 +5924,6 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     sendJson(reply, 200, {
       reservationToken: reservation.token,
-      irisId: reservation.iris_id,
       ...(collection ? { collection: { slug: collection.slug, name: collection.name } } : {})
     });
   });

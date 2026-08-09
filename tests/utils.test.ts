@@ -84,6 +84,32 @@ describe("parseShopifyLineItems", () => {
     });
   });
 
+  it("extracts hidden reservation metadata without requiring a visible IRIS id", () => {
+    const parsed = parseShopifyLineItems({
+      line_items: [
+        {
+          product_id: 789,
+          handle: "iris-the-unseen-edition",
+          quantity: 1,
+          properties: [
+            { name: "_IRIS_RESERVATION_TOKEN", value: "hidden-token-1" },
+            { name: "_IRIS_COLLECTION_SLUG", value: "iris-the-unseen-edition" },
+            { name: "_IRIS_PRODUCT_HANDLE", value: "iris-the-unseen-edition" }
+          ]
+        }
+      ]
+    });
+
+    expect(parsed[0]).toMatchObject({
+      productId: "789",
+      handle: "iris-the-unseen-edition",
+      quantity: 1,
+      irisIds: [],
+      collectionSlugs: ["iris-the-unseen-edition"],
+      reservationTokens: ["hidden-token-1"]
+    });
+  });
+
   it("keeps product identity fields for sales channels that drop custom properties", () => {
     const parsed = parseShopifyLineItems({
       line_items: [

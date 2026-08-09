@@ -35,7 +35,9 @@ export const parseReservationTokens = (order: unknown): string[] => {
     "reservationtoken",
     "reservation_token",
     "iris_reservation_token",
-    "iris-reservation-token"
+    "iris-reservation-token",
+    "_iris_reservation_token",
+    "_iris-reservation-token"
   ]);
   const tokens: string[] = [];
   for (const item of lineItems) {
@@ -91,7 +93,9 @@ export const parseShopifyLineItems = (order: unknown): ShopifyLineItemSummary[] 
     "reservationtoken",
     "reservation_token",
     "iris_reservation_token",
-    "iris-reservation-token"
+    "iris-reservation-token",
+    "_iris_reservation_token",
+    "_iris-reservation-token"
   ]);
   const irisIdKeys = new Set([
     "iris_id",
