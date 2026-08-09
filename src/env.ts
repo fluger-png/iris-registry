@@ -2,6 +2,8 @@ import { config } from "dotenv";
 
 config();
 
+const irisStoreGoogleAnalyticsId = "G-NGNQ3DY1L5";
+
 const required = (key: string): string => {
   const value = process.env[key];
   if (!value) {
@@ -35,5 +37,5 @@ export const env = {
   partnerSessionTtlDays: Number(process.env.PARTNER_SESSION_TTL_DAYS ?? 30),
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFromEmail: process.env.RESEND_FROM_EMAIL ?? "",
-  googleAnalyticsId: process.env.GOOGLE_ANALYTICS_ID ?? ""
+  googleAnalyticsId: process.env.GOOGLE_ANALYTICS_ID ?? irisStoreGoogleAnalyticsId
 };

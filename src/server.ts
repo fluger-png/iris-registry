@@ -2662,6 +2662,9 @@ const buildGoogleAnalyticsHeadHtml = (title: string): string => {
           function gtag(){ window.dataLayer.push(arguments); }
           gtag('js', new Date());
           gtag('config', measurementId, {
+            send_page_view: false
+          });
+          gtag('event', 'page_view', {
             page_title: ${JSON.stringify(title)},
             page_location: safeUrl.href,
             page_path: safeUrl.pathname + safeUrl.search
