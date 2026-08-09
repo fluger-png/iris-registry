@@ -751,6 +751,129 @@ const sendIrisAccountLoginCodeEmailBestEffort = async (params: {
   return { sent: true, reason: "sent" };
 };
 
+type OrderAssignmentEmailItem = {
+  irisId: string;
+  displayIrisId: string;
+  status: ArtworkStatus;
+  imageUrl: string | null;
+  rarityCode: string | null;
+  weightGrams: number | null;
+  activatedAt: Date | null;
+};
+
+const ORDER_ASSIGNMENT_UNREVEALED_IMAGE =
+  "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
+
+const formatOrderAssignmentWeight = (value: number | null): string =>
+  typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} g` : "-";
+
+const formatOrderAssignmentStatus = (item: OrderAssignmentEmailItem): string => {
+  if (item.status === "activated") return "Activated";
+  if (item.status === "assigned") return "Awaiting activation";
+  return item.status.replace(/_/g, " ");
+};
+
+const sendOrderAssignmentEmailBestEffort = async (params: {
+  toEmail: string;
+  orderNumber: string | null;
+  items: OrderAssignmentEmailItem[];
+}): Promise<{ sent: boolean; reason: string }> => {
+  if (!env.resendApiKey || !env.resendFromEmail) {
+    return { sent: false, reason: "email_not_configured" };
+  }
+  if (params.items.length === 0) {
+    return { sent: false, reason: "no_assigned_items" };
+  }
+
+  const orderLabel = params.orderNumber || "your order";
+  const accountUrl = `${env.baseStorefrontUrl.replace(/\/$/, "")}/apps/iris/v3/account?email=${encodeURIComponent(
+    params.toEmail
+  )}`;
+  const isPlural = params.items.length > 1;
+  const subject = isPlural
+    ? `Your IRIS works are assigned for ${orderLabel}`
+    : `Your IRIS is assigned for ${orderLabel}`;
+  const itemRows = params.items
+    .map((item) => {
+      const isActivated = item.status === "activated";
+      const imageUrl = isActivated && item.imageUrl ? item.imageUrl : ORDER_ASSIGNMENT_UNREVEALED_IMAGE;
+      return `
+        <tr>
+          <td style="padding:18px 0;border-top:1px solid #E5E7EB;vertical-align:middle;width:86px;">
+            <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(
+              isActivated ? item.displayIrisId : "Unrevealed IRIS"
+            )}" style="display:block;width:72px;height:72px;object-fit:cover;border:1px solid #E5E7EB;background:#F8FAFC;" />
+          </td>
+          <td style="padding:18px 0;border-top:1px solid #E5E7EB;vertical-align:middle;">
+            <div style="font-size:19px;line-height:1.2;font-weight:700;color:#111827;">${escapeHtml(
+              item.displayIrisId
+            )}</div>
+            <div style="margin-top:7px;font-size:14px;line-height:1.6;color:#6B7280;">
+              Status: ${escapeHtml(formatOrderAssignmentStatus(item))} · Rarity: ${escapeHtml(
+                item.rarityCode || "-"
+              )} · Weight: ${escapeHtml(formatOrderAssignmentWeight(item.weightGrams))}
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#F3F4F8;color:#111827;padding:32px;">
+      <div style="max-width:640px;margin:0 auto;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:22px;padding:30px;box-shadow:0 18px 48px rgba(15,23,42,.08);">
+        <div style="font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#6B7280;margin-bottom:14px;">IRIS Assignment</div>
+        <h1 style="margin:0 0 16px;font-size:34px;line-height:1.05;font-weight:700;color:#111827;">
+          ${isPlural ? "Your IRIS works have been assigned." : "Your IRIS has been assigned."}
+        </h1>
+        <p style="margin:0 0 20px;font-size:16px;line-height:1.7;color:#4B5563;">
+          Thank you for your order. The IRIS ${isPlural ? "works below are" : "work below is"} now linked to ${escapeHtml(
+            params.toEmail
+          )}. The artwork remains unrevealed until you receive the physical piece, scan the NFC tag, and enter the printed PIN.
+        </p>
+        <table role="presentation" style="width:100%;border-collapse:collapse;margin:6px 0 24px;">
+          <tbody>${itemRows}</tbody>
+        </table>
+        <p style="margin:0 0 24px;">
+          <a href="${escapeHtml(accountUrl)}" style="display:inline-block;padding:14px 18px;background:#D6B84F;color:#111827;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;">
+            Open My IRIS Account
+          </a>
+        </p>
+        <p style="margin:0;font-size:14px;line-height:1.7;color:#6B7280;">
+          If the button does not work, copy this link: <a href="${escapeHtml(accountUrl)}" style="color:#111827;">${escapeHtml(
+            accountUrl
+          )}</a>
+        </p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: env.resendFromEmail,
+        to: [params.toEmail],
+        subject,
+        html
+      })
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return { sent: false, reason: `email_error:${text}` };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown";
+    return { sent: false, reason: `email_exception:${message}` };
+  }
+
+  return { sent: true, reason: "sent" };
+};
+
 const buildIrisAccountVerifyUrl = (email: string): string =>
   `/apps/iris/v3/login/verify?email=${encodeURIComponent(normalizeEmail(email))}`;
 
@@ -5988,6 +6111,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const orderCreatedAt = extractShopifyOrderDate(order);
     const orderCreatedAtIso = orderCreatedAt ? orderCreatedAt.toISOString() : null;
     const failed: Array<{ token: string; error: string }> = [];
+    const assignedForOrderEmail = new Set<string>();
     const collectionLookupCache = new Map<string, Awaited<ReturnType<typeof resolveCollection>>>();
 
     try {
@@ -6118,6 +6242,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
       if (assignedIrisId) {
         const irisId = assignedIrisId;
+        assignedForOrderEmail.add(irisId);
         try {
           await recordShopifyOwnership(order, irisId);
         } catch (error) {
@@ -6238,6 +6363,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       });
 
       if (assignedIrisId) {
+        assignedForOrderEmail.add(assignedIrisId);
         try {
           await recordShopifyOwnership(order, assignedIrisId);
         } catch (error) {
@@ -6414,6 +6540,65 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     if (failed.length > 0) {
       req.log.warn({ failed, orderId }, "Some reservations failed to confirm");
+    }
+
+    if (customerEmail && assignedForOrderEmail.size > 0) {
+      try {
+        const assignedItems = await prisma.artwork.findMany({
+          where: {
+            iris_id: {
+              in: Array.from(assignedForOrderEmail)
+            }
+          },
+          include: {
+            collection: {
+              select: {
+                slug: true,
+                edition_size: true
+              }
+            }
+          },
+          orderBy: [{ iris_id: "asc" }]
+        });
+        if (assignedItems.length === 0) {
+          req.log.warn({ orderId, orderNumber: orderNumberDisplay }, "Order assignment email skipped with no items");
+        } else {
+          const emailResult = await sendOrderAssignmentEmailBestEffort({
+            toEmail: customerEmail,
+            orderNumber: orderNumberDisplay,
+            items: assignedItems.map((item) => ({
+              irisId: item.iris_id,
+              displayIrisId: formatDisplayIrisId(item.iris_id, item.collection),
+              status: item.status,
+              imageUrl: item.image_url,
+              rarityCode: item.rarity_code,
+              weightGrams: item.weight_grams,
+              activatedAt: item.activated_at
+            }))
+          });
+          await prisma.event.createMany({
+            data: assignedItems.map((item) => ({
+              iris_id: item.iris_id,
+              type: emailResult.sent ? "order_assignment_email_sent" : "order_assignment_email_skipped",
+              actor: "system",
+              payload_json: {
+                order_id: orderId,
+                order_number: orderNumberDisplay,
+                customer_email: customerEmail,
+                reason: emailResult.reason
+              }
+            }))
+          });
+          if (!emailResult.sent) {
+            req.log.warn(
+              { orderId, orderNumber: orderNumberDisplay, reason: emailResult.reason },
+              "Order assignment email skipped"
+            );
+          }
+        }
+      } catch (error) {
+        req.log.warn({ err: error, orderId, orderNumber: orderNumberDisplay }, "Order assignment email failed");
+      }
     }
 
     reply.send({ status: failed.length ? "partial" : "ok", failedCount: failed.length });
