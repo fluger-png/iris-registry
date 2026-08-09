@@ -2893,6 +2893,16 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .account-menu-form { margin:0; }
         .account-menu { position:relative; }
+        .account-menu::after {
+          content:"";
+          position:absolute;
+          top:100%;
+          right:0;
+          width:100%;
+          min-width:20rem;
+          height:1.4rem;
+          display:block;
+        }
         .account-menu__trigger {
           display:flex;
           align-items:center;
