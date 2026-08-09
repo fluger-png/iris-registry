@@ -2646,6 +2646,30 @@ const buildIrisArchiveFilterScript = (params: {
   </script>
 `;
 
+const buildGoogleAnalyticsHeadHtml = (title: string): string => {
+  const measurementId = env.googleAnalyticsId.trim();
+  if (!measurementId) return "";
+  return `
+      <script async src="https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}"></script>
+      <script>
+        (function () {
+          var measurementId = ${JSON.stringify(measurementId)};
+          var safeUrl = new URL(window.location.href);
+          ['session', 'email', 'code', 'token', 'transfer_code'].forEach(function (key) {
+            safeUrl.searchParams.delete(key);
+          });
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){ window.dataLayer.push(arguments); }
+          gtag('js', new Date());
+          gtag('config', measurementId, {
+            page_title: ${JSON.stringify(title)},
+            page_location: safeUrl.href,
+            page_path: safeUrl.pathname + safeUrl.search
+          });
+        })();
+      </script>`;
+};
+
 const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): string => {
   if (!options.user) {
     return `<a class="header-login" href="/apps/iris/v3/account">Sign In</a>`;
@@ -2685,6 +2709,7 @@ const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): st
 const buildIrisAccountShell = (title: string, body: string, options: IrisAccountShellOptions = {}) => {
   const accountMenuHtml = buildIrisAccountHeaderAccountHtml(options);
   const wrapClass = options.wrapClass ?? "";
+  const analyticsHeadHtml = buildGoogleAnalyticsHeadHtml(title);
 
   return `<!doctype html>
   <html lang="en">
@@ -2696,6 +2721,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
       <link href="https://fonts.googleapis.com/css2?family=Abel&family=Unbounded:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      ${analyticsHeadHtml}
       <style>
         * { box-sizing:border-box; }
         :root {

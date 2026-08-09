@@ -34,5 +34,6 @@ export const env = {
   partnerInviteTtlHours: Number(process.env.PARTNER_INVITE_TTL_HOURS ?? 24 * 7),
   partnerSessionTtlDays: Number(process.env.PARTNER_SESSION_TTL_DAYS ?? 30),
   resendApiKey: process.env.RESEND_API_KEY ?? "",
-  resendFromEmail: process.env.RESEND_FROM_EMAIL ?? ""
+  resendFromEmail: process.env.RESEND_FROM_EMAIL ?? "",
+  googleAnalyticsId: process.env.GOOGLE_ANALYTICS_ID ?? ""
 };
