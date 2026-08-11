@@ -1316,6 +1316,43 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-weight:700;
           display:inline-block;
         }
+        .customer-link{
+          color:var(--brand);
+          font-weight:700;
+          text-decoration:none;
+        }
+        .customer-link:hover,
+        .iris-link:hover,
+        .order-iris-id:hover{
+          text-decoration:underline;
+        }
+        .admin-stat-grid{
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          gap:12px;
+          margin:18px 0;
+        }
+        .admin-stat{
+          background:#fff;
+          border:1px solid var(--line);
+          border-radius:14px;
+          padding:14px;
+          box-shadow:0 6px 16px rgba(15,23,42,.04);
+        }
+        .admin-stat span{
+          display:block;
+          color:var(--muted);
+          font-size:11px;
+          margin-bottom:6px;
+        }
+        .admin-stat strong{
+          display:block;
+          font-size:18px;
+        }
+        .admin-section-title{
+          margin:22px 0 10px;
+          font-size:14px;
+        }
         .thumb{
           width:60px;height:60px;border-radius:0;object-fit:cover;border:1px solid var(--line);
         }
@@ -1484,6 +1521,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           .passport{ grid-template-columns:1fr; }
           .search{ min-width:0; width:100%; }
           .title-row{ flex-direction:column; align-items:stretch; }
+          .admin-stat-grid{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
         }
       </style>
     </head>
@@ -1778,7 +1816,21 @@ type AdminOrderArtworkView = {
   status: string;
   activated_at: Date | null;
   transfer_pending: boolean;
+  assigned_order_id: string | null;
+  assigned_customer_email: string | null;
+  owner_email: string | null;
 };
+
+type AdminArtworkWithCollection = Prisma.ArtworkGetPayload<{
+  include: {
+    collection: {
+      select: {
+        slug: true;
+        edition_size: true;
+      };
+    };
+  };
+}>;
 
 type AdminOrderView = {
   key: string;
@@ -1788,8 +1840,19 @@ type AdminOrderView = {
   order_date: Date | null;
   customer_name: string | null;
   email: string | null;
-  previous_order_count: number | null;
+  total_order_count: number | null;
+  financial_status: string | null;
   fulfillment_status: string | null;
+  currency: string | null;
+  total_price_cents: number | null;
+  artworks: AdminOrderArtworkView[];
+};
+
+type AdminCustomerView = {
+  email: string;
+  customer_name: string | null;
+  total_order_count: number;
+  orders: AdminOrderView[];
   artworks: AdminOrderArtworkView[];
 };
 
@@ -1833,6 +1896,8 @@ const adminOrderSortValue = (value: Date | null): number => (value ? value.getTi
 const formatAdminOrderTitle = (order: { order_name: string | null; order_number: string | null; key: string }): string =>
   order.order_name ?? (order.order_number ? `#${order.order_number.replace(/^#/, "")}` : order.key);
 
+const buildAdminCustomerHref = (email: string): string => `/admin/customers/${encodeURIComponent(normalizeEmail(email))}`;
+
 const formatRarityInitials = (rarityCode: string | null | undefined): string | null => {
   const key = rarityCode?.trim().toLowerCase();
   if (!key) return null;
@@ -1844,6 +1909,130 @@ const formatRarityInitials = (rarityCode: string | null | undefined): string | n
     "artist edition": "AE"
   };
   return map[key] ?? (key.split(/\s+/).map((part) => part[0]?.toUpperCase() ?? "").join("") || null);
+};
+
+const formatAdminOrderArtworkStatusLabel = (item: AdminOrderArtworkView): string => {
+  if (item.transfer_pending) return "Pending Transfer";
+  if (item.status === "activated") {
+    return `Activated${item.activated_at ? ` ${formatDate(item.activated_at)}` : ""}`;
+  }
+  return "Not Activated";
+};
+
+const buildAdminOrderArtworkListHtml = (artworks: AdminOrderArtworkView[], emptyText = "No IRIS linked"): string => {
+  if (!artworks.length) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
+  return `<div class="order-iris-list">
+    ${artworks
+      .map((item) => {
+        const thumb = item.image_url
+          ? `<img class="order-iris-thumb" src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id)}" loading="lazy" />`
+          : `<span class="order-iris-thumb">—</span>`;
+        const rarityBadge = formatRarityInitials(item.rarity_code);
+        const rarityBadgeClass =
+          item.status === "activated"
+            ? "order-iris-rarity order-iris-rarity--activated"
+            : "order-iris-rarity";
+        return `
+          <div class="order-iris-item">
+            ${thumb}
+            <span class="order-iris-meta">
+              <span class="order-iris-title">
+                <a class="order-iris-id" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${escapeHtml(item.display_iris_id)}</a>
+                ${rarityBadge ? `<span class="${rarityBadgeClass}" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
+              </span>
+              <span class="order-iris-status">${escapeHtml(formatAdminOrderArtworkStatusLabel(item))}</span>
+            </span>
+          </div>
+        `;
+      })
+      .join("")}
+  </div>`;
+};
+
+const buildAdminOrderArtworkViewsById = async (
+  artworks: AdminArtworkWithCollection[]
+): Promise<Map<string, AdminOrderArtworkView>> => {
+  const pendingTransfersByIrisId = await getPendingTransfersByIrisId(artworks.map((item) => item.iris_id));
+  return new Map<string, AdminOrderArtworkView>(
+    artworks.map((item) => [
+      item.iris_id,
+      {
+        iris_id: item.iris_id,
+        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+        image_url: item.image_url,
+        rarity_code: item.rarity_code,
+        status: item.status,
+        activated_at: item.activated_at,
+        transfer_pending: pendingTransfersByIrisId.has(item.iris_id),
+        assigned_order_id: item.assigned_order_id,
+        assigned_customer_email: item.assigned_customer_email,
+        owner_email: item.owner_email
+      } satisfies AdminOrderArtworkView
+    ])
+  );
+};
+
+const collectAdminOrderAliasKeys = (...values: Array<string | null | undefined>): string[] =>
+  buildOrderLookupValues(...values).map(normalizeOrderLookupKey).filter(Boolean);
+
+const countAdminCustomerOrdersByEmail = async (email: string): Promise<number> => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return 0;
+
+  const [shopifyOrders, assignedArtworks] = await Promise.all([
+    prisma.shopifyOrder.findMany({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+      select: {
+        id: true,
+        shopify_order_id: true,
+        order_name: true,
+        order_number: true
+      },
+      take: 1000
+    }),
+    prisma.artwork.findMany({
+      where: {
+        assigned_order_id: { not: null },
+        assigned_customer_email: { equals: normalizedEmail, mode: "insensitive" }
+      },
+      select: {
+        assigned_order_id: true
+      },
+      take: 1000
+    })
+  ]);
+
+  const shopifyAliasKeys = new Set<string>();
+  const uniqueOrderKeys = new Set<string>();
+  for (const order of shopifyOrders) {
+    const keys = collectOrderLookupKeys(order);
+    keys.forEach((key) => shopifyAliasKeys.add(key));
+    uniqueOrderKeys.add(`shopify:${order.id}`);
+  }
+
+  for (const item of assignedArtworks) {
+    const keys = collectAdminOrderAliasKeys(item.assigned_order_id);
+    if (!keys.length || keys.some((key) => shopifyAliasKeys.has(key))) continue;
+    uniqueOrderKeys.add(`legacy:${keys[0]}`);
+  }
+
+  return uniqueOrderKeys.size;
+};
+
+const loadAdminTotalOrderCountsByEmail = async (emails: string[]): Promise<Map<string, number>> => {
+  const uniqueEmails = Array.from(new Set(emails.map(normalizeEmail).filter(Boolean)));
+  const pairs = await Promise.all(
+    uniqueEmails.map(async (email) => [email, await countAdminCustomerOrdersByEmail(email)] as const)
+  );
+  return new Map(pairs);
+};
+
+const formatAdminOrderPaymentLabel = (order: AdminOrderView): string => {
+  if (!order.financial_status && order.total_price_cents == null) return "—";
+  const status = formatIrisAccountPaymentStatus(order.financial_status);
+  const amount = formatIrisAccountOrderMoneyCents(order.total_price_cents, order.currency);
+  if (amount === "-" && normalizeIrisAccountStatusKey(order.financial_status) === "paid") return "Paid $0.00";
+  return amount === "-" ? status : `${status} ${amount}`;
 };
 
 const fulfillmentPill = (status: string | null): string => {
@@ -1870,50 +2059,23 @@ const buildAdminOrdersHtml = (
 ) => {
   const rows = orders
     .map((order) => {
-      const artworksHtml = order.artworks.length
-        ? `<div class="order-iris-list">
-            ${order.artworks
-              .map((item) => {
-                const thumb = item.image_url
-                  ? `<img class="order-iris-thumb" src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.display_iris_id)}" loading="lazy" />`
-                  : `<span class="order-iris-thumb">—</span>`;
-                const statusLabel = item.transfer_pending
-                  ? "Pending Transfer"
-                  : item.status === "activated"
-                    ? `Activated${item.activated_at ? ` ${formatDate(item.activated_at)}` : ""}`
-                    : "Not Activated";
-                const rarityBadge = formatRarityInitials(item.rarity_code);
-                const rarityBadgeClass =
-                  item.status === "activated"
-                    ? "order-iris-rarity order-iris-rarity--activated"
-                    : "order-iris-rarity";
-                return `
-                  <div class="order-iris-item">
-                    ${thumb}
-                    <span class="order-iris-meta">
-                      <span class="order-iris-title">
-                        <a class="order-iris-id" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${escapeHtml(item.display_iris_id)}</a>
-                        ${rarityBadge ? `<span class="${rarityBadgeClass}" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
-                      </span>
-                      <span class="order-iris-status">${escapeHtml(statusLabel)}</span>
-                    </span>
-                  </div>
-                `;
-              })
-              .join("")}
-          </div>`
-        : `<span class="muted">No IRIS linked</span>`;
+      const artworksHtml = buildAdminOrderArtworkListHtml(order.artworks);
       const customerLabel = order.customer_name ?? order.email ?? "—";
-      const previousOrdersLabel =
-        order.previous_order_count != null && order.previous_order_count > 0
-          ? String(order.previous_order_count)
+      const customerHtml = order.email
+        ? `<a class="customer-link" href="${escapeHtml(buildAdminCustomerHref(order.email))}">${escapeHtml(customerLabel)}</a>${
+            order.customer_name && order.email ? `<div class="muted">${escapeHtml(order.email)}</div>` : ""
+          }`
+        : escapeHtml(customerLabel);
+      const totalOrdersLabel =
+        order.total_order_count != null && order.total_order_count > 0
+          ? String(order.total_order_count)
           : "—";
       return `
         <tr>
           <td><strong>${escapeHtml(formatAdminOrderTitle(order))}</strong></td>
           <td>${order.order_date ? formatDate(order.order_date) : "—"}</td>
-          <td>${escapeHtml(customerLabel)}</td>
-          <td>${previousOrdersLabel}</td>
+          <td>${customerHtml}</td>
+          <td>${totalOrdersLabel}</td>
           <td>${artworksHtml}</td>
           <td>${fulfillmentPill(order.fulfillment_status)}</td>
         </tr>
@@ -1947,7 +2109,7 @@ const buildAdminOrdersHtml = (
             <th>Order Number</th>
             <th>Date</th>
             <th>Name</th>
-            <th>Previous Orders</th>
+            <th>Total Orders</th>
             <th>IRIS Linked</th>
             <th>Fulfillment</th>
           </tr>
@@ -1964,6 +2126,68 @@ const buildAdminOrdersHtml = (
     </div>
   `;
   return buildAdminShell("IRIS Admin", body, searchValue, "orders");
+};
+
+const buildAdminCustomerHtml = (customer: AdminCustomerView): string => {
+  const totalOrders = customer.total_order_count;
+  const totalIris = customer.artworks.length;
+  const activatedIris = customer.artworks.filter((item) => item.status === "activated").length;
+  const pendingTransfers = customer.artworks.filter((item) => item.transfer_pending).length;
+  const displayName = customer.customer_name ?? customer.email;
+  const ordersRows = customer.orders
+    .map((order) => {
+      return `
+        <tr>
+          <td><strong>${escapeHtml(formatAdminOrderTitle(order))}</strong></td>
+          <td>${order.order_date ? formatDate(order.order_date) : "—"}</td>
+          <td>${escapeHtml(formatAdminOrderPaymentLabel(order))}</td>
+          <td>${fulfillmentPill(order.fulfillment_status)}</td>
+          <td>${buildAdminOrderArtworkListHtml(order.artworks)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const body = `
+    <div class="title-row">
+      <div>
+        <h1>${escapeHtml(displayName)}</h1>
+        <div class="muted">${escapeHtml(customer.email)}</div>
+      </div>
+      <a class="page-link" href="/admin/orders?q=${encodeURIComponent(customer.email)}">Back to Orders</a>
+    </div>
+
+    <div class="admin-stat-grid">
+      <div class="admin-stat"><span>Total Orders</span><strong>${escapeHtml(String(totalOrders))}</strong></div>
+      <div class="admin-stat"><span>Total IRIS</span><strong>${escapeHtml(String(totalIris))}</strong></div>
+      <div class="admin-stat"><span>Activated</span><strong>${escapeHtml(String(activatedIris))}</strong></div>
+      <div class="admin-stat"><span>Pending Transfer</span><strong>${escapeHtml(String(pendingTransfers))}</strong></div>
+    </div>
+
+    <h2 class="admin-section-title">Orders</h2>
+    <div class="card table">
+      <table>
+        <thead>
+          <tr>
+            <th>Order Number</th>
+            <th>Date</th>
+            <th>Payment</th>
+            <th>Fulfillment</th>
+            <th>IRIS Linked</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ordersRows || "<tr><td colspan='5'>No orders</td></tr>"}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="admin-section-title">IRIS Held / Connected</h2>
+    <div class="card">
+      ${buildAdminOrderArtworkListHtml(customer.artworks, "No IRIS connected")}
+    </div>
+  `;
+  return buildAdminShell("IRIS Customer", body, "", "orders");
 };
 
 const buildActivationLogsHtml = (
@@ -8740,6 +8964,174 @@ export const createServer = async (): Promise<FastifyInstance> => {
     reply.redirect(302, "/partner/login");
   });
 
+  app.get("/admin/customers/:email", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const params = req.params as { email: string };
+    const email = normalizeEmail(decodeURIComponent(params.email || ""));
+    if (!isValidEmail(email)) {
+      reply.code(400).type("text/plain; charset=utf-8").send("Invalid customer email");
+      return;
+    }
+
+    const [shopifyOrders, assignedArtworks] = await Promise.all([
+      prisma.shopifyOrder.findMany({
+        where: { email: { equals: email, mode: "insensitive" } },
+        select: {
+          id: true,
+          shopify_order_id: true,
+          order_name: true,
+          order_number: true,
+          email: true,
+          financial_status: true,
+          fulfillment_status: true,
+          currency: true,
+          total_price_cents: true,
+          processed_at: true,
+          created_at_shopify: true,
+          updated_at_shopify: true,
+          raw_json: true,
+          created_at: true
+        },
+        orderBy: [{ created_at_shopify: "desc" }, { processed_at: "desc" }, { created_at: "desc" }],
+        take: 500
+      }),
+      prisma.artwork.findMany({
+        where: {
+          OR: [
+            { assigned_customer_email: { equals: email, mode: "insensitive" } },
+            { owner_email: { equals: email, mode: "insensitive" } }
+          ]
+        },
+        include: {
+          collection: {
+            select: {
+              slug: true,
+              edition_size: true
+            }
+          }
+        },
+        orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+        take: 1000
+      })
+    ]);
+
+    const assignedEvents = await prisma.event.findMany({
+      where: {
+        iris_id: { in: assignedArtworks.map((item) => item.iris_id) },
+        type: "assigned"
+      },
+      orderBy: { created_at: "desc" }
+    });
+    const assignedEventByIrisId = new Map<string, (typeof assignedEvents)[number]>();
+    for (const event of assignedEvents) {
+      if (!assignedEventByIrisId.has(event.iris_id)) {
+        assignedEventByIrisId.set(event.iris_id, event);
+      }
+    }
+
+    const artworkViewsById = await buildAdminOrderArtworkViewsById(assignedArtworks);
+    const artworkByOrderKey = new Map<string, AdminOrderArtworkView[]>();
+    for (const item of assignedArtworks) {
+      const artworkView = artworkViewsById.get(item.iris_id);
+      if (!artworkView) continue;
+      for (const key of collectAdminOrderAliasKeys(item.assigned_order_id)) {
+        const list = artworkByOrderKey.get(key) ?? [];
+        if (!list.some((existing) => existing.iris_id === artworkView.iris_id)) {
+          list.push(artworkView);
+        }
+        artworkByOrderKey.set(key, list);
+      }
+    }
+
+    const knownShopifyOrderKeys = new Set<string>();
+    const rows: AdminOrderView[] = shopifyOrders.map((order) => {
+      const lookupKeys = collectOrderLookupKeys(order);
+      lookupKeys.forEach((key) => knownShopifyOrderKeys.add(key));
+      const artworks = lookupKeys.flatMap((key) => artworkByOrderKey.get(key) ?? []);
+      return {
+        key: order.order_name ?? order.order_number ?? order.shopify_order_id ?? order.id,
+        lookup_keys: lookupKeys,
+        order_name: order.order_name,
+        order_number: order.order_number,
+        order_date: getAdminOrderDate(order),
+        customer_name: extractAdminOrderCustomerName(order.raw_json),
+        email: order.email ?? email,
+        total_order_count: null,
+        financial_status: order.financial_status,
+        fulfillment_status: order.fulfillment_status,
+        currency: order.currency,
+        total_price_cents: order.total_price_cents,
+        artworks: Array.from(new Map(artworks.map((item) => [item.iris_id, item])).values())
+      };
+    });
+
+    const legacyGroups = new Map<string, typeof assignedArtworks>();
+    for (const item of assignedArtworks) {
+      if (normalizeEmail(item.assigned_customer_email) !== email) continue;
+      const lookupKeys = collectAdminOrderAliasKeys(item.assigned_order_id);
+      if (lookupKeys.length === 0 || lookupKeys.some((key) => knownShopifyOrderKeys.has(key))) continue;
+      const key = lookupKeys[0];
+      const list = legacyGroups.get(key) ?? [];
+      list.push(item);
+      legacyGroups.set(key, list);
+    }
+
+    for (const [key, items] of legacyGroups) {
+      const first = items[0];
+      const firstEvent = first ? assignedEventByIrisId.get(first.iris_id) : null;
+      const orderDate = firstEvent ? extractAssignedEventOrderDate(firstEvent) : first?.updated_at ?? null;
+      const artworks = items
+        .map((item) => artworkViewsById.get(item.iris_id))
+        .filter((item): item is AdminOrderArtworkView => Boolean(item));
+      rows.push({
+        key,
+        lookup_keys: collectAdminOrderAliasKeys(first?.assigned_order_id ?? key),
+        order_name: first?.assigned_order_id ?? key,
+        order_number: first?.assigned_order_id?.replace(/^#/, "") ?? null,
+        order_date: orderDate,
+        customer_name: null,
+        email,
+        total_order_count: null,
+        financial_status: null,
+        fulfillment_status: null,
+        currency: null,
+        total_price_cents: null,
+        artworks
+      });
+    }
+
+    rows.sort((a, b) => {
+      const dateDiff = adminOrderSortValue(b.order_date) - adminOrderSortValue(a.order_date);
+      if (dateDiff !== 0) return dateDiff;
+      const numberA = Number((a.order_number ?? a.order_name ?? "").replace(/\D/g, ""));
+      const numberB = Number((b.order_number ?? b.order_name ?? "").replace(/\D/g, ""));
+      if (Number.isFinite(numberA) && Number.isFinite(numberB) && numberA !== numberB) {
+        return numberB - numberA;
+      }
+      return formatAdminOrderTitle(b).localeCompare(formatAdminOrderTitle(a));
+    });
+
+    const totalOrderCount = await countAdminCustomerOrdersByEmail(email);
+    const customerName = shopifyOrders.map((order) => extractAdminOrderCustomerName(order.raw_json)).find(Boolean) ?? null;
+    const artworks = Array.from(new Map(Array.from(artworkViewsById.values()).map((item) => [item.iris_id, item])).values()).sort(
+      (a, b) => b.iris_id.localeCompare(a.iris_id)
+    );
+
+    reply
+      .code(200)
+      .type("text/html; charset=utf-8")
+      .send(
+        buildAdminCustomerHtml({
+          email,
+          customer_name: customerName,
+          total_order_count: totalOrderCount,
+          orders: rows.map((row) => ({ ...row, total_order_count: totalOrderCount })),
+          artworks
+        })
+      );
+  });
+
   app.get("/admin/orders", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
@@ -8805,7 +9197,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
         order_name: true,
         order_number: true,
         email: true,
+        financial_status: true,
         fulfillment_status: true,
+        currency: true,
+        total_price_cents: true,
         processed_at: true,
         created_at_shopify: true,
         updated_at_shopify: true,
@@ -8830,21 +9225,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     }
 
-    const pendingTransfersByIrisId = await getPendingTransfersByIrisId(assignedArtworks.map((item) => item.iris_id));
-    const artworkViewsById = new Map<string, AdminOrderArtworkView>(
-      assignedArtworks.map((item) => [
-        item.iris_id,
-        {
-          iris_id: item.iris_id,
-          display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-          image_url: item.image_url,
-          rarity_code: item.rarity_code,
-          status: item.status,
-          activated_at: item.activated_at,
-          transfer_pending: pendingTransfersByIrisId.has(item.iris_id)
-        } satisfies AdminOrderArtworkView
-      ] as [string, AdminOrderArtworkView])
-    );
+    const artworkViewsById = await buildAdminOrderArtworkViewsById(assignedArtworks);
 
     const artworkByOrderKey = new Map<string, AdminOrderArtworkView[]>();
     for (const item of assignedArtworks) {
@@ -8872,8 +9253,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
         order_date: getAdminOrderDate(order),
         customer_name: extractAdminOrderCustomerName(order.raw_json),
         email: order.email,
-        previous_order_count: null,
+        total_order_count: null,
+        financial_status: order.financial_status,
         fulfillment_status: order.fulfillment_status,
+        currency: order.currency,
+        total_price_cents: order.total_price_cents,
         artworks: Array.from(new Map(artworks.map((item) => [item.iris_id, item])).values())
       };
     });
@@ -8906,8 +9290,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
         order_date: orderDate,
         customer_name: null,
         email,
-        previous_order_count: null,
+        total_order_count: null,
+        financial_status: null,
         fulfillment_status: null,
+        currency: null,
+        total_price_cents: null,
         artworks
       });
     }
@@ -8923,43 +9310,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return formatAdminOrderTitle(b).localeCompare(formatAdminOrderTitle(a));
     });
 
-    const knownOrdersByEmail = new Map<string, Array<{ keys: string[]; date: Date | null }>>();
-    for (const row of rows) {
-      const normalizedEmail = row.email ? normalizeEmail(row.email) : null;
-      if (!normalizedEmail) continue;
-      const list = knownOrdersByEmail.get(normalizedEmail) ?? [];
-      if (!list.some((item) => item.keys.some((key) => row.lookup_keys.includes(key)))) {
-        list.push({ keys: row.lookup_keys, date: row.order_date });
-      }
-      knownOrdersByEmail.set(normalizedEmail, list);
-    }
-
-    const rowsWithCounts = rows.map((row) => {
-      const normalizedEmail = row.email ? normalizeEmail(row.email) : null;
-      if (!normalizedEmail) return row;
-      const knownOrders = knownOrdersByEmail.get(normalizedEmail) ?? [];
-      const currentDateValue = adminOrderSortValue(row.order_date);
-      const previousCount = knownOrders.filter((order) => {
-        const sameOrder = order.keys.some((key) => row.lookup_keys.includes(key));
-        if (sameOrder) return false;
-        const orderDateValue = adminOrderSortValue(order.date);
-        return currentDateValue > 0 && orderDateValue > 0 ? orderDateValue < currentDateValue : true;
-      }).length;
-      return {
-        ...row,
-        previous_order_count: previousCount
-      };
-    });
-
     const start = (page - 1) * take;
-    const pageRows = rowsWithCounts.slice(start, start + take);
-    const hasNext = rowsWithCounts.length > start + take;
+    const pageRows = rows.slice(start, start + take);
+    const totalOrderCountsByEmail = await loadAdminTotalOrderCountsByEmail(
+      pageRows.map((row) => row.email).filter((value): value is string => Boolean(value))
+    );
+    const pageRowsWithCounts = pageRows.map((row) => {
+      const normalizedEmail = row.email ? normalizeEmail(row.email) : null;
+      return normalizedEmail
+        ? {
+            ...row,
+            total_order_count: totalOrderCountsByEmail.get(normalizedEmail) ?? row.total_order_count
+          }
+        : row;
+    });
+    const hasNext = rows.length > start + take;
     const hasPrev = page > 1;
 
     reply
       .code(200)
       .type("text/html; charset=utf-8")
-      .send(buildAdminOrdersHtml(pageRows, q ?? "", page, hasPrev, hasNext));
+      .send(buildAdminOrdersHtml(pageRowsWithCounts, q ?? "", page, hasPrev, hasNext));
   });
 
   app.get("/admin", async (req, reply) => {
