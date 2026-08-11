@@ -1421,6 +1421,27 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           color:var(--brand);
           font-weight:700;
         }
+        .order-iris-title{
+          display:flex;
+          align-items:center;
+          gap:6px;
+          flex-wrap:wrap;
+        }
+        .order-iris-rarity{
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          min-width:24px;
+          padding:2px 6px;
+          border-radius:999px;
+          border:1px solid #F2D879;
+          background:#FFF9D5;
+          color:#B78103;
+          font-size:10px;
+          line-height:1.1;
+          font-weight:800;
+          letter-spacing:.08em;
+        }
         .order-iris-status{
           color:var(--muted);
           font-size:11px;
@@ -1748,6 +1769,7 @@ type AdminOrderArtworkView = {
   iris_id: string;
   display_iris_id: string;
   image_url: string | null;
+  rarity_code: string | null;
   status: string;
   activated_at: Date | null;
   transfer_pending: boolean;
@@ -1806,6 +1828,19 @@ const adminOrderSortValue = (value: Date | null): number => (value ? value.getTi
 const formatAdminOrderTitle = (order: { order_name: string | null; order_number: string | null; key: string }): string =>
   order.order_name ?? (order.order_number ? `#${order.order_number.replace(/^#/, "")}` : order.key);
 
+const formatRarityInitials = (rarityCode: string | null | undefined): string | null => {
+  const key = rarityCode?.trim().toLowerCase();
+  if (!key) return null;
+  const map: Record<string, string> = {
+    common: "C",
+    uncommon: "U",
+    rare: "R",
+    "ultra rare": "UR",
+    "artist edition": "AE"
+  };
+  return map[key] ?? (key.split(/\s+/).map((part) => part[0]?.toUpperCase() ?? "").join("") || null);
+};
+
 const fulfillmentPill = (status: string | null): string => {
   if (!status) {
     return `<span class="pill" style="background:#F3F4F6;color:#6B7280;">—</span>`;
@@ -1842,11 +1877,15 @@ const buildAdminOrdersHtml = (
                   : item.status === "activated"
                     ? `Activated${item.activated_at ? ` ${formatDate(item.activated_at)}` : ""}`
                     : "Not Activated";
+                const rarityBadge = formatRarityInitials(item.rarity_code);
                 return `
                   <div class="order-iris-item">
                     ${thumb}
                     <span class="order-iris-meta">
-                      <a class="order-iris-id" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${escapeHtml(item.display_iris_id)}</a>
+                      <span class="order-iris-title">
+                        <a class="order-iris-id" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${escapeHtml(item.display_iris_id)}</a>
+                        ${rarityBadge ? `<span class="order-iris-rarity" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
+                      </span>
                       <span class="order-iris-status">${escapeHtml(statusLabel)}</span>
                     </span>
                   </div>
@@ -3802,6 +3841,24 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           color:var(--iris-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:1.35rem;
+          display:flex;
+          align-items:center;
+          gap:.7rem;
+          flex-wrap:wrap;
+        }
+        .iris-order-artwork__rarity {
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          min-width:2.8rem;
+          padding:.25rem .6rem;
+          border:1px solid rgba(201,168,76,.58);
+          color:var(--iris-gold-bright);
+          background:rgba(201,168,76,.08);
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:.9rem;
+          line-height:1;
+          letter-spacing:.1rem;
         }
         .iris-order-artwork__meta {
           margin-top:.2rem;
@@ -4852,11 +4909,15 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
           const meta = isActivated
             ? `Rarity: ${item.rarity_code || "-"} · Weight: ${formatIrisAccountWeight(item.weight_grams)} · Status: ${status}`
             : `Status: ${status} · Details reveal after activation`;
+          const rarityBadge = isActivated ? formatRarityInitials(item.rarity_code) : null;
           return `
             <div class="iris-order-artwork">
               ${thumb}
               <div>
-                <div class="iris-order-artwork__name">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
+                <div class="iris-order-artwork__name">
+                  <span>${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</span>
+                  ${rarityBadge ? `<span class="iris-order-artwork__rarity" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
+                </div>
                 <div class="iris-order-artwork__meta">${escapeHtml(meta)}</div>
               </div>
               ${action}
@@ -8790,6 +8851,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           iris_id: item.iris_id,
           display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
           image_url: item.image_url,
+          rarity_code: item.rarity_code,
           status: item.status,
           activated_at: item.activated_at,
           transfer_pending: pendingTransfersByIrisId.has(item.iris_id)
