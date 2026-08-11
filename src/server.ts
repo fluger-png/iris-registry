@@ -1442,6 +1442,11 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           font-weight:800;
           letter-spacing:.08em;
         }
+        .order-iris-rarity--activated{
+          border-color:#86EFAC;
+          background:#ECFDF3;
+          color:#2F9E67;
+        }
         .order-iris-status{
           color:var(--muted);
           font-size:11px;
@@ -1878,13 +1883,17 @@ const buildAdminOrdersHtml = (
                     ? `Activated${item.activated_at ? ` ${formatDate(item.activated_at)}` : ""}`
                     : "Not Activated";
                 const rarityBadge = formatRarityInitials(item.rarity_code);
+                const rarityBadgeClass =
+                  item.status === "activated"
+                    ? "order-iris-rarity order-iris-rarity--activated"
+                    : "order-iris-rarity";
                 return `
                   <div class="order-iris-item">
                     ${thumb}
                     <span class="order-iris-meta">
                       <span class="order-iris-title">
                         <a class="order-iris-id" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${escapeHtml(item.display_iris_id)}</a>
-                        ${rarityBadge ? `<span class="order-iris-rarity" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
+                        ${rarityBadge ? `<span class="${rarityBadgeClass}" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
                       </span>
                       <span class="order-iris-status">${escapeHtml(statusLabel)}</span>
                     </span>
@@ -3841,24 +3850,6 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           color:var(--iris-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:1.35rem;
-          display:flex;
-          align-items:center;
-          gap:.7rem;
-          flex-wrap:wrap;
-        }
-        .iris-order-artwork__rarity {
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          min-width:2.8rem;
-          padding:.25rem .6rem;
-          border:1px solid rgba(201,168,76,.58);
-          color:var(--iris-gold-bright);
-          background:rgba(201,168,76,.08);
-          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:.9rem;
-          line-height:1;
-          letter-spacing:.1rem;
         }
         .iris-order-artwork__meta {
           margin-top:.2rem;
@@ -4909,15 +4900,11 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
           const meta = isActivated
             ? `Rarity: ${item.rarity_code || "-"} · Weight: ${formatIrisAccountWeight(item.weight_grams)} · Status: ${status}`
             : `Status: ${status} · Details reveal after activation`;
-          const rarityBadge = isActivated ? formatRarityInitials(item.rarity_code) : null;
           return `
             <div class="iris-order-artwork">
               ${thumb}
               <div>
-                <div class="iris-order-artwork__name">
-                  <span>${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</span>
-                  ${rarityBadge ? `<span class="iris-order-artwork__rarity" title="${escapeHtml(item.rarity_code || "")}">${escapeHtml(rarityBadge)}</span>` : ""}
-                </div>
+                <div class="iris-order-artwork__name">${escapeHtml(formatIrisAccountArchiveLabel(item.display_iris_id || item.iris_id))}</div>
                 <div class="iris-order-artwork__meta">${escapeHtml(meta)}</div>
               </div>
               ${action}
