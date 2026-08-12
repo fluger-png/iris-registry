@@ -7318,8 +7318,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
         const sortAt = new Date(cursor.sortAt);
         cursorFilter = {
           OR: [
-            { updated_at: { lt: sortAt } },
-            { updated_at: sortAt, iris_id: { lt: cursor.irisId } }
+            { activated_at: { lt: sortAt } },
+            { activated_at: sortAt, iris_id: { lt: cursor.irisId } }
           ]
         };
       } catch {
@@ -7342,7 +7342,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const [items, totalCount] = await Promise.all([
       prisma.artwork.findMany({
         where,
-        orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
+        orderBy: [{ activated_at: "desc" }, { iris_id: "desc" }],
         take: limit + 1,
         include: {
           collection: {
@@ -7368,7 +7368,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const slice = hasMore ? items.slice(0, limit) : items;
     const nextCursor = hasMore
       ? encodeCursor({
-          sortAt: slice[slice.length - 1].updated_at.toISOString(),
+          sortAt: (slice[slice.length - 1].activated_at ?? slice[slice.length - 1].updated_at).toISOString(),
           irisId: slice[slice.length - 1].iris_id
         })
       : null;
