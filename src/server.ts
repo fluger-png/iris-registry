@@ -3787,6 +3787,10 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           display:block;
           background:#202020;
         }
+        .v2-passport-side {
+          display:grid;
+          gap:1.8rem;
+        }
         .v2-passport-panel {
           background:var(--v2-surface-2);
           border:1px solid var(--v2-border);
@@ -3865,6 +3869,79 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .v2-passport-button:hover {
           border-color:rgba(201,168,76,.5);
           background:rgba(201,168,76,.08);
+        }
+        .v2-passport-shop {
+          display:flex;
+          justify-content:center;
+          width:100%;
+        }
+        .v2-passport-shop__button,
+        .v2-passport-shop__button:visited {
+          position:relative;
+          min-height:4.2rem;
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          padding:1.1rem 5.4rem;
+          border:1px solid rgba(237,232,223,.92) !important;
+          border-radius:1.2rem;
+          background:#111215;
+          color:#ffffff !important;
+          text-decoration:none;
+          text-transform:uppercase;
+          font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size:1.2rem;
+          font-weight:700;
+          line-height:1;
+          letter-spacing:0;
+          overflow:hidden;
+          isolation:isolate;
+          box-shadow:0 0 0 1px rgba(234,191,80,.18), 0 1rem 2.6rem rgba(0,0,0,.34);
+        }
+        .v2-passport-shop__button span {
+          position:relative;
+          z-index:2;
+          white-space:nowrap;
+        }
+        .v2-passport-shop__button::before,
+        .v2-passport-shop__button::after {
+          content:"";
+          position:absolute;
+          pointer-events:none;
+        }
+        .v2-passport-shop__button::before {
+          inset:-155%;
+          z-index:0;
+          opacity:.72;
+          background:conic-gradient(
+            from 0deg,
+            rgba(255,255,255,0) 0deg,
+            #c9a84c 42deg,
+            #fff6cf 82deg,
+            rgba(255,255,255,0) 132deg,
+            #eabf50 190deg,
+            #ffffff 244deg,
+            rgba(255,255,255,0) 306deg,
+            #c9a84c 360deg
+          );
+          animation:iris-shop-gold-spin 8s cubic-bezier(.56,.15,.28,.86) infinite;
+        }
+        .v2-passport-shop__button::after {
+          inset:2px;
+          z-index:1;
+          border-radius:1rem;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(234,191,80,.25), rgba(234,191,80,0) 46%),
+            linear-gradient(180deg, #161616 0%, #090909 100%);
+        }
+        .v2-passport-shop__button:hover,
+        .v2-passport-shop__button:focus {
+          border-color:#ffffff !important;
+          color:#ffffff !important;
+        }
+        .v2-passport-shop__button:hover::before,
+        .v2-passport-shop__button:focus::before {
+          opacity:1;
         }
         .v2-passport-button:disabled {
           opacity:.52;
@@ -4325,6 +4402,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .v2-passport-meta__row { display:grid; gap:.4rem; }
           .v2-passport-meta__value { text-align:left; }
           .v2-passport-actions { flex-direction:column; }
+          .v2-passport-shop__button,
+          .v2-passport-shop__button:visited {
+            width:min(100%, 28rem);
+            padding:1.05rem 2.4rem;
+          }
           .v2-passport-button,
           .v2-passport-button:visited { width:100%; }
           .v2-passport-archive__wrap { padding:7rem 2rem; }
@@ -4787,38 +4869,43 @@ const buildIrisAccountPassportHtml = (params: {
             </button>
           </div>
 
-          <div class="v2-passport-panel">
-            <p class="v2-passport-panel__eyebrow">Activated Work</p>
-            <h2 class="v2-passport-panel__title">${escapeHtml(formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id))}</h2>
+          <div class="v2-passport-side">
+            <div class="v2-passport-panel">
+              <p class="v2-passport-panel__eyebrow">Activated Work</p>
+              <h2 class="v2-passport-panel__title">${escapeHtml(formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id))}</h2>
 
-            <div class="v2-passport-meta">
-              <div class="v2-passport-meta__row">
-                <div class="v2-passport-meta__label">Activated</div>
-                <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountLongDate(params.item.activated_at))}</div>
+              <div class="v2-passport-meta">
+                <div class="v2-passport-meta__row">
+                  <div class="v2-passport-meta__label">Activated</div>
+                  <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountLongDate(params.item.activated_at))}</div>
+                </div>
+                <div class="v2-passport-meta__row">
+                  <div class="v2-passport-meta__label">Gold Content</div>
+                  <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountGold(params.item.weight_grams))}</div>
+                </div>
+                <div class="v2-passport-meta__row">
+                  <div class="v2-passport-meta__label">Rarity</div>
+                  <div class="v2-passport-meta__value">${escapeHtml(params.item.rarity_code || "Hidden until activated")}</div>
+                </div>
               </div>
-              <div class="v2-passport-meta__row">
-                <div class="v2-passport-meta__label">Gold Content</div>
-                <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountGold(params.item.weight_grams))}</div>
-              </div>
-              <div class="v2-passport-meta__row">
-                <div class="v2-passport-meta__label">Rarity</div>
-                <div class="v2-passport-meta__value">${escapeHtml(params.item.rarity_code || "Hidden until activated")}</div>
-              </div>
-            </div>
 
-            <div class="v2-passport-actions">
-              <form class="v2-passport-avatar-form" method="POST" action="/apps/iris/v3/avatar${sessionQuery}">
-                ${sessionHidden}
-                <input type="hidden" name="iris_id" value="${escapeHtml(params.item.iris_id)}" />
-                <button type="submit" class="v2-passport-button${isCurrentAvatar ? " is-active" : ""}" ${canSetAvatar ? "" : "disabled"}>
-                  ${escapeHtml(avatarButtonLabel)}
-                </button>
-              </form>
-              <button type="button" class="v2-passport-button" id="iris-v3-transfer-open">Transfer</button>
-              <button type="button" class="v2-passport-button v2-passport-button--ghost" id="iris-v3-sale-button">Sale</button>
+              <div class="v2-passport-actions">
+                <form class="v2-passport-avatar-form" method="POST" action="/apps/iris/v3/avatar${sessionQuery}">
+                  ${sessionHidden}
+                  <input type="hidden" name="iris_id" value="${escapeHtml(params.item.iris_id)}" />
+                  <button type="submit" class="v2-passport-button${isCurrentAvatar ? " is-active" : ""}" ${canSetAvatar ? "" : "disabled"}>
+                    ${escapeHtml(avatarButtonLabel)}
+                  </button>
+                </form>
+                <button type="button" class="v2-passport-button" id="iris-v3-transfer-open">Transfer</button>
+                <button type="button" class="v2-passport-button v2-passport-button--ghost" id="iris-v3-sale-button">Sale</button>
+              </div>
+              ${pendingNote}
+              <div id="iris-v3-sale-status" class="v2-passport-note" hidden>Marketplace sale tools are in development.</div>
             </div>
-            ${pendingNote}
-            <div id="iris-v3-sale-status" class="v2-passport-note" hidden>Marketplace sale tools are in development.</div>
+            <div class="v2-passport-shop">
+              <a class="v2-passport-shop__button" href="/products/iris-the-unseen-edition"><span>Shop Your IRIS</span></a>
+            </div>
           </div>
         </div>
       </div>
