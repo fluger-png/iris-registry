@@ -8499,11 +8499,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
   app.get("/apps/iris/iris/:irisId", async (req, reply) => {
     const params = req.params as { irisId: string };
-    const query = req.query as { token?: string };
+    const query = req.query as { token?: string; session?: string };
     const irisId = sanitizeIrisId(params.irisId);
     if (!irisId) {
       sendJson(reply, 400, { error: "invalid_iris_id" });
       return;
+    }
+    let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
+    try {
+      irisAccountAuth = await getIrisAccountAuth(req);
+    } catch (error) {
+      req.log.warn({ err: error, irisId }, "IRIS passport like auth check skipped");
     }
 
     const item = await prisma.artwork.findUnique({
@@ -8538,6 +8544,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       },
       orderBy: { created_at: "desc" }
     });
+    const likeState = await loadArchiveLikeState([item.iris_id], irisAccountAuth?.user.id ?? null);
     sendJson(reply, 200, {
       iris_id: item.iris_id,
       display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
@@ -8550,7 +8557,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
       transfer_pending_to: pendingTransfer?.to_email ?? null,
       transfer_expires_at: pendingTransfer?.expires_at ?? null,
       proof_url: proofPath,
-      collection: item.collection
+      collection: item.collection,
+      ...(likeState.enabled
+        ? {
+            like_count: likeState.counts.get(item.iris_id) ?? 0,
+            liked_by_me: likeState.liked.has(item.iris_id)
+          }
+        : {}),
+      likes_enabled: likeState.enabled
     });
   });
 
