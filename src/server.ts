@@ -4769,6 +4769,9 @@ const buildIrisAccountPassportHtml = (params: {
           <div>
             <p class="v2-passport-eyebrow">Digital Passport</p>
             <h1 class="v2-passport-page__title">IRIS Passport</h1>
+            <p class="v2-passport-page__summary">
+              This passport confirms the image, rarity, and gold content assigned to the activated work.
+            </p>
           </div>
           <div class="account-top-actions">
             <a href="${escapeHtml(libraryHref)}" class="btn secondary">Back</a>
@@ -4787,10 +4790,6 @@ const buildIrisAccountPassportHtml = (params: {
           <div class="v2-passport-panel">
             <p class="v2-passport-panel__eyebrow">Activated Work</p>
             <h2 class="v2-passport-panel__title">${escapeHtml(formatIrisAccountPassportTitle(params.item.display_iris_id || params.item.iris_id))}</h2>
-            <div class="v2-passport-panel__copy">
-              The registered record of your revealed artwork. Each activated IRIS keeps its image, activation date,
-              and rarity commitment in one permanent place.
-            </div>
 
             <div class="v2-passport-meta">
               <div class="v2-passport-meta__row">
