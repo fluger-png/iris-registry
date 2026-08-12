@@ -509,6 +509,48 @@ const getIrisAccountAuth = async (req: any, fallbackRawToken?: string) => {
   return { rawToken, session, user: await withIrisAccountAvatar(session.user) };
 };
 
+const loadArchiveLikeState = async (
+  irisIds: string[],
+  userId: string | null
+): Promise<{ enabled: boolean; counts: Map<string, number>; liked: Set<string> }> => {
+  if (!userId || irisIds.length === 0) {
+    return { enabled: false, counts: new Map(), liked: new Set() };
+  }
+
+  try {
+    const [counts, likedRows] = await Promise.all([
+      prisma.artworkLike.groupBy({
+        by: ["iris_id"],
+        where: { iris_id: { in: irisIds } },
+        _count: { _all: true }
+      }),
+      prisma.artworkLike.findMany({
+        where: {
+          iris_id: { in: irisIds },
+          user_id: userId
+        },
+        select: { iris_id: true }
+      })
+    ]);
+
+    return {
+      enabled: true,
+      counts: new Map(counts.map((item) => [item.iris_id, item._count._all])),
+      liked: new Set(likedRows.map((item) => item.iris_id))
+    };
+  } catch {
+    return { enabled: false, counts: new Map(), liked: new Set() };
+  }
+};
+
+const countArtworkLikes = async (irisId: string): Promise<number> => {
+  try {
+    return await prisma.artworkLike.count({ where: { iris_id: irisId } });
+  } catch {
+    return 0;
+  }
+};
+
 const sendCollaboratorInviteEmailBestEffort = async (params: {
   email: string;
   fullName: string;
@@ -7269,8 +7311,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   app.get("/apps/iris/seen-archive", async (req, reply) => {
-    const query = req.query as { limit?: string; cursor?: string; rarity?: string; collection?: string };
+    const query = req.query as { limit?: string; cursor?: string; rarity?: string; collection?: string; session?: string };
     const limit = parseLimit(query.limit, 20);
+    let irisAccountAuth: Awaited<ReturnType<typeof getIrisAccountAuth>> | null = null;
+    try {
+      irisAccountAuth = await getIrisAccountAuth(req);
+    } catch (error) {
+      req.log.warn({ err: error }, "IRIS archive like auth check skipped");
+    }
 
     const rarityParam = query.rarity?.trim();
     const rarityKey = rarityParam ? rarityParam.toLowerCase().replace(/\s+/g, " ") : "";
@@ -7366,6 +7414,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const hasMore = items.length > limit;
     const slice = hasMore ? items.slice(0, limit) : items;
+    const likeState = await loadArchiveLikeState(
+      slice.map((item) => item.iris_id),
+      irisAccountAuth?.user.id ?? null
+    );
     const nextCursor = hasMore
       ? encodeCursor({
           sortAt: (slice[slice.length - 1].activated_at ?? slice[slice.length - 1].updated_at).toISOString(),
@@ -7382,12 +7434,92 @@ export const createServer = async (): Promise<FastifyInstance> => {
         rarity_code: item.rarity_code,
         activated_at: item.activated_at,
         weight_grams: item.weight_grams,
-        collection: item.collection
+        collection: item.collection,
+        ...(likeState.enabled
+          ? {
+              like_count: likeState.counts.get(item.iris_id) ?? 0,
+              liked_by_me: likeState.liked.has(item.iris_id)
+            }
+          : {})
       })),
       nextCursor,
       total_count: totalCount,
+      likes_enabled: likeState.enabled,
       collection: collectionMeta
     });
+  });
+
+  app.post("/apps/iris/archive-like", async (req, reply) => {
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    const sessionToken = readSingleValue(body.session).trim();
+    const auth = await getIrisAccountAuth(req, sessionToken);
+    if (!auth) {
+      sendJson(reply, 401, { error: "not_authenticated", account_url: "/apps/iris/v3/account" });
+      return;
+    }
+
+    const irisId = normalizeIrisIdInput(readSingleValue(body.iris_id));
+    if (!irisId) {
+      sendJson(reply, 400, { error: "missing_iris_id" });
+      return;
+    }
+
+    const artwork = await prisma.artwork.findUnique({
+      where: { iris_id: irisId },
+      select: { iris_id: true, status: true, activated_at: true }
+    });
+    if (!artwork || artwork.status !== "activated" || !artwork.activated_at) {
+      sendJson(reply, 404, { error: "not_found" });
+      return;
+    }
+
+    try {
+      const existing = await prisma.artworkLike.findUnique({
+        where: {
+          iris_id_user_id: {
+            iris_id: irisId,
+            user_id: auth.user.id
+          }
+        },
+        select: { id: true }
+      });
+
+      if (existing) {
+        await prisma.artworkLike.delete({ where: { id: existing.id } });
+        sendJson(reply, 200, {
+          status: "ok",
+          iris_id: irisId,
+          liked: false,
+          like_count: await countArtworkLikes(irisId)
+        });
+        return;
+      }
+
+      await prisma.artworkLike.create({
+        data: {
+          iris_id: irisId,
+          user_id: auth.user.id
+        }
+      });
+      sendJson(reply, 200, {
+        status: "ok",
+        iris_id: irisId,
+        liked: true,
+        like_count: await countArtworkLikes(irisId)
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        sendJson(reply, 200, {
+          status: "ok",
+          iris_id: irisId,
+          liked: true,
+          like_count: await countArtworkLikes(irisId)
+        });
+        return;
+      }
+      req.log.error({ err: error, irisId, userId: auth.user.id }, "IRIS archive like toggle failed");
+      sendJson(reply, 503, { error: "likes_not_ready" });
+    }
   });
 
   app.get("/apps/iris/my-iris", async (req, reply) => {

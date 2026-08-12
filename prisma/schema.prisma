@@ -79,6 +79,7 @@ model Artwork {
   events                  Event[]
   reservations            Reservation[]
   ownership_transfers     OwnershipTransfer[]
+  likes                   ArtworkLike[]
 
   @@index([status])
   @@index([collection_id, status])
@@ -136,6 +137,20 @@ model OwnershipTransfer {
   @@index([iris_id, status])
   @@index([to_email, status])
   @@index([expires_at])
+}
+
+model ArtworkLike {
+  id         String   @id @default(cuid())
+  iris_id    String
+  user_id    String
+  created_at DateTime @default(now())
+
+  artwork    Artwork  @relation(fields: [iris_id], references: [iris_id], onDelete: Cascade)
+  user       IrisUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([iris_id, user_id])
+  @@index([iris_id])
+  @@index([user_id])
 }
 
 model ShopifyOrder {
@@ -202,6 +217,7 @@ model IrisUser {
   updated_at          DateTime             @updatedAt
 
   sessions            IrisAccountSession[]
+  likes               ArtworkLike[]
 
   @@index([email])
   @@index([username])
