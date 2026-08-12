@@ -3789,7 +3789,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .v2-passport-side {
           display:grid;
-          gap:1.8rem;
+          gap:5rem;
         }
         .v2-passport-panel {
           background:var(--v2-surface-2);
@@ -3878,11 +3878,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .v2-passport-shop__button,
         .v2-passport-shop__button:visited {
           position:relative;
-          min-height:4.2rem;
+          min-height:50px;
           display:inline-flex;
           align-items:center;
           justify-content:center;
-          padding:1.1rem 5.4rem;
+          padding:1.2rem 6.2rem;
           border:1px solid rgba(237,232,223,.92) !important;
           border-radius:1.2rem;
           background:#111215;
@@ -3890,7 +3890,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           text-decoration:none;
           text-transform:uppercase;
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:1.2rem;
+          font-size:14px;
           font-weight:700;
           line-height:1;
           letter-spacing:0;
