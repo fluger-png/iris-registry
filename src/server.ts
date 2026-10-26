@@ -2676,7 +2676,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .pagination a { color:var(--gold); }
         .profile-form { max-width:760px; display:grid; gap:24px; }
         .profile-form .field { margin:0; }
-        .profile-form .field label { font-size:14px; text-transform:none; color:var(--text); }
+        .profile-form .field label { font-size:14px; text-transform:none; letter-spacing:0; color:var(--text); }
         .profile-form textarea { resize:vertical; min-height:160px; line-height:1.6; }
         .avatar-editor { display:grid; grid-template-columns:96px minmax(0,1fr); gap:24px; align-items:center; }
         .avatar-editor .brand-avatar { width:96px; height:96px; }
