@@ -51,8 +51,21 @@ model Collection {
   artworks            Artwork[]
   collaborator_user   CollaboratorUser?
   collaborator_access CollaboratorCollectionAccess[]
+  presentation        CollectionPresentation?
 
   @@index([status])
+}
+
+model CollectionPresentation {
+  collection_id String   @id
+  display_name  String?
+  banner_url    String?
+  description   String   @default("")
+  gallery_urls  String[] @default([])
+  visible       Boolean  @default(true)
+  revision      Int      @default(0)
+  updated_at    DateTime @updatedAt
+  collection    Collection @relation(fields: [collection_id], references: [id], onDelete: Cascade)
 }
 
 model Artwork {

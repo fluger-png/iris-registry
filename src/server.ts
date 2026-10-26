@@ -12,6 +12,7 @@ import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } 
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation } from "./partner-collections.js";
 import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
@@ -2668,12 +2669,52 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .partner-nav a:hover { color:var(--text); }
         .partner-nav a[aria-current="page"] { color:var(--gold); border-color:var(--gold); }
         .section-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
-        .partner-workspace h2 { font-size:28px; margin:0; letter-spacing:0; }
+        .partner-workspace h2 { font-size:28px; margin:0; letter-spacing:0; min-width:0; overflow-wrap:anywhere; }
         .partner-workspace .btn:disabled { background:var(--bg-soft); border-color:var(--line); color:#746d62; cursor:not-allowed; }
         .brand-description { max-width:760px; white-space:pre-wrap; overflow-wrap:anywhere; }
         .collection-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; }
         .collection-summary { padding:24px 0; }
         .collection-summary h3 { overflow-wrap:anywhere; }
+        .collection-card { display:block; min-width:0; text-decoration:none; border:1px solid var(--line); background:var(--bg-soft); transition:border-color .2s; }
+        .collection-card:hover { border-color:var(--gold); }
+        .collection-banner { display:block; width:100%; height:auto; aspect-ratio:16/9; object-fit:cover; background:#151515; }
+        .collection-card-body { padding:24px; }
+        .collection-card h3 { font-size:20px; margin:0 0 24px; overflow-wrap:anywhere; }
+        .collection-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 16px; margin:0; }
+        .collection-metrics dt { font-family:var(--font-heading); font-size:11px; line-height:1.6; text-transform:uppercase; color:var(--muted); }
+        .collection-metrics dd { font-family:var(--font-heading); font-size:20px; line-height:1.4; color:var(--gold-bright); margin:8px 0 0; overflow-wrap:anywhere; }
+        .collection-form { display:grid; gap:32px; }
+        .collection-form .field { margin:0; }
+        .collection-form .hint { font-size:16px; color:var(--muted); margin:0; }
+        .collection-form textarea { resize:vertical; min-height:180px; }
+        .collection-form .btn { justify-self:start; }
+        .collection-settings-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:28px; align-items:end; }
+        .collection-settings-row .field { min-width:0; }
+        .collection-status { display:flex; gap:12px; align-items:center; min-height:54px; }
+        .collection-status input { position:absolute; opacity:0; }
+        .collection-status .switch-track { position:relative; width:48px; height:28px; border-radius:20px; background:#45433e; border:1px solid var(--line-strong); }
+        .collection-status .switch-track::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--text); transition:transform .15s; }
+        .collection-status input:checked + .switch-track { background:var(--gold); }
+        .collection-status input:checked + .switch-track::after { transform:translateX(20px); background:#050505; }
+        .collection-status input:focus-visible + .switch-track { outline:2px solid var(--gold); outline-offset:4px; }
+        .collection-status .status-on { display:none; }
+        .collection-status input:checked ~ .status-on { display:inline; }
+        .collection-status input:checked ~ .status-off { display:none; }
+        .collection-detail-metrics { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:24px 0; grid-template-columns:repeat(4,minmax(0,1fr)); }
+        .collection-banner-editor { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:28px; align-items:center; }
+        .collection-banner-editor .field { display:grid; gap:12px; }
+        .collection-form label.remove-image { display:flex; align-items:center; gap:10px; font-family:var(--font-body); font-size:18px; color:var(--muted); text-transform:none; }
+        .collection-gallery { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:20px; }
+        .collection-gallery .field { min-width:0; gap:12px; }
+        .collection-gallery img, .collection-gallery .image-placeholder { width:100%; height:auto; aspect-ratio:4/3; object-fit:cover; background:#151515; }
+        .collection-gallery .image-placeholder { display:grid; place-items:center; font-family:var(--font-heading); font-size:24px; color:var(--muted); }
+        .collection-gallery input[type="file"] { font-size:16px; padding:8px; }
+        .collection-gallery input::file-selector-button { display:block; margin:0 0 8px; }
+        .collection-form input:disabled { color:var(--muted); cursor:not-allowed; }
+        @media (max-width:820px) {
+          .collection-gallery { grid-template-columns:repeat(2,minmax(0,1fr)); }
+          .collection-banner-editor { grid-template-columns:minmax(0,1fr); gap:16px; }
+        }
         .iris-filters { display:grid; grid-template-columns:minmax(180px,250px) minmax(200px,1fr) auto; align-items:end; gap:16px; margin-bottom:24px; }
         .iris-filters label { display:grid; gap:8px; font-family:var(--font-heading); font-size:12px; font-weight:400; text-transform:uppercase; color:var(--gold); min-width:0; }
         .partner-workspace input:not([type="checkbox"]), .partner-workspace select, .partner-workspace textarea { border:1px solid var(--line-strong); background:#030303; color:var(--text); border-radius:0; padding:12px 16px; width:100%; font-family:var(--font-body); font-size:20px; line-height:1.4; min-height:54px; min-width:0; }
@@ -2713,7 +2754,10 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
           .brand-avatar { width:48px; height:48px; flex-basis:48px; }
           .partner-nav { gap:20px; }
           .partner-nav a { display:flex; align-items:center; font-size:12px; line-height:1.4; white-space:normal; }
-          .collection-list { grid-template-columns:1fr; gap:0; }
+          .collection-list { grid-template-columns:1fr; gap:24px; }
+          .collection-card-body { padding:20px; }
+          .collection-detail-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+          .collection-settings-row { grid-template-columns:minmax(0,1fr); gap:16px; }
           .iris-filters { grid-template-columns:minmax(0,1fr); }
           .iris-filters .btn { justify-self:start; }
           .avatar-editor { grid-template-columns:72px minmax(0,1fr); gap:16px; }
@@ -2837,25 +2881,79 @@ const buildPartnerWorkspaceHtml = (identity: PartnerWorkspaceIdentity, active: "
 };
 
 const buildPartnerDashboardHtml = (params: PartnerWorkspaceIdentity & {
-  collections: Array<{ name: string; editionSize: number; status: string; revealedCount: number }>;
+  collections: PartnerCollectionView[];
 }) => {
   const body = `
       <section>
         <div class="section-heading"><h2>Collections</h2><button class="btn" type="button" disabled title="Coming soon">+ Create Collection</button></div>
-        ${params.profile.description ? `<p class="brand-description">${escapeHtml(params.profile.description)}</p>` : ""}
         <div class="collection-list">
-        ${params.collections.map((collection) => `<article class="collection-summary">
-          <h3>${escapeHtml(collection.name)}</h3>
-          <dl>
-            <div><dt>Edition Size</dt><dd>${collection.editionSize}</dd></div>
-            <div><dt>Activated</dt><dd>${collection.revealedCount}</dd></div>
-            <div><dt>Status</dt><dd>${escapeHtml(collection.status)}</dd></div>
-          </dl>
-        </article>`).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
+        ${params.collections.map((view) => `<a class="collection-card" href="/partner/collections/${encodeURIComponent(view.collection.id)}">
+          <img class="collection-banner" src="${escapeHtml(view.presentation.record?.banner_url || view.product?.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE)}" alt="${escapeHtml(view.presentation.record?.display_name || view.collection.name)}" width="640" height="360" />
+          <div class="collection-card-body"><h3>${escapeHtml(view.presentation.record?.display_name || view.collection.name)}</h3>
+          <dl class="collection-metrics">
+            <div><dt>Edition Size</dt><dd>${view.collection.edition_size}</dd></div>
+            <div><dt>Price</dt><dd>${partnerCollectionPrice(view)}</dd></div>
+            <div><dt>Purchased</dt><dd>${view.purchased}</dd></div>
+            <div><dt>Activated</dt><dd>${view.activated}</dd></div>
+          </dl></div>
+        </a>`).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
         </div>
       </section>
   `;
   return buildPartnerWorkspaceHtml(params, "collections", body);
+};
+
+const partnerCollectionPrice = (view: PartnerCollectionView) => view.product
+  ? new Intl.NumberFormat("en-US", { style: "currency", currency: view.product.currency }).format(view.product.priceCents / 100)
+  : "Unavailable";
+
+const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
+  view: PartnerCollectionView; csrf: string; error?: string; saved?: boolean;
+}) => {
+  const { view } = params;
+  const record = view.presentation.record;
+  const image = record?.banner_url || view.product?.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE;
+  const gallery = record?.gallery_urls || [];
+  return buildPartnerWorkspaceHtml(params, "collections", `<section>
+    <div class="section-heading"><h2>${escapeHtml(record?.display_name || view.collection.name)}</h2><a href="/partner">Back</a></div>
+    ${params.error ? `<div class="error" role="alert">${escapeHtml(params.error)}</div>` : ""}
+    ${params.saved ? '<div class="success-message" role="status">Collection saved.</div>' : ""}
+    ${!view.presentation.available ? '<div class="error" role="status">Collection settings are temporarily unavailable.</div>' : ""}
+    <form class="collection-form" method="POST" enctype="multipart/form-data" action="/partner/collections/${encodeURIComponent(view.collection.id)}">
+      <input type="hidden" name="csrf_token" value="${params.csrf}" />
+      <input type="hidden" name="revision" value="${record?.revision ?? -1}" />
+      <div class="collection-settings-row">
+        <div class="field"><label for="collection-name">Collection name</label><input id="collection-name" name="display_name" maxlength="${COLLECTION_NAME_MAX}" value="${escapeHtml(record?.display_name || view.collection.name)}" required /></div>
+        <div class="field"><label for="collection-visible">Status (storefront)</label><label class="collection-status" for="collection-visible">
+          <input type="checkbox" role="switch" id="collection-visible" name="visible" value="1"${record?.visible === false ? "" : " checked"} />
+          <span class="switch-track" aria-hidden="true"></span><span class="status-on">On</span><span class="status-off">Off</span>
+        </label></div>
+      </div>
+      <div class="collection-banner-editor">
+        <img class="collection-banner" src="${escapeHtml(image)}" alt="Collection banner" width="640" height="360" />
+        <div class="field"><label for="collection-banner">Collection banner</label><input id="collection-banner" type="file" name="banner" accept="image/png,image/jpeg,image/webp" />
+          <p class="hint">16:9 · JPG, PNG or WebP · Maximum 2 MB.</p>
+          ${record?.banner_url ? '<label class="remove-image"><input type="checkbox" name="remove_banner" value="1" /> Reset banner</label>' : ""}
+        </div>
+      </div>
+      <dl class="collection-metrics collection-detail-metrics">
+        <div><dt>Edition size</dt><dd>${view.collection.edition_size}</dd></div>
+        <div><dt>Purchased</dt><dd>${view.purchased}</dd></div>
+        <div><dt>Activated</dt><dd>${view.activated}</dd></div>
+        <div><dt>Average gold weight</dt><dd>${view.averageWeight === null ? "-" : `${view.averageWeight.toFixed(3)} g`}</dd></div>
+      </dl>
+      ${view.weighed < view.purchased ? `<p class="hint">Gold weight recorded for ${view.weighed} of ${view.purchased} purchased IRIS.</p>` : ""}
+      <div class="field"><label for="collection-price">Price per IRIS</label><input id="collection-price" value="${partnerCollectionPrice(view)}" disabled /><p class="hint">Shopify price · Editing unavailable while the Shopify connection is offline.</p></div>
+      <div class="field"><label for="collection-description">Collection description</label><textarea id="collection-description" name="description" maxlength="${COLLECTION_DESCRIPTION_MAX}" rows="7">${escapeHtml(record?.description || "")}</textarea></div>
+      <div class="collection-gallery">${Array.from({ length: 4 }, (_, index) => `<div class="field">
+        <label for="collection-image-${index}">Image ${index + 1}</label>
+        ${gallery[index] ? `<img src="${escapeHtml(gallery[index])}" alt="Collection image ${index + 1}" width="320" height="240" />` : `<div class="image-placeholder" aria-hidden="true">${index + 1}</div>`}
+        <input id="collection-image-${index}" type="file" name="image_${index}" accept="image/png,image/jpeg,image/webp" />
+        ${gallery[index] ? `<label class="remove-image"><input type="checkbox" name="remove_image_${index}" value="1" /> Remove image</label>` : ""}
+      </div>`).join("")}</div>
+      <button class="btn" type="submit"${view.presentation.available ? "" : " disabled"}>Save Collection</button>
+    </form>
+  </section>`);
 };
 
 const buildPartnerIrisesHtml = (params: PartnerWorkspaceIdentity & {
@@ -7495,6 +7593,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
     });
   });
 
+  app.get("/apps/iris/collection-presentation", async (req, reply) => {
+    const handle = readSingleValue((req.query as Record<string, unknown>).handle);
+    if (!/^[a-z0-9-]{1,120}$/.test(handle)) return reply.code(400).send({ error: "invalid_collection" });
+    const collection = await prisma.collection.findFirst({ where: { OR: [{ slug: handle }, { shopify_handle: handle }] } });
+    if (!collection) return reply.code(404).send({ error: "collection_not_found" });
+    const presentation = await loadCollectionPresentation(prisma, collection.id);
+    if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
+    const record = presentation.record;
+    reply.header("Cache-Control", "public, max-age=30").send({
+      display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
+      description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
+      visible: record?.visible ?? true
+    });
+  });
+
   app.get("/apps/iris/seen-archive", async (req, reply) => {
     const query = req.query as { limit?: string; cursor?: string; rarity?: string; collection?: string; session?: string };
     const limit = parseLimit(query.limit, 20);
@@ -9287,11 +9400,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!session) return;
 
     const collections = await loadCollaboratorCollections(prisma, session.user);
-    const counts = collections.length ? await prisma.artwork.groupBy({
-      by: ["collection_id"],
-      where: { ...collaboratorArtworkScope(collections), status: "activated" },
-      _count: { _all: true }
-    }) : [];
+    const views = await Promise.all(collections.map((collection) => loadPartnerCollection(prisma, collection)));
 
     reply
       .code(200)
@@ -9299,14 +9408,96 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .send(
         buildPartnerDashboardHtml({
           ...await loadPartnerIdentity(session.user),
-          collections: collections.map((collection) => ({
-            name: collection.name,
-            editionSize: collection.edition_size,
-            status: collection.status,
-            revealedCount: counts.find((count) => count.collection_id === collection.id)?._count._all ?? 0
-          }))
+          collections: views
         })
       );
+  });
+
+  app.get("/partner/collections/:id", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const { id } = req.params as { id: string };
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const collection = collections.find((item) => item.id === id);
+    if (!collection) return reply.code(404).send("Collection not found");
+    reply.type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
+      ...await loadPartnerIdentity(session.user), view: await loadPartnerCollection(prisma, collection),
+      csrf: collectionCsrf(session.token_hash, id), saved: (req.query as Record<string, unknown>).saved === "1"
+    }));
+  });
+
+  app.post("/partner/collections/:id", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const { id } = req.params as { id: string };
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const collection = collections.find((item) => item.id === id);
+    if (!collection) return reply.code(404).send("Collection not found");
+    const view = await loadPartnerCollection(prisma, collection);
+    const identity = await loadPartnerIdentity(session.user);
+    const fail = (status: number, error: string) => reply.code(status).type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
+      ...identity, view, csrf: collectionCsrf(session.token_hash, id), error
+    }));
+    if (!view.presentation.available) return fail(503, "Collection settings are temporarily unavailable.");
+    if (!req.isMultipart()) return fail(400, "Please submit the collection form.");
+    const fields: Record<string, string> = {};
+    const files: Record<string, Buffer> = {};
+    const allowedFiles = ["banner", "image_0", "image_1", "image_2", "image_3"];
+    const allowedFields = ["csrf_token", "revision", "display_name", "visible", "description", "remove_banner", ...Array.from({ length: 4 }, (_, i) => `remove_image_${i}`)];
+    try {
+      for await (const part of req.parts({ limits: { fileSize: PARTNER_AVATAR_MAX_BYTES, files: 5, fields: 10, parts: 15, fieldSize: 25_000 } })) {
+        if (part.type === "file") {
+          const buffer = await part.toBuffer();
+          if (!allowedFiles.includes(part.fieldname) || files[part.fieldname]) return fail(400, "Unexpected or duplicate image field.");
+          if (part.filename) files[part.fieldname] = buffer;
+        } else {
+          if (!allowedFields.includes(part.fieldname) || fields[part.fieldname] !== undefined || part.valueTruncated || typeof part.value !== "string") return fail(400, "Invalid collection form.");
+          fields[part.fieldname] = part.value;
+        }
+      }
+    } catch { return fail(400, "Use JPG, PNG or WebP images, up to 2 MB each. Maximum one banner and four images."); }
+    if (!validCollectionCsrf(fields.csrf_token, session.token_hash, id)) return fail(403, "Your form expired. Reload this page and try again.");
+    const name = fields.display_name?.trim();
+    if (!name || name.length > COLLECTION_NAME_MAX || fields.description === undefined || fields.description.length > COLLECTION_DESCRIPTION_MAX) return fail(400, "Check the collection name and description length.");
+    if (!/^-?\d+$/.test(fields.revision ?? "") || Number(fields.revision) !== (view.presentation.record?.revision ?? -1)) return fail(409, "This collection changed in another window. Reload before saving.");
+    if (fields.visible !== undefined && fields.visible !== "1") return fail(400, "Invalid visibility value.");
+    for (const key of allowedFiles) {
+      if (fields[`remove_${key}`] !== undefined && fields[`remove_${key}`] !== "1") return fail(400, "Invalid image removal value.");
+      if (files[key] && fields[`remove_${key}`] === "1") return fail(400, "Upload or remove an image, not both.");
+      if (files[key] && !detectPartnerAvatarType(files[key])) return fail(400, "Only JPG, PNG or WebP images are supported.");
+    }
+    try {
+      const imageUrls: Record<string, string | null> = {};
+      for (const key of allowedFiles) {
+        if (fields[`remove_${key}`] === "1") imageUrls[key] = null;
+        if (!files[key]) continue;
+        if (!env.r2Bucket || !env.r2PublicBaseUrl) return fail(503, "Image uploads are temporarily unavailable.");
+        const type = detectPartnerAvatarType(files[key])!;
+        const objectKey = `collections/${id}/${crypto.randomUUID()}.${type.extension}`;
+        await r2.send(new PutObjectCommand({ Bucket: env.r2Bucket, Key: objectKey, Body: files[key], ContentType: type.contentType, CacheControl: "public, max-age=31536000, immutable" }));
+        imageUrls[key] = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${objectKey}`;
+      }
+      const gallery = Array.from({ length: 4 }, (_, i) => imageUrls[`image_${i}`] !== undefined ? imageUrls[`image_${i}`] || "" : view.presentation.record?.gallery_urls[i] || "");
+      const data = {
+        display_name: name, description: fields.description.trim(), visible: fields.visible === "1",
+        banner_url: imageUrls.banner !== undefined ? imageUrls.banner : view.presentation.record?.banner_url ?? null,
+        gallery_urls: gallery
+      };
+      // An optimistic revision prevents one editor from silently overwriting another.
+      if (view.presentation.record) {
+        const result = await prisma.collectionPresentation.updateMany({
+          where: { collection_id: id, revision: view.presentation.record.revision }, data: { ...data, revision: { increment: 1 } }
+        });
+        if (result.count !== 1) return fail(409, "This collection changed in another window. Reload before saving.");
+      } else {
+        await prisma.collectionPresentation.create({ data: { collection_id: id, ...data } });
+      }
+      return reply.redirect(303, `/partner/collections/${encodeURIComponent(id)}?saved=1`);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return fail(409, "This collection changed in another window. Reload before saving.");
+      req.log.error({ err: error, collectionId: id }, "Partner collection update failed");
+      return fail(503, "The collection could not be saved. Please try again.");
+    }
   });
 
   app.get("/partner/irises", async (req, reply) => {

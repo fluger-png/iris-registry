@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { S3Client } from "@aws-sdk/client-s3";
 import { collaboratorProfileCsrf } from "../src/collaborator-profile.js";
+import { collectionCsrf } from "../src/partner-collections.js";
 
 const db = vi.hoisted(() => ({
   collaboratorUser: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   collaboratorCollectionAccess: { findMany: vi.fn() },
   collaboratorProfile: { findUnique: vi.fn(), upsert: vi.fn() },
+  collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
-  collection: { findMany: vi.fn(), create: vi.fn() },
+  collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
   $transaction: vi.fn(), $disconnect: vi.fn()
 }));
@@ -50,6 +54,9 @@ beforeEach(async () => {
   db.collaboratorUser.create.mockResolvedValue({ ...user, status: "invited" });
   db.collaboratorSession.findFirst.mockResolvedValue({ id: "session", token_hash: sessionHash, user });
   db.collaboratorProfile.findUnique.mockResolvedValue(null);
+  db.collectionPresentation.findUnique.mockResolvedValue(null);
+  db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
+  db.artwork.findMany.mockResolvedValue([]);
   upload.mockResolvedValue({} as never);
   db.collaboratorInvite.findFirst.mockResolvedValue({
     id: "invite", accepted_at: null, revoked_at: null, expires_at: new Date(Date.now() + 60_000),
@@ -76,6 +83,153 @@ const profilePayload = (fields: Record<string, string>, file?: { data: Buffer; n
 };
 const profileHeaders = { ...partnerCookie, "content-type": `multipart/form-data; boundary=${boundary}` };
 const validProfileFields = { csrf_token: collaboratorProfileCsrf(sessionHash), description: "Art by Gugoco" };
+
+const collectionFields = { csrf_token: collectionCsrf(sessionHash, "ararat"), revision: "-1", display_name: "Ararat Heart", visible: "1", description: "The collection story." };
+const collectionPayload = (fields = collectionFields, files: Array<{ field: string; data: Buffer; name?: string }> = []) => Buffer.concat([
+  ...Object.entries(fields).map(([name, value]) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`)),
+  ...files.flatMap((file) => [Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name ?? "image.png"}"\r\nContent-Type: image/png\r\n\r\n`), file.data, Buffer.from("\r\n")]),
+  Buffer.from(`--${boundary}--\r\n`)
+]);
+
+describe("partner collection editor", () => {
+  it("uses live storefront prices instead of stale collection defaults", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: { ...ararat, shopify_handle: "ararat-test", default_price_cents: 99900 } }, { collection: { ...sayat, shopify_handle: "sayat-test" } }]);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify({ price: url.includes("ararat") ? 12000 : 16000, featured_image: `https://cdn.shopify.com/s/files/1/0710/5239/4589/files/${url.includes("ararat") ? "ararat.png?v=1777477903" : "sayat.png?v=1777277215"}` }))));
+    db.artwork.findMany.mockResolvedValue([{ status: "assigned", weight_grams: 0.4 }, { status: "activated", weight_grams: 0.42 }]);
+    const dashboard = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+    const detail = await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie });
+    expect(dashboard.body).toContain("$120.00");
+    expect(dashboard.body).toContain("$160.00");
+    expect(dashboard.body).not.toContain("$999.00");
+    expect(detail.body).toContain('value="$120.00" disabled');
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "collections.html"), dashboard.body);
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "collection.html"), detail.body);
+    }
+  });
+
+  it("renders linked two-column cards with 16:9 banners and purchased statistics", async () => {
+    db.artwork.findMany.mockResolvedValue([{ status: "assigned", weight_grams: 0.4 }, { status: "activated", weight_grams: 0.6 }, { status: "activated", weight_grams: null }]);
+    const response = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('href="/partner/collections/ararat"');
+    expect(response.body).toContain("aspect-ratio:16/9");
+    expect(response.body).toContain("<dt>Purchased</dt><dd>3</dd>");
+    expect(response.body).toContain("<dt>Activated</dt><dd>2</dd>");
+    const detail = await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie });
+    expect(detail.body).toContain("0.500 g");
+    expect(detail.body).toContain("Gold weight recorded for 2 of 3");
+    expect(detail.body).toContain('id="collection-price" value="Unavailable" disabled');
+    expect(detail.body).toContain('name="image_3"');
+    expect(detail.body).not.toContain('name="image_4"');
+  });
+
+  it("requires login on both collection routes", async () => {
+    for (const method of ["GET", "POST"] as const) {
+      const response = await app.inject({ method, url: "/partner/collections/ararat" });
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBe("/partner/login");
+    }
+  });
+
+  it("rejects ungranted collections before loading or changing their data", async () => {
+    for (const method of ["GET", "POST"] as const) {
+      expect((await app.inject({ method, url: "/partner/collections/unseen", headers: partnerCookie })).statusCode).toBe(404);
+    }
+    expect(db.collectionPresentation.findUnique).not.toHaveBeenCalled();
+    expect(db.artwork.findMany).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+  });
+
+  it("saves presentation without changing canonical collection identity or inventory", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+      payload: collectionPayload({ ...collectionFields, display_name: "Ararat <New>" }) });
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe("/partner/collections/ararat?saved=1");
+    expect(db.collectionPresentation.create).toHaveBeenCalledWith({ data: {
+      collection_id: "ararat", display_name: "Ararat <New>", description: "The collection story.", visible: true, banner_url: null, gallery_urls: ["", "", "", ""]
+    } });
+    expect(db.collection.create).not.toHaveBeenCalled();
+  });
+
+  it("requires CSRF bound to both the session and the selected collection", async () => {
+    for (const csrf_token of ["bad", collectionCsrf("another-session", "ararat"), collectionCsrf(sessionHash, "sayat")]) {
+      const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload({ ...collectionFields, csrf_token }, [{ field: "banner", data: png }]) });
+      expect(response.statusCode).toBe(403);
+    }
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+  });
+
+  it("uploads a banner and four images to the authorized collection only", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+      payload: collectionPayload(collectionFields, ["banner", "image_0", "image_1", "image_2", "image_3"].map((field) => ({ field, data: png }))) });
+    expect(response.statusCode).toBe(303);
+    expect(upload).toHaveBeenCalledTimes(5);
+    for (const [command] of upload.mock.calls) expect((command as { input: { Key: string } }).input.Key).toMatch(/^collections\/ararat\/[a-f0-9-]+\.png$/);
+    expect(db.collectionPresentation.create.mock.calls[0][0].data.gallery_urls).toHaveLength(4);
+  });
+
+  it("rejects unexpected editable fields, a fifth preview, duplicate files, and SVGs", async () => {
+    for (const payload of [
+      collectionPayload({ ...collectionFields, price_cents: "1" } as typeof collectionFields),
+      collectionPayload({ ...collectionFields, collection_id: "sayat" } as typeof collectionFields),
+      collectionPayload(collectionFields, [{ field: "image_4", data: png }]),
+      collectionPayload(collectionFields, [{ field: "banner", data: png }, { field: "banner", data: png }]),
+      collectionPayload(collectionFields, [{ field: "banner", data: Buffer.from('<svg onload="alert(1)"></svg>') }]),
+      collectionPayload(collectionFields, [{ field: "banner", data: Buffer.alloc(2 * 1024 * 1024 + 1) }])
+    ]) {
+      expect((await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload })).statusCode).toBe(400);
+    }
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+  });
+
+  it("preserves empty file inputs and removes only requested images", async () => {
+    db.collectionPresentation.findUnique.mockResolvedValue({ revision: 2, display_name: "Name", banner_url: "https://images.test/banner.png", gallery_urls: ["a", "b", "c", "d"], visible: true, description: "old" });
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+      payload: collectionPayload({ ...collectionFields, revision: "2", remove_image_1: "1", remove_banner: "1" } as typeof collectionFields, [{ field: "image_0", data: Buffer.alloc(0), name: "" }]) });
+    expect(response.statusCode).toBe(303);
+    expect(db.collectionPresentation.updateMany.mock.calls[0][0].data).toMatchObject({ banner_url: null, gallery_urls: ["a", "", "c", "d"], revision: { increment: 1 } });
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("hides only the storefront presentation when the toggle is off", async () => {
+    const { visible, ...fields } = collectionFields;
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload(fields as typeof collectionFields) });
+    expect(response.statusCode).toBe(303);
+    expect(db.collectionPresentation.create.mock.calls[0][0].data.visible).toBe(false);
+    expect(db.collectionPresentation.create.mock.calls[0][0].data).not.toHaveProperty("status");
+  });
+
+  it("rejects stale revisions before upload, and conflicting updates at write time", async () => {
+    db.collectionPresentation.findUnique.mockResolvedValue({ revision: 2, gallery_urls: [] });
+    const stale = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload(collectionFields, [{ field: "banner", data: png }]) });
+    expect(stale.statusCode).toBe(409);
+    expect(upload).not.toHaveBeenCalled();
+    db.collectionPresentation.updateMany.mockResolvedValue({ count: 0 });
+    const conflict = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload({ ...collectionFields, revision: "2" }) });
+    expect(conflict.statusCode).toBe(409);
+  });
+
+  it("keeps the dashboard available but prevents saves before migration", async () => {
+    db.collectionPresentation.findUnique.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    expect((await app.inject({ method: "GET", url: "/partner", headers: partnerCookie })).statusCode).toBe(200);
+    const save = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload() });
+    expect(save.statusCode).toBe(503);
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+  });
+
+  it("publishes presentation only, without owner emails, orders, weights or rarity", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false });
+    expect(db.artwork.findMany).not.toHaveBeenCalled();
+  });
+});
 
 describe("partner workspace", () => {
   it("uses the IRIS account typography and palette on partner pages", async () => {
@@ -158,11 +312,11 @@ describe("partner workspace", () => {
     expect(db.artwork.count.mock.calls[0][0].where.OR).toContainEqual({ iris_id: { equals: "AR-0048", mode: "insensitive" } });
   });
 
-  it("keeps collection creation disabled and escapes profile content", async () => {
+  it("keeps collection creation disabled and omits brand description from collections", async () => {
     db.collaboratorProfile.findUnique.mockResolvedValue({ description: '<script>alert("bad")</script>', avatar_url: null });
     const response = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
     expect(response.body).toContain('disabled title="Coming soon"');
-    expect(response.body).toContain("&lt;script&gt;");
+    expect(response.body).not.toContain("&lt;script&gt;");
     expect(response.body).not.toContain('<script>alert("bad")</script>');
   });
 
@@ -258,7 +412,7 @@ describe("partner workspace", () => {
   });
 });
 
-afterEach(async () => { await app.close(); });
+afterEach(async () => { await app.close(); vi.unstubAllGlobals(); });
 
 describe("partner access routes", () => {
   it("redirects an anonymous visitor without reading inventory", async () => {
@@ -330,9 +484,9 @@ describe("partner access routes", () => {
     expect(response.body).toContain("Ararat Heart");
     expect(response.body).toContain("Sayat Nova");
     expect(response.body).not.toContain("The Unseen Edition");
-    expect(db.artwork.groupBy).toHaveBeenCalledWith({
-      by: ["collection_id"], where: { collection_id: { in: ["ararat", "sayat"] }, status: "activated" }, _count: { _all: true }
-    });
+    expect(db.artwork.findMany).toHaveBeenCalledTimes(2);
+    expect(db.artwork.findMany.mock.calls.map(([q]) => q.where.collection_id)).toEqual(["ararat", "sayat"]);
+    expect(db.artwork.findMany.mock.calls[0][0].where.status).toEqual({ in: ["assigned", "activated"] });
   });
 
   it("never reads all inventory when grants are empty", async () => {
