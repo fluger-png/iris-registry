@@ -78,6 +78,20 @@ const profileHeaders = { ...partnerCookie, "content-type": `multipart/form-data;
 const validProfileFields = { csrf_token: collaboratorProfileCsrf(sessionHash), description: "Art by Gugoco" };
 
 describe("partner workspace", () => {
+  it("uses the IRIS account typography and palette on partner pages", async () => {
+    for (const url of ["/partner/login", "/partner", "/partner/profile"]) {
+      const response = await app.inject({ method: "GET", url, headers: url === "/partner/login" ? {} : partnerCookie });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("family=Abel&family=Unbounded:wght@400;500;600;700");
+      expect(response.body).toContain('--font-body:"Abel"');
+      expect(response.body).toContain('--font-heading:"Unbounded"');
+      expect(response.body).toContain("--gold-bright:#eabf50");
+      expect(response.body).toContain("--text:#ede8df");
+      expect(response.body).toContain("font-size:14px;");
+      expect(response.body).toContain("font-weight:700;");
+    }
+  });
+
   it("blocks anonymous visits and profile changes", async () => {
     for (const url of ["/partner/irises", "/partner/profile"]) {
       const response = await app.inject({ method: "GET", url });
