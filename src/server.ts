@@ -11,6 +11,7 @@ import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } from "./utils.js";
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
+import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
 import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
@@ -2473,7 +2474,7 @@ const buildCollaboratorSuccessHtml = (params: {
   return buildAdminShell("IRIS Admin", body, "", "collaborators");
 };
 
-const buildPartnerShell = (title: string, body: string) => `<!doctype html>
+const buildPartnerShell = (title: string, body: string, workspace = false) => `<!doctype html>
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -2632,9 +2633,75 @@ const buildPartnerShell = (title: string, body: string) => `<!doctype html>
           .hero { border-right:0; border-bottom:1px solid var(--line); }
           .stats { grid-template-columns:1fr; }
         }
+        .partner-workspace { background:#0a0a0a; }
+        .partner-workspace .page { display:block; padding:32px 24px; }
+        .partner-workspace .panel { width:100%; max-width:1280px; margin:0 auto; background:none; border:0; box-shadow:none; }
+        .partner-workspace .workspace { padding:0; }
+        .partner-workspace * { letter-spacing:0; }
+        .partner-workspace .workspace-header { margin:0; padding-bottom:24px; }
+        .partner-workspace .brand-identity { display:flex; align-items:center; gap:18px; }
+        .partner-workspace .brand-identity > div { min-width:0; }
+        .partner-workspace .brand-identity h1 { margin:0 0 4px; font-size:28px; }
+        .partner-workspace .brand-identity p { margin:0; font-size:14px; }
+        .brand-avatar { width:64px; height:64px; flex:0 0 64px; border:1px solid var(--line); border-radius:50%; object-fit:cover; background:#191919; }
+        .brand-avatar-placeholder { display:grid; place-items:center; font-size:28px; color:var(--gold); }
+        .partner-nav { display:flex; gap:28px; border-bottom:1px solid var(--line); margin-bottom:32px; }
+        .partner-nav a { display:block; padding:14px 0; text-decoration:none; color:var(--muted); border-bottom:2px solid transparent; font-size:14px; font-weight:600; white-space:nowrap; }
+        .partner-nav a[aria-current="page"] { color:var(--gold); border-color:var(--gold); }
+        .section-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
+        .partner-workspace h2 { font-size:24px; margin:0; letter-spacing:0; }
+        .partner-workspace .btn { font-family:inherit; font-size:14px; font-weight:600; line-height:1.2; border-radius:4px; min-height:44px; }
+        .partner-workspace .btn:disabled { background:#242424; color:#777; cursor:not-allowed; }
+        .partner-workspace a:focus-visible, .partner-workspace button:focus-visible, .partner-workspace input:focus-visible, .partner-workspace textarea:focus-visible, .partner-workspace select:focus-visible { outline:2px solid var(--gold); outline-offset:4px; }
+        .brand-description { max-width:760px; white-space:pre-wrap; overflow-wrap:anywhere; }
+        .collection-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; }
+        .collection-summary { padding:24px 0; }
+        .collection-summary h3 { overflow-wrap:anywhere; }
+        .iris-filters { display:grid; grid-template-columns:minmax(180px,250px) minmax(200px,1fr) auto; align-items:end; gap:16px; margin-bottom:24px; }
+        .iris-filters label { display:grid; gap:8px; font-size:13px; color:var(--muted); min-width:0; }
+        .partner-workspace input:not([type="checkbox"]), .partner-workspace select, .partner-workspace textarea { border:1px solid #393939; background:#151515; color:var(--text); border-radius:4px; padding:12px; width:100%; font:inherit; min-width:0; }
+        .table-scroll { overflow-x:auto; border:1px solid var(--line); }
+        .partner-table { border-collapse:collapse; width:100%; min-width:750px; font-size:14px; }
+        .partner-table th, .partner-table td { padding:14px 16px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
+        .partner-table th { color:var(--muted); background:#111; font-size:12px; font-weight:600; }
+        .partner-table tr:last-child td { border-bottom:0; }
+        .partner-table tbody tr:hover { background:#141414; }
+        .partner-table td { overflow-wrap:anywhere; }
+        .partner-table .serial { white-space:nowrap; color:var(--gold); font-weight:600; }
+        .partner-table .owner { max-width:300px; }
+        .iris-thumb { display:block; width:60px; height:60px; object-fit:cover; background:#222; }
+        .empty-state { padding:40px 16px; color:var(--muted); text-align:center; }
+        .pagination { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:20px; font-size:14px; color:var(--muted); }
+        .pagination div { display:flex; gap:20px; }
+        .pagination a { color:var(--gold); }
+        .profile-form { max-width:760px; display:grid; gap:24px; }
+        .profile-form .field { margin:0; }
+        .profile-form .field label { font-size:14px; text-transform:none; color:var(--text); }
+        .profile-form textarea { resize:vertical; min-height:160px; line-height:1.6; }
+        .avatar-editor { display:grid; grid-template-columns:96px minmax(0,1fr); gap:24px; align-items:center; }
+        .avatar-editor .brand-avatar { width:96px; height:96px; }
+        .profile-form .hint { font-size:12px; color:var(--muted); margin:0; }
+        .profile-form .remove-avatar { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:14px; }
+        .profile-form .btn { justify-self:start; padding:14px 28px; }
+        .success-message { color:#92d9a4; padding:14px 16px; border:1px solid #264c30; margin-bottom:24px; }
+        @media (max-width: 640px) {
+          .partner-workspace .page { padding:24px 16px; }
+          .partner-workspace .workspace-header { gap:12px; align-items:flex-start; }
+          .partner-workspace .brand-identity { gap:12px; }
+          .partner-workspace .brand-identity h1 { font-size:24px; }
+          .brand-avatar { width:48px; height:48px; flex-basis:48px; }
+          .partner-nav { gap:20px; }
+          .partner-nav a { font-size:13px; }
+          .collection-list { grid-template-columns:1fr; gap:0; }
+          .iris-filters { grid-template-columns:minmax(0,1fr); }
+          .iris-filters .btn { justify-self:start; }
+          .avatar-editor { grid-template-columns:72px minmax(0,1fr); gap:16px; }
+          .avatar-editor .brand-avatar { width:72px; height:72px; }
+          .pagination { flex-wrap:wrap; }
+        }
       </style>
     </head>
-    <body>
+    <body${workspace ? ' class="partner-workspace"' : ""}>
       <div class="page">
         <div class="panel">
           ${body}
@@ -2708,23 +2775,48 @@ const buildPartnerInviteHtml = (params: {
   return buildPartnerShell("Create Password • IRIS Partner Portal", body);
 };
 
-const buildPartnerDashboardHtml = (params: {
+type PartnerWorkspaceIdentity = {
   fullName: string;
   email: string;
+  profile: CollaboratorProfileView;
+};
+
+const loadPartnerIdentity = async (user: { id: string; full_name: string; email: string }): Promise<PartnerWorkspaceIdentity> => ({
+  fullName: user.full_name,
+  email: user.email,
+  profile: await loadCollaboratorProfile(prisma, user.id)
+});
+
+const buildPartnerAvatar = (identity: PartnerWorkspaceIdentity) => identity.profile.avatarUrl
+  ? `<img class="brand-avatar" src="${escapeHtml(identity.profile.avatarUrl)}" alt="${escapeHtml(identity.fullName)}" width="64" height="64" />`
+  : `<span class="brand-avatar brand-avatar-placeholder" aria-hidden="true">${escapeHtml(identity.fullName.charAt(0).toUpperCase())}</span>`;
+
+const buildPartnerWorkspaceHtml = (identity: PartnerWorkspaceIdentity, active: "collections" | "irises" | "profile", content: string) => {
+  const tabs = [
+    { key: "collections", label: "Collections", url: "/partner" },
+    { key: "irises", label: "All IRIS", url: "/partner/irises" },
+    { key: "profile", label: "Brand Profile", url: "/partner/profile" }
+  ];
+  return buildPartnerShell("IRIS Partner Dashboard", `<div class="body workspace">
+    <header class="workspace-header">
+      <div class="brand-identity">${buildPartnerAvatar(identity)}<div>
+        <h1>${escapeHtml(identity.fullName)}</h1><p>${escapeHtml(identity.email)}</p>
+      </div></div>
+      <a class="ghost" style="margin:0" href="/partner/logout">Log out</a>
+    </header>
+    <nav class="partner-nav" aria-label="Partner navigation">${tabs.map((tab) => `<a href="${tab.url}"${tab.key === active ? ' aria-current="page"' : ""}>${tab.label}</a>`).join("")}</nav>
+    ${content}
+  </div>`, true);
+};
+
+const buildPartnerDashboardHtml = (params: PartnerWorkspaceIdentity & {
   collections: Array<{ name: string; editionSize: number; status: string; revealedCount: number }>;
 }) => {
   const body = `
-    <div class="body workspace">
-      <header class="workspace-header">
-        <div>
-        <div class="eyebrow">IRIS Partner Portal</div>
-        <h1>${escapeHtml(params.fullName)}</h1>
-        <p>${escapeHtml(params.email)}</p>
-        </div>
-        <a class="ghost" style="margin:0" href="/partner/logout">Log out</a>
-      </header>
       <section>
-        <h2>Collections</h2>
+        <div class="section-heading"><h2>Collections</h2><button class="btn" type="button" disabled title="Coming soon">+ Create Collection</button></div>
+        ${params.profile.description ? `<p class="brand-description">${escapeHtml(params.profile.description)}</p>` : ""}
+        <div class="collection-list">
         ${params.collections.map((collection) => `<article class="collection-summary">
           <h3>${escapeHtml(collection.name)}</h3>
           <dl>
@@ -2733,11 +2825,62 @@ const buildPartnerDashboardHtml = (params: {
             <div><dt>Status</dt><dd>${escapeHtml(collection.status)}</dd></div>
           </dl>
         </article>`).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
+        </div>
       </section>
-    </div>
   `;
-  return buildPartnerShell("IRIS Partner Dashboard", body);
+  return buildPartnerWorkspaceHtml(params, "collections", body);
 };
+
+const buildPartnerIrisesHtml = (params: PartnerWorkspaceIdentity & {
+  collections: Array<{ id: string; name: string }>;
+  selectedCollection: string; search: string; page: number; pages: number; total: number;
+  items: Array<{ displayId: string; imageUrl: string | null; collectionName: string; ownerEmail: string | null; activatedAt: Date | null; orderNumber: string | null }>;
+}) => {
+  const pageUrl = (page: number) => `/partner/irises?${new URLSearchParams({ collection: params.selectedCollection, q: params.search, page: String(page) })}`;
+  return buildPartnerWorkspaceHtml(params, "irises", `<section>
+    <div class="section-heading"><h2>All IRIS</h2><span>${params.total} activated</span></div>
+    <form class="iris-filters" method="GET" action="/partner/irises">
+      <label>Collection<select name="collection"><option value="">All collections</option>${params.collections.map((collection) => `<option value="${escapeHtml(collection.id)}"${collection.id === params.selectedCollection ? " selected" : ""}>${escapeHtml(collection.name)}</option>`).join("")}</select></label>
+      <label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(params.search)}" placeholder="IRIS number, owner email, order" /></label>
+      <button class="btn" type="submit">Filter</button>
+    </form>
+    <div class="table-scroll" role="region" aria-label="Activated IRIS" tabindex="0"><table class="partner-table">
+      <thead><tr><th scope="col">Image</th><th scope="col">IRIS</th><th scope="col">Collection</th><th scope="col">Owner email</th><th scope="col">Activated</th><th scope="col">Purchase order</th></tr></thead>
+      <tbody>${params.items.map((item) => `<tr>
+        <td><img class="iris-thumb" src="${escapeHtml(item.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE)}" alt="${escapeHtml(item.displayId)}" width="60" height="60" loading="lazy" /></td>
+        <td class="serial">${escapeHtml(item.displayId)}</td><td>${escapeHtml(item.collectionName)}</td>
+        <td class="owner">${escapeHtml(item.ownerEmail || "-")}</td>
+        <td>${item.activatedAt ? formatDate(item.activatedAt) : "-"}</td><td>${escapeHtml(item.orderNumber || "-")}</td>
+      </tr>`).join("") || '<tr><td colspan="6"><div class="empty-state">No activated IRIS found.</div></td></tr>'}</tbody>
+    </table></div>
+    <div class="pagination"><span>Page ${params.page} of ${params.pages}</span><div>
+      ${params.page > 1 ? `<a href="${escapeHtml(pageUrl(params.page - 1))}">Previous</a>` : ""}
+      ${params.page < params.pages ? `<a href="${escapeHtml(pageUrl(params.page + 1))}">Next</a>` : ""}
+    </div></div>
+  </section>`);
+};
+
+const buildPartnerProfileHtml = (params: PartnerWorkspaceIdentity & { csrf: string; error?: string; saved?: boolean }) =>
+  buildPartnerWorkspaceHtml(params, "profile", `<section>
+    <div class="section-heading"><h2>Brand Profile</h2></div>
+    ${params.error ? `<div class="error" role="alert">${escapeHtml(params.error)}</div>` : ""}
+    ${params.saved ? '<div class="success-message" role="status">Profile saved.</div>' : ""}
+    ${!params.profile.available ? '<div class="error" role="status">Profile settings are temporarily unavailable. Please try again shortly.</div>' : ""}
+    <form class="profile-form" method="POST" action="/partner/profile" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="${params.csrf}" />
+      <div class="avatar-editor">${buildPartnerAvatar(params)}<div class="field">
+        <label for="brand-avatar">Brand / artist avatar</label>
+        <input id="brand-avatar" type="file" name="avatar" accept="image/png,image/jpeg,image/webp" />
+        <p class="hint">JPG, PNG or WebP. Maximum 2 MB.</p>
+        ${params.profile.avatarUrl ? '<label class="remove-avatar"><input type="checkbox" name="remove_avatar" value="1" /> Remove avatar</label>' : ""}
+      </div></div>
+      <div class="field"><label for="brand-description">About the brand / artist</label>
+        <textarea id="brand-description" name="description" maxlength="${PARTNER_DESCRIPTION_MAX_LENGTH}" rows="7">${escapeHtml(params.profile.description)}</textarea>
+        <p class="hint">Up to ${PARTNER_DESCRIPTION_MAX_LENGTH} characters.</p>
+      </div>
+      <button class="btn" type="submit"${params.profile.available ? "" : " disabled"}>Save Profile</button>
+    </form>
+  </section>`);
 
 const IRIS_ACCOUNT_DEFAULT_IMAGE = "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244";
 const IRIS_ACCOUNT_UNREVEALED_IMAGE = IRIS_ACCOUNT_DEFAULT_IMAGE;
@@ -6269,6 +6412,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
     limits: { fileSize: 10 * 1024 * 1024 }
   });
 
+  app.addHook("onRequest", async (req, reply) => {
+    if (/^\/partner(?:[/?]|$)/.test(req.url)) {
+      reply.header("Cache-Control", "private, no-store");
+    }
+  });
+
   app.addContentTypeParser(
     "application/json",
     { parseAs: "buffer" },
@@ -9122,8 +9271,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .type("text/html; charset=utf-8")
       .send(
         buildPartnerDashboardHtml({
-          fullName: session.user.full_name,
-          email: session.user.email,
+          ...await loadPartnerIdentity(session.user),
           collections: collections.map((collection) => ({
             name: collection.name,
             editionSize: collection.edition_size,
@@ -9132,6 +9280,127 @@ export const createServer = async (): Promise<FastifyInstance> => {
           }))
         })
       );
+  });
+
+  app.get("/partner/irises", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const query = req.query as Record<string, unknown>;
+    const selectedCollection = readSingleValue(query.collection).trim();
+    if (selectedCollection && !collections.some((collection) => collection.id === selectedCollection)) {
+      reply.code(404).send("Collection not found");
+      return;
+    }
+    const search = readSingleValue(query.q).trim().slice(0, 100);
+    const serialMatch = search.match(/^([a-z]+)-(\d+)$/i);
+    const storedSerial = serialMatch ? `${serialMatch[1]}-${serialMatch[2].padStart(4, "0")}` : null;
+    const where: Prisma.ArtworkWhereInput = {
+      ...collaboratorArtworkScope(selectedCollection ? collections.filter((collection) => collection.id === selectedCollection) : collections),
+      status: "activated",
+      ...(search ? { OR: [
+        { iris_id: { contains: search, mode: "insensitive" as const } },
+        ...(storedSerial ? [{ iris_id: { equals: storedSerial, mode: "insensitive" as const } }] : []),
+        { owner_email: { contains: search, mode: "insensitive" as const } },
+        { assigned_order_id: { contains: search, mode: "insensitive" as const } }
+      ] } : {})
+    };
+    const pageSize = 50;
+    const total = collections.length ? await prisma.artwork.count({ where }) : 0;
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const requestedPage = Number(readSingleValue(query.page));
+    const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pages) : 1;
+    const items = total ? await prisma.artwork.findMany({
+      where,
+      orderBy: [{ activated_at: "desc" }, { iris_id: "asc" }],
+      skip: (page - 1) * pageSize, take: pageSize,
+      select: {
+        iris_id: true, image_url: true, owner_email: true, activated_at: true, assigned_order_id: true,
+        collection: { select: { name: true, edition_size: true } }
+      }
+    }) : [];
+    reply.type("text/html; charset=utf-8").send(buildPartnerIrisesHtml({
+      ...await loadPartnerIdentity(session.user), collections, selectedCollection, search, page, pages, total,
+      items: items.map((item) => ({
+        displayId: formatDisplayIrisId(item.iris_id, item.collection), imageUrl: item.image_url,
+        collectionName: item.collection?.name ?? "-", ownerEmail: item.owner_email,
+        activatedAt: item.activated_at, orderNumber: item.assigned_order_id
+      }))
+    }));
+  });
+
+  app.get("/partner/profile", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const query = req.query as Record<string, unknown>;
+    reply.type("text/html; charset=utf-8").send(buildPartnerProfileHtml({
+      ...await loadPartnerIdentity(session.user),
+      csrf: collaboratorProfileCsrf(session.token_hash), saved: query.saved === "1"
+    }));
+  });
+
+  app.post("/partner/profile", async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const identity = await loadPartnerIdentity(session.user);
+    const fields: Record<string, string> = {};
+    const fail = (status: number, message: string) => reply.code(status).type("text/html; charset=utf-8").send(buildPartnerProfileHtml({
+      ...identity,
+      profile: { ...identity.profile, description: (fields.description ?? identity.profile.description).slice(0, PARTNER_DESCRIPTION_MAX_LENGTH) },
+      csrf: collaboratorProfileCsrf(session.token_hash), error: message
+    }));
+    if (!identity.profile.available) return fail(503, "Profile settings are temporarily unavailable. Please try again shortly.");
+    if (!req.isMultipart()) return fail(400, "Please submit the profile form.");
+
+    let avatar: Buffer | null = null;
+    try {
+      for await (const part of req.parts({ limits: { fileSize: PARTNER_AVATAR_MAX_BYTES, files: 1, fields: 5, parts: 6, fieldSize: 10_000 } })) {
+        if (part.type === "file") {
+          const buffer = await part.toBuffer();
+          if (part.fieldname !== "avatar") return fail(400, "Unexpected file field.");
+          if (part.filename) avatar = buffer;
+        } else if (["csrf_token", "description", "remove_avatar"].includes(part.fieldname)) {
+          if (fields[part.fieldname] !== undefined || part.valueTruncated || typeof part.value !== "string") {
+            return fail(400, "Invalid profile form.");
+          }
+          fields[part.fieldname] = part.value;
+        }
+      }
+    } catch (error) {
+      const code = (error as { code?: string }).code ?? "";
+      return fail(400, code === "FST_REQ_FILE_TOO_LARGE" ? "The avatar must be 2 MB or smaller." : "Unable to read the upload. Use one JPG, PNG or WebP image, up to 2 MB.");
+    }
+    if (!validCollaboratorProfileCsrf(fields.csrf_token, session.token_hash)) return fail(403, "Your form expired. Reload this page and try again.");
+    if (fields.description === undefined) return fail(400, "The description field is missing. Reload this page and try again.");
+    const description = fields.description?.trim() ?? "";
+    if (description.length > PARTNER_DESCRIPTION_MAX_LENGTH) return fail(400, `Keep the description within ${PARTNER_DESCRIPTION_MAX_LENGTH} characters.`);
+    const removeAvatar = fields.remove_avatar === "1";
+    if (removeAvatar && avatar) return fail(400, "Choose a new avatar or remove the current one, not both.");
+    const imageType = avatar ? detectPartnerAvatarType(avatar) : null;
+    if (avatar && !imageType) return fail(400, "Use a JPG, PNG or WebP image, up to 2 MB. SVG files are not supported.");
+
+    try {
+      let avatarUrl: string | null | undefined = removeAvatar ? null : undefined;
+      if (avatar && imageType) {
+        if (!env.r2Bucket || !env.r2PublicBaseUrl) return fail(503, "Image uploads are temporarily unavailable.");
+        const objectKey = `partners/${session.user.id}/${crypto.randomUUID()}.${imageType.extension}`;
+        await r2.send(new PutObjectCommand({
+          Bucket: env.r2Bucket, Key: objectKey, Body: avatar, ContentType: imageType.contentType,
+          CacheControl: "public, max-age=31536000, immutable"
+        }));
+        avatarUrl = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${objectKey}`;
+      }
+      // No client-supplied user or collection ID may select the profile being edited.
+      await prisma.collaboratorProfile.upsert({
+        where: { user_id: session.user.id },
+        create: { user_id: session.user.id, description, avatar_url: avatarUrl ?? null },
+        update: { description, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) }
+      });
+      reply.redirect(303, "/partner/profile?saved=1");
+    } catch (error) {
+      req.log.error({ err: error, userId: session.user.id }, "Partner profile update failed");
+      return fail(503, "Your profile could not be saved. Please try again.");
+    }
   });
 
   app.get("/partner/logout", async (req, reply) => {

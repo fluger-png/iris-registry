@@ -73,3 +73,25 @@ Do not drop the table or restore an old database over new orders/activations as 
 - `npm test`
 - Route tests use a mocked database and do not create production data or send emails.
 - A real production migration and invitation delivery still require the deployment/provisioning steps above.
+
+## Workspace Expansion (2026-10-26)
+
+- `/partner`: scoped collection summaries and a disabled Create Collection button.
+- `/partner/irises`: activated works only, restricted to authenticated grants, with image,
+  display serial, collection, current owner email, activation date, and original assigned order.
+  Collection/search filters and 50-row pages retain the same permission scope. Sorting uses
+  activation date and serial, never `updated_at`. No PINs, tokens or buyer emails are selected.
+- `/partner/profile`: private brand description and avatar settings. The user ID always comes
+  from the session. Writes require a session-bound CSRF token. Text is escaped and limited to
+  2,000 characters. Avatars are PNG/JPEG/WebP detected from bytes, up to 2 MB, stored in R2
+  under `partners/<user-id>/<uuid>`. Replacing/removing an avatar does not delete old objects.
+- All partner responses are `private, no-store`.
+- Additive migration: `20261026000200_add_collaborator_profiles`. The separate optional table
+  avoids changing scalar user reads before migration. Existing collection views keep working
+  while it is missing; profile writes return 503 until migration is complete.
+- Backup before this expansion: active production Neon snapshot
+  `production at 2026-10-26 21:56:57 UTC (manual)`, expiration `never`.
+- Code rollback target before this expansion: `07ab02a`. Keep the additive profile table;
+  never restore the whole database over subsequent orders or activations for a code rollback.
+- Local verification: build, Prisma validation and 45 tests passed. Storage writes are mocked
+  in tests; live visual checks and migration results are recorded separately in backup notes.

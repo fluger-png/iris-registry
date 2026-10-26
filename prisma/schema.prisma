@@ -273,8 +273,18 @@ model CollaboratorUser {
 
   collection          Collection?        @relation(fields: [collection_id], references: [id], onDelete: SetNull)
   collection_access   CollaboratorCollectionAccess[]
+  profile             CollaboratorProfile?
   invites             CollaboratorInvite[]
   sessions            CollaboratorSession[]
+}
+
+model CollaboratorProfile {
+  user_id     String   @id
+  avatar_url  String?
+  description String   @default("")
+  updated_at  DateTime @updatedAt
+
+  user CollaboratorUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
 model CollaboratorCollectionAccess {
