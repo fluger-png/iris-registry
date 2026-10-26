@@ -10,6 +10,7 @@ import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } from "./utils.js";
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
+import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
 import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
@@ -1049,6 +1050,7 @@ const issueCollaboratorInvite = async (params: {
         invitation_sent_at: now
       }
     });
+    await tx.collaboratorSession.deleteMany({ where: { user_id: params.userId } });
   });
 
   const inviteLink = createPartnerInviteUrl(rawToken);
@@ -2317,14 +2319,14 @@ const buildCollaboratorsAdminHtml = (
       <h1>Collaborators</h1>
       <a class="btn primary" href="/admin/collaborators/new" style="width:auto;height:auto;padding:10px 14px;">Create New User</a>
     </div>
-    <p class="muted" style="margin:10px 0 18px;">Create collaborator accounts, link them to a draft collection, and send an invitation to create their password.</p>
+    <p class="muted" style="margin:10px 0 18px;">Manage company accounts and their collection access.</p>
     <div class="card table">
       <table>
         <thead>
           <tr>
             <th>Name</th>
             <th>Email</th>
-            <th>Collection</th>
+            <th>Collections</th>
             <th>Edition Size</th>
             <th>Status</th>
             <th>Invite Sent</th>
@@ -2345,6 +2347,8 @@ const buildCollaboratorsAdminHtml = (
 const buildCollaboratorCreateHtml = (options?: {
   error?: string;
   values?: Record<string, string>;
+  collections?: Array<{ id: string; name: string }>;
+  selectedCollectionIds?: string[];
 }) => {
   const values = options?.values ?? {};
   const field = (key: string) => escapeHtml(values[key] ?? "");
@@ -2359,13 +2363,13 @@ const buildCollaboratorCreateHtml = (options?: {
       <h1>Create New User</h1>
       <a class="btn secondary" href="/admin/collaborators" style="width:auto;height:auto;padding:10px 14px;">Back</a>
     </div>
-    <p class="muted" style="margin:10px 0 18px;">We’ll create a collaborator account, prepare a draft collection, and generate an invite link so they can create their own password.</p>
+    <p class="muted" style="margin:10px 0 18px;">Invite a company to its existing collections, or create a new draft collection.</p>
     ${errorHtml}
     <form method="POST" action="/admin/collaborators">
       <div class="card" style="display:grid;gap:20px;max-width:860px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <label style="display:grid;gap:8px;">
-            <span class="muted">Full Name</span>
+            <span class="muted">Company / Name</span>
             <input style="${inputStyle}" type="text" name="full_name" value="${field("full_name")}" required />
           </label>
           <label style="display:grid;gap:8px;">
@@ -2373,10 +2377,19 @@ const buildCollaboratorCreateHtml = (options?: {
             <input style="${inputStyle}" type="email" name="email" value="${field("email")}" required />
           </label>
         </div>
+        <fieldset style="border:1px solid #D8DDEB;padding:16px;display:grid;gap:12px;">
+          <legend>Existing Collections</legend>
+          ${(options?.collections ?? []).map((collection) => `<label style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" name="collection_ids" value="${escapeHtml(collection.id)}" ${options?.selectedCollectionIds?.includes(collection.id) ? "checked" : ""} />
+            <span>${escapeHtml(collection.name)}</span>
+          </label>`).join("") || `<span class="muted">No existing collections.</span>`}
+        </fieldset>
+        <details>
+          <summary>Create a new draft collection instead</summary>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <label style="display:grid;gap:8px;">
             <span class="muted">Collection Name</span>
-            <input style="${inputStyle}" type="text" name="collection_name" value="${field("collection_name")}" placeholder="Sayat Nova Collection" required />
+            <input style="${inputStyle}" type="text" name="collection_name" value="${field("collection_name")}" placeholder="Sayat Nova Collection" />
           </label>
           <label style="display:grid;gap:8px;">
             <span class="muted">Collection Slug</span>
@@ -2390,9 +2403,10 @@ const buildCollaboratorCreateHtml = (options?: {
           </label>
           <label style="display:grid;gap:8px;">
             <span class="muted">Edition Size</span>
-            <input style="${inputStyle}" type="number" min="1" step="1" name="edition_size" value="${field("edition_size")}" placeholder="100" required />
+            <input style="${inputStyle}" type="number" min="1" step="1" name="edition_size" value="${field("edition_size")}" placeholder="100" />
           </label>
         </div>
+        </details>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
           <div class="muted">If email delivery is not configured yet, we’ll still generate a secure invite link you can copy manually.</div>
           <button class="btn primary" type="submit" style="width:auto;height:auto;padding:12px 16px;">Create User &amp; Invite</button>
@@ -2427,7 +2441,7 @@ const buildCollaboratorSuccessHtml = (params: {
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;">
         <div class="card" style="padding:16px;">
-          <div class="muted">Collection</div>
+          <div class="muted">Collections</div>
           <div style="margin-top:6px;font-weight:700;">${escapeHtml(params.collectionName)}</div>
         </div>
         <div class="card" style="padding:16px;">
@@ -2602,6 +2616,17 @@ const buildPartnerShell = (title: string, body: string) => `<!doctype html>
           font-size:22px;
           font-weight:700;
         }
+        .workspace-header { display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:32px; }
+        .workspace-header > div { min-width:0; flex:1; }
+        .workspace-header .ghost { flex-shrink:0; white-space:nowrap; }
+        .workspace h1 { margin:0 0 12px; font-size:32px; letter-spacing:0; overflow-wrap:anywhere; }
+        .workspace .eyebrow { letter-spacing:0; margin-bottom:12px; }
+        .workspace p { overflow-wrap:anywhere; }
+        .collection-summary { border-top:1px solid var(--line); padding:24px 0; }
+        .collection-summary h3 { font-size:20px; margin:0 0 20px; }
+        .collection-summary dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
+        .collection-summary dt { font-size:12px; color:var(--muted); }
+        .collection-summary dd { margin:8px 0 0; font-size:18px; color:var(--gold); overflow-wrap:anywhere; }
         @media (max-width: 820px) {
           .shell { grid-template-columns:1fr; }
           .hero { border-right:0; border-bottom:1px solid var(--line); }
@@ -2633,12 +2658,12 @@ const buildPartnerLoginHtml = (options?: { error?: string }) => {
         ${errorHtml}
         <form method="POST" action="/partner/login">
           <div class="field">
-            <label>Email</label>
-            <input type="email" name="email" required />
+            <label for="partner-email">Email</label>
+            <input id="partner-email" type="email" name="email" autocomplete="username" required />
           </div>
           <div class="field">
-            <label>Password</label>
-            <input type="password" name="password" required />
+            <label for="partner-password">Password</label>
+            <input id="partner-password" type="password" name="password" autocomplete="current-password" required />
           </div>
           <button class="btn" type="submit">Sign In</button>
         </form>
@@ -2667,12 +2692,12 @@ const buildPartnerInviteHtml = (params: {
         ${errorHtml}
         <form method="POST">
           <div class="field">
-            <label>New Password</label>
-            <input type="password" name="password" minlength="10" required />
+            <label for="partner-new-password">New Password</label>
+            <input id="partner-new-password" type="password" name="password" autocomplete="new-password" minlength="10" required />
           </div>
           <div class="field">
-            <label>Confirm Password</label>
-            <input type="password" name="password_confirm" minlength="10" required />
+            <label for="partner-confirm-password">Confirm Password</label>
+            <input id="partner-confirm-password" type="password" name="password_confirm" autocomplete="new-password" minlength="10" required />
           </div>
           <button class="btn" type="submit">Create Password</button>
         </form>
@@ -2686,40 +2711,28 @@ const buildPartnerInviteHtml = (params: {
 const buildPartnerDashboardHtml = (params: {
   fullName: string;
   email: string;
-  collectionName: string;
-  editionSize: number;
-  collectionStatus: string;
-  revealedCount: number;
+  collections: Array<{ name: string; editionSize: number; status: string; revealedCount: number }>;
 }) => {
   const body = `
-    <div class="shell">
-      <section class="hero">
+    <div class="body workspace">
+      <header class="workspace-header">
+        <div>
         <div class="eyebrow">IRIS Partner Portal</div>
-        <h1>${escapeHtml(params.collectionName)}</h1>
-        <p>${escapeHtml(params.fullName)} · ${escapeHtml(params.email)}</p>
-        <div class="stats">
-          <div class="stat">
-            <div class="label">Edition Size</div>
-            <div class="value">${params.editionSize}</div>
-          </div>
-          <div class="stat">
-            <div class="label">Revealed</div>
-            <div class="value">${params.revealedCount}</div>
-          </div>
-          <div class="stat">
-            <div class="label">Status</div>
-            <div class="value">${escapeHtml(params.collectionStatus)}</div>
-          </div>
+        <h1>${escapeHtml(params.fullName)}</h1>
+        <p>${escapeHtml(params.email)}</p>
         </div>
-      </section>
-      <section class="body">
-        <h2>Partner dashboard is ready.</h2>
-        <p>We now have the collaborator account system in place: invite, password creation, and partner sign-in are live. Next we can shape this area into the collection-specific dashboard you want.</p>
-        <div class="card" style="padding:18px;border:1px solid var(--line);background:#141311;">
-          <div class="muted" style="margin-bottom:6px;">Next suggested slice</div>
-          <div style="font-size:18px;font-weight:700;">Collection uploads, sales tracking, and payout view</div>
-        </div>
-        <a class="ghost" href="/partner/logout">Log out</a>
+        <a class="ghost" style="margin:0" href="/partner/logout">Log out</a>
+      </header>
+      <section>
+        <h2>Collections</h2>
+        ${params.collections.map((collection) => `<article class="collection-summary">
+          <h3>${escapeHtml(collection.name)}</h3>
+          <dl>
+            <div><dt>Edition Size</dt><dd>${collection.editionSize}</dd></div>
+            <div><dt>Activated</dt><dd>${collection.revealedCount}</dd></div>
+            <div><dt>Status</dt><dd>${escapeHtml(collection.status)}</dd></div>
+          </dl>
+        </article>`).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
       </section>
     </div>
   `;
@@ -8673,48 +8686,44 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const collaborators = await prisma.collaboratorUser.findMany({
       include: {
-        collection: {
-          select: {
-            name: true,
-            edition_size: true
-          }
-        }
+        collection: true
       },
       orderBy: [{ created_at: "desc" }, { full_name: "asc" }]
     });
 
+    const items = [];
+    for (const item of collaborators) {
+      const collections = await loadCollaboratorCollections(prisma, item);
+      items.push({
+        ...item,
+        collection_name: collections.map((collection) => collection.name).join(", ") || null,
+        edition_size: collections.reduce((total, collection) => total + collection.edition_size, 0)
+      });
+    }
     reply
       .code(200)
       .type("text/html; charset=utf-8")
       .send(
-        buildCollaboratorsAdminHtml(
-          collaborators.map((item) => ({
-            id: item.id,
-            full_name: item.full_name,
-            email: item.email,
-            status: item.status,
-            collection_name: item.collection?.name ?? null,
-            edition_size: item.collection?.edition_size ?? null,
-            invitation_sent_at: item.invitation_sent_at,
-            last_login_at: item.last_login_at
-          }))
-        )
+        buildCollaboratorsAdminHtml(items)
       );
   });
 
   app.get("/admin/collaborators/new", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
+    const collections = await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
     reply
       .code(200)
       .type("text/html; charset=utf-8")
-      .send(buildCollaboratorCreateHtml());
+      .send(buildCollaboratorCreateHtml({ collections }));
   });
 
   app.post("/admin/collaborators", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
     const body = (req.body as Record<string, unknown> | null) ?? {};
+    const selectedCollectionIds = parseCollectionIds(body.collection_ids);
+    const collections = await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
     const values = {
       full_name: readSingleValue(body.full_name).trim(),
       email: normalizeEmail(body.email),
@@ -8727,27 +8736,30 @@ export const createServer = async (): Promise<FastifyInstance> => {
     };
 
     const editionSize = Number(values.edition_size);
-    if (!values.full_name || !values.email || !values.collection_name || !values.collection_slug) {
+    if (!values.full_name || !isValidEmail(values.email) ||
+        (!selectedCollectionIds.length && (!values.collection_name || !values.collection_slug)) ||
+        (selectedCollectionIds.length > 0 && (values.collection_name || values.collection_slug)) ||
+        selectedCollectionIds.some((id) => !collections.some((collection) => collection.id === id))) {
       reply
         .code(400)
         .type("text/html; charset=utf-8")
         .send(
           buildCollaboratorCreateHtml({
-            error: "Please fill in name, email, collection name, and a valid collection slug.",
-            values
+            error: "Enter a company name and valid email. Select existing collections OR enter a new collection name, not both.",
+            values, collections, selectedCollectionIds
           })
         );
       return;
     }
 
-    if (!Number.isInteger(editionSize) || editionSize <= 0) {
+    if (!selectedCollectionIds.length && (!Number.isInteger(editionSize) || editionSize <= 0)) {
       reply
         .code(400)
         .type("text/html; charset=utf-8")
         .send(
           buildCollaboratorCreateHtml({
             error: "Edition size must be a whole number greater than zero.",
-            values
+            values, collections, selectedCollectionIds
           })
         );
       return;
@@ -8755,7 +8767,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     try {
       const created = await prisma.$transaction(async (tx) => {
-        const collection = await tx.collection.create({
+        const grantedCollections = selectedCollectionIds.length
+          ? await tx.collection.findMany({ where: { id: { in: selectedCollectionIds } }, orderBy: { name: "asc" } })
+          : [await tx.collection.create({
           data: {
             slug: values.collection_slug,
             name: values.collection_name,
@@ -8764,26 +8778,33 @@ export const createServer = async (): Promise<FastifyInstance> => {
             artworks_count: 1,
             status: "draft"
           }
-        });
+        })];
+        if (selectedCollectionIds.length && grantedCollections.length !== selectedCollectionIds.length) {
+          throw new Error("A selected collection is no longer available.");
+        }
 
         const user = await tx.collaboratorUser.create({
           data: {
             email: values.email,
             full_name: values.full_name,
-            collection_id: collection.id,
+            // New multi-collection accounts use explicit grants; preserve the old creation path.
+            collection_id: selectedCollectionIds.length ? null : grantedCollections[0].id,
+            ...(selectedCollectionIds.length ? { collection_access: {
+              create: grantedCollections.map((collection) => ({ collection_id: collection.id }))
+            } } : {}),
             status: CollaboratorStatus.invited,
             invited_by: env.adminBasicUser
           }
         });
 
-        return { collection, user };
+        return { collections: grantedCollections, user };
       });
 
       const invite = await issueCollaboratorInvite({
         userId: created.user.id,
         email: created.user.email,
         fullName: created.user.full_name,
-        collectionName: created.collection.name
+        collectionName: created.collections.map((collection) => collection.name).join(", ")
       });
 
       reply
@@ -8793,9 +8814,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
           buildCollaboratorSuccessHtml({
             fullName: created.user.full_name,
             email: created.user.email,
-            collectionName: created.collection.name,
-            collectionSlug: created.collection.slug,
-            editionSize: created.collection.edition_size,
+            collectionName: created.collections.map((collection) => collection.name).join(", "),
+            collectionSlug: created.collections.map((collection) => collection.slug).join(", "),
+            editionSize: created.collections.reduce((total, collection) => total + collection.edition_size, 0),
             inviteLink: invite.inviteLink,
             emailSent: invite.emailSent,
             emailReason: invite.emailReason
@@ -8803,6 +8824,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
         );
     } catch (error) {
       let message = "Unable to create collaborator right now.";
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+        message = "Multi-collection access needs the database migration before creating this account.";
+      }
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         const target = Array.isArray(error.meta?.target)
           ? error.meta?.target.join(",")
@@ -8821,7 +8845,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         .send(
           buildCollaboratorCreateHtml({
             error: message,
-            values
+            values, collections, selectedCollectionIds
           })
         );
     }
@@ -8836,7 +8860,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       include: { collection: true }
     });
 
-    if (!user || !user.collection) {
+    const collections = user ? await loadCollaboratorCollections(prisma, user) : [];
+    if (!user || !collections.length || user.status === CollaboratorStatus.disabled) {
       reply.code(404).send("Collaborator not found");
       return;
     }
@@ -8845,7 +8870,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       userId: user.id,
       email: user.email,
       fullName: user.full_name,
-      collectionName: user.collection.name
+      collectionName: collections.map((collection) => collection.name).join(", ")
     });
 
     reply
@@ -8855,9 +8880,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildCollaboratorSuccessHtml({
           fullName: user.full_name,
           email: user.email,
-          collectionName: user.collection.name,
-          collectionSlug: user.collection.slug,
-          editionSize: user.collection.edition_size,
+          collectionName: collections.map((collection) => collection.name).join(", "),
+          collectionSlug: collections.map((collection) => collection.slug).join(", "),
+          editionSize: collections.reduce((total, collection) => total + collection.edition_size, 0),
           inviteLink: invite.inviteLink,
           emailSent: invite.emailSent,
           emailReason: invite.emailReason
@@ -8904,6 +8929,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return;
     }
 
+    if (!(await loadCollaboratorCollections(prisma, user)).length) {
+      fail();
+      return;
+    }
+
     const session = await createCollaboratorSession(user.id);
     await prisma.collaboratorUser.update({
       where: { id: user.id },
@@ -8929,7 +8959,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     });
 
-    if (!invite || invite.accepted_at || invite.expires_at <= new Date() || !invite.user.collection) {
+    const collections = invite ? await loadCollaboratorCollections(prisma, invite.user) : [];
+    if (!invite || invite.user.status !== CollaboratorStatus.invited || invite.accepted_at || invite.expires_at <= new Date() || !collections.length) {
       reply
         .code(410)
         .type("text/html; charset=utf-8")
@@ -8961,7 +8992,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .send(
         buildPartnerInviteHtml({
           fullName: invite.user.full_name,
-          collectionName: invite.user.collection.name
+          collectionName: collections.map((collection) => collection.name).join(", ")
         })
       );
   });
@@ -8986,7 +9017,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     });
 
-    if (!invite || invite.accepted_at || invite.expires_at <= new Date() || !invite.user.collection) {
+    const collections = invite ? await loadCollaboratorCollections(prisma, invite.user) : [];
+    if (!invite || invite.user.status !== CollaboratorStatus.invited || invite.accepted_at || invite.expires_at <= new Date() || !collections.length) {
       reply
         .code(410)
         .type("text/html; charset=utf-8")
@@ -9018,7 +9050,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         .send(
           buildPartnerInviteHtml({
             fullName: invite.user.full_name,
-            collectionName: invite.user.collection.name,
+            collectionName: collections.map((collection) => collection.name).join(", "),
             error: "Use at least 10 characters for your password."
           })
         );
@@ -9032,7 +9064,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         .send(
           buildPartnerInviteHtml({
             fullName: invite.user.full_name,
-            collectionName: invite.user.collection.name,
+            collectionName: collections.map((collection) => collection.name).join(", "),
             error: "Password confirmation doesn't match."
           })
         );
@@ -9042,11 +9074,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const hashedPassword = hashPassword(password);
     const now = new Date();
 
-    await prisma.$transaction(async (tx) => {
-      await tx.collaboratorInvite.update({
-        where: { id: invite.id },
+    const accepted = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.collaboratorInvite.updateMany({
+        where: {
+          id: invite.id, accepted_at: null, revoked_at: null, expires_at: { gt: now },
+          user: { status: CollaboratorStatus.invited }
+        },
         data: { accepted_at: now }
       });
+      if (claimed.count !== 1) return false;
 
       await tx.collaboratorUser.update({
         where: { id: invite.user.id },
@@ -9056,7 +9092,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
           last_login_at: now
         }
       });
+      await tx.collaboratorSession.deleteMany({ where: { user_id: invite.user.id } });
+      return true;
     });
+
+    if (!accepted) {
+      reply.code(410).type("text/plain; charset=utf-8").send("This invitation is no longer available.");
+      return;
+    }
 
     const session = await createCollaboratorSession(invite.user.id);
     setPartnerSessionCookie(reply, session.rawToken, session.expiresAt);
@@ -9067,15 +9110,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const session = await requireCollaborator(req, reply);
     if (!session) return;
 
-    const collection = session.user.collection;
-    const revealedCount = collection?.id
-      ? await prisma.artwork.count({
-          where: {
-            collection_id: collection.id,
-            status: "activated"
-          }
-        })
-      : 0;
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const counts = collections.length ? await prisma.artwork.groupBy({
+      by: ["collection_id"],
+      where: { ...collaboratorArtworkScope(collections), status: "activated" },
+      _count: { _all: true }
+    }) : [];
 
     reply
       .code(200)
@@ -9084,10 +9124,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
         buildPartnerDashboardHtml({
           fullName: session.user.full_name,
           email: session.user.email,
-          collectionName: collection?.name ?? "Untitled collection",
-          editionSize: collection?.edition_size ?? 0,
-          collectionStatus: collection?.status ? collection.status.toString() : "draft",
-          revealedCount
+          collections: collections.map((collection) => ({
+            name: collection.name,
+            editionSize: collection.edition_size,
+            status: collection.status,
+            revealedCount: counts.find((count) => count.collection_id === collection.id)?._count._all ?? 0
+          }))
         })
       );
   });

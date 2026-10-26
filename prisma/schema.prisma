@@ -50,6 +50,7 @@ model Collection {
 
   artworks            Artwork[]
   collaborator_user   CollaboratorUser?
+  collaborator_access CollaboratorCollectionAccess[]
 
   @@index([status])
 }
@@ -271,8 +272,21 @@ model CollaboratorUser {
   updated_at          DateTime           @updatedAt
 
   collection          Collection?        @relation(fields: [collection_id], references: [id], onDelete: SetNull)
+  collection_access   CollaboratorCollectionAccess[]
   invites             CollaboratorInvite[]
   sessions            CollaboratorSession[]
+}
+
+model CollaboratorCollectionAccess {
+  user_id       String
+  collection_id String
+  created_at    DateTime @default(now())
+
+  user       CollaboratorUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  collection Collection       @relation(fields: [collection_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, collection_id])
+  @@index([collection_id])
 }
 
 model CollaboratorInvite {
