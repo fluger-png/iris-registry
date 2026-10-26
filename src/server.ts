@@ -2570,7 +2570,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
           text-transform:uppercase;
           color:var(--gold);
         }
-        .field input {
+        .field input:not([type="checkbox"]) {
           width:100%;
           min-height:54px;
           border:1px solid var(--line-strong);
@@ -2678,7 +2678,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .iris-filters label { display:grid; gap:8px; font-family:var(--font-heading); font-size:12px; font-weight:400; text-transform:uppercase; color:var(--gold); min-width:0; }
         .partner-workspace input:not([type="checkbox"]), .partner-workspace select, .partner-workspace textarea { border:1px solid var(--line-strong); background:#030303; color:var(--text); border-radius:0; padding:12px 16px; width:100%; font-family:var(--font-body); font-size:20px; line-height:1.4; min-height:54px; min-width:0; }
         .partner-workspace input::placeholder, .partner-workspace textarea::placeholder { color:var(--muted); opacity:1; }
-        .partner-workspace input[type="checkbox"] { accent-color:var(--gold-bright); }
+        .partner-workspace input[type="checkbox"] { width:18px; height:18px; min-height:0; flex:0 0 18px; padding:0; margin:0; accent-color:var(--gold-bright); }
         .partner-workspace input[type="file"] { font-size:18px; }
         .partner-workspace input::file-selector-button { font-family:var(--font-heading); font-size:12px; font-weight:500; border:1px solid var(--line-strong); border-radius:0; background:var(--bg-soft); color:var(--text); padding:10px 12px; margin-right:12px; cursor:pointer; }
         .table-scroll { overflow-x:auto; border:1px solid var(--line); }
@@ -2702,7 +2702,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .avatar-editor { display:grid; grid-template-columns:96px minmax(0,1fr); gap:24px; align-items:center; }
         .avatar-editor .brand-avatar { width:96px; height:96px; }
         .profile-form .hint { font-size:16px; color:var(--muted); margin:0; }
-        .profile-form .remove-avatar { display:flex; align-items:center; gap:8px; margin-top:12px; font-family:var(--font-body); font-size:18px; }
+        .profile-form .field .remove-avatar { display:flex; align-items:center; gap:10px; margin-top:12px; font-family:var(--font-body); font-size:18px; text-transform:none; color:var(--muted); }
         .profile-form .btn { justify-self:start; padding:14px 28px; }
         .success-message { color:#7bd88f; padding:14px 16px; border:1px solid rgba(123,216,143,.3); margin-bottom:24px; }
         @media (max-width: 640px) {
