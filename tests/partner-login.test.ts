@@ -98,15 +98,24 @@ describe("partner collection editor", () => {
     db.artwork.findMany.mockResolvedValue([{ status: "assigned", weight_grams: 0.4 }, { status: "activated", weight_grams: 0.42 }]);
     const dashboard = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
     const detail = await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie });
-    expect(dashboard.body).toContain("$120.00");
-    expect(dashboard.body).toContain("$160.00");
-    expect(dashboard.body).not.toContain("$999.00");
-    expect(detail.body).toContain('value="$120.00" disabled');
+    expect(dashboard.body).toContain("<dd>$120</dd>");
+    expect(dashboard.body).toContain("<dd>$160</dd>");
+    expect(dashboard.body).not.toContain("$999");
+    expect(detail.body).toContain('value="$120" disabled');
     if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
       await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
       await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "collections.html"), dashboard.body);
       await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "collection.html"), detail.body);
     }
+  });
+
+  it("preserves cents when the collection price is not a whole amount", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: { ...ararat, shopify_handle: "ararat-with-cents-test" } }]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ price: 12050 }))));
+    const dashboard = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+    const detail = await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie });
+    expect(dashboard.body).toContain("<dd>$120.50</dd>");
+    expect(detail.body).toContain('value="$120.50" disabled');
   });
 
   it("renders linked two-column cards with 16:9 banners and purchased statistics", async () => {

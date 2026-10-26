@@ -2904,7 +2904,11 @@ const buildPartnerDashboardHtml = (params: PartnerWorkspaceIdentity & {
 };
 
 const partnerCollectionPrice = (view: PartnerCollectionView) => view.product
-  ? new Intl.NumberFormat("en-US", { style: "currency", currency: view.product.currency }).format(view.product.priceCents / 100)
+  ? new Intl.NumberFormat("en-US", {
+    style: "currency", currency: view.product.currency,
+    minimumFractionDigits: view.product.priceCents % 100 === 0 ? 0 : 2,
+    maximumFractionDigits: 2
+  }).format(view.product.priceCents / 100)
   : "Unavailable";
 
 const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
