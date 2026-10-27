@@ -7620,11 +7620,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const presentation = collection ? await loadCollectionPresentation(prisma, collection.id) : { available: true, record: null };
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
-    const soldCount = await prisma.artwork.count({ where: purchasedArtworkWhere(collection?.id ?? null) });
+    const soldWhere = purchasedArtworkWhere(collection?.id ?? null);
+    const [soldCount, soldWeight] = await Promise.all([
+      prisma.artwork.count({ where: soldWhere }),
+      prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } })
+    ]);
+    const averageWeight = soldWeight._avg.weight_grams;
     reply.header("Cache-Control", "public, max-age=30").send({
       display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
-      visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount
+      visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount,
+      average_sold_weight_grams: averageWeight !== null && Number.isFinite(averageWeight) && averageWeight > 0 ? averageWeight : null
     });
   });
 

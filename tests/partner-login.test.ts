@@ -17,7 +17,7 @@ const db = vi.hoisted(() => ({
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
-  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
+  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn(), aggregate: vi.fn() },
   $transaction: vi.fn(), $queryRaw: vi.fn(), $disconnect: vi.fn()
 }));
 
@@ -67,6 +67,7 @@ beforeEach(async () => {
   db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
   db.artwork.findMany.mockResolvedValue([]);
   db.artwork.count.mockResolvedValue(6);
+  db.artwork.aggregate.mockResolvedValue({ _avg: { weight_grams: 0.41 } });
   upload.mockResolvedValue({} as never);
   db.collaboratorInvite.findFirst.mockResolvedValue({
     id: "invite", accepted_at: null, revoked_at: null, expires_at: new Date(Date.now() + 60_000),
@@ -309,13 +310,14 @@ describe("partner collection editor", () => {
     expect(db.collectionPresentation.create).not.toHaveBeenCalled();
   });
 
-  it("publishes presentation and aggregate sales only, without owner emails, orders, weights or rarity", async () => {
+  it("publishes presentation and sales aggregates, without owner emails, orders or individual artwork details", async () => {
     db.collection.findFirst.mockResolvedValue(ararat);
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6 });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
+    expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();
   });
 
@@ -327,6 +329,7 @@ describe("partner collection editor", () => {
       expect(response.json()).toMatchObject({ visible: true, edition_size: 10000, sold_count: 150 });
     }
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
+    expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.collection.findFirst).not.toHaveBeenCalled();
     expect(db.artwork.findMany).not.toHaveBeenCalled();
   });
@@ -338,10 +341,22 @@ describe("partner collection editor", () => {
     expect(response.json()).toMatchObject({ edition_size: 100, sold_count: 0 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "sayat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     db.artwork.count.mockClear();
+    db.artwork.aggregate.mockClear();
     db.collection.findFirst.mockResolvedValue(null);
     expect((await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=unknown" })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=invalid!" })).statusCode).toBe(400);
     expect(db.artwork.count).not.toHaveBeenCalled();
+    expect(db.artwork.aggregate).not.toHaveBeenCalled();
+  });
+
+  it("returns no average when sold weights are missing or invalid, without changing the sold count", async () => {
+    db.collection.findFirst.mockResolvedValue(sayat);
+    for (const weight of [null, 0, -1, NaN, Infinity]) {
+      db.artwork.aggregate.mockResolvedValue({ _avg: { weight_grams: weight } });
+      const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=sayat-nova" });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ sold_count: 6, average_sold_weight_grams: null });
+    }
   });
 });
 
