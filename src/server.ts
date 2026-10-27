@@ -10,7 +10,7 @@ import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } from "./utils.js";
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
-import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
+import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds, collaboratorCollectionOptions, CORE_AUTHOR_OPTION_ID, CORE_AUTHOR_COLLECTION_SLUG, CORE_AUTHOR_COLLECTION_NAME, isCoreAuthorCollection } from "./collaborator-access.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
@@ -6451,9 +6451,11 @@ const resolveCollection = async (input: CollectionLookupInput) => {
     return null;
   }
 
-  return prisma.collection.findFirst({
+  const collection = await prisma.collection.findFirst({
     where: where.length === 1 ? where[0] : { OR: where }
   });
+  // The core author's metadata record is not a new inventory pool; core works keep collection_id = NULL.
+  return collection && isCoreAuthorCollection(collection) ? null : collection;
 };
 
 type ArtworkPoolScope =
@@ -7615,12 +7617,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const handle = readSingleValue((req.query as Record<string, unknown>).handle);
     if (!/^[a-z0-9-]{1,120}$/.test(handle)) return reply.code(400).send({ error: "invalid_collection" });
     const core = isCoreCollectionAlias(handle);
-    const collection = core ? null : await prisma.collection.findFirst({ where: { OR: [{ slug: handle }, { shopify_handle: handle }] } });
+    const collection = await prisma.collection.findFirst({ where: core ? { slug: CORE_AUTHOR_COLLECTION_SLUG } : { OR: [{ slug: handle }, { shopify_handle: handle }] } });
     if (!core && !collection) return reply.code(404).send({ error: "collection_not_found" });
     const presentation = collection ? await loadCollectionPresentation(prisma, collection.id) : { available: true, record: null };
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
-    const soldWhere = purchasedArtworkWhere(collection?.id ?? null);
+    const soldWhere = purchasedArtworkWhere(core ? null : collection?.id ?? null);
     const [soldCount, soldWeight, brand] = await Promise.all([
       prisma.artwork.count({ where: soldWhere }),
       prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } }),
@@ -9028,7 +9030,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin/collaborators/new", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const collections = await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    const collections = collaboratorCollectionOptions(await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }));
     reply
       .code(200)
       .type("text/html; charset=utf-8")
@@ -9040,7 +9042,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     const body = (req.body as Record<string, unknown> | null) ?? {};
     const selectedCollectionIds = parseCollectionIds(body.collection_ids);
-    const collections = await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    const collections = collaboratorCollectionOptions(await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }));
     const values = {
       full_name: readSingleValue(body.full_name).trim(),
       email: normalizeEmail(body.email),
@@ -9056,6 +9058,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!values.full_name || !isValidEmail(values.email) ||
         (!selectedCollectionIds.length && (!values.collection_name || !values.collection_slug)) ||
         (selectedCollectionIds.length > 0 && (values.collection_name || values.collection_slug)) ||
+        (!selectedCollectionIds.length && isCoreCollectionAlias(values.collection_slug)) ||
         selectedCollectionIds.some((id) => !collections.some((collection) => collection.id === id))) {
       reply
         .code(400)
@@ -9084,8 +9087,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     try {
       const created = await prisma.$transaction(async (tx) => {
+        const existingIds = selectedCollectionIds.filter((id) => id !== CORE_AUTHOR_OPTION_ID);
         const grantedCollections = selectedCollectionIds.length
-          ? await tx.collection.findMany({ where: { id: { in: selectedCollectionIds } }, orderBy: { name: "asc" } })
+          ? existingIds.length ? await tx.collection.findMany({ where: { id: { in: existingIds } }, orderBy: { name: "asc" } }) : []
           : [await tx.collection.create({
           data: {
             slug: values.collection_slug,
@@ -9096,6 +9100,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
             status: "draft"
           }
         })];
+        if (selectedCollectionIds.includes(CORE_AUTHOR_OPTION_ID)) {
+          grantedCollections.push(await tx.collection.upsert({
+            where: { slug: CORE_AUTHOR_COLLECTION_SLUG }, update: {},
+            create: {
+              slug: CORE_AUTHOR_COLLECTION_SLUG, name: CORE_AUTHOR_COLLECTION_NAME, artist_name: "IRIS",
+              edition_size: 10_000, artworks_count: 10_000, status: "active", shopify_handle: CORE_AUTHOR_COLLECTION_SLUG
+            }
+          }));
+        }
         if (selectedCollectionIds.length && grantedCollections.length !== selectedCollectionIds.length) {
           throw new Error("A selected collection is no longer available.");
         }
@@ -9618,7 +9631,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       ...await loadPartnerIdentity(session.user), collections, selectedCollection, search, page, pages, total,
       items: items.map((item) => ({
         displayId: formatDisplayIrisId(item.iris_id, item.collection), imageUrl: item.image_url,
-        collectionName: item.collection?.name ?? "-", ownerEmail: item.owner_email,
+        collectionName: item.collection?.name ?? CORE_AUTHOR_COLLECTION_NAME, ownerEmail: item.owner_email,
         activatedAt: item.activated_at, orderNumber: item.assigned_order_id
       }))
     }));

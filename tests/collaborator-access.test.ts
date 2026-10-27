@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Collection, Prisma, PrismaClient } from "@prisma/client";
-import { collaboratorArtworkScope, loadCollaboratorCollections, mergeCollaboratorCollections, parseCollectionIds } from "../src/collaborator-access.js";
+import { collaboratorArtworkScope, loadCollaboratorCollections, mergeCollaboratorCollections, parseCollectionIds, collectionArtworkId, collaboratorCollectionOptions } from "../src/collaborator-access.js";
 
 const ararat = { id: "ararat", name: "Ararat Heart" } as Collection;
 const sayat = { id: "sayat", name: "Sayat Nova" } as Collection;
+const core = { id: "core-record", slug: "iris-the-unseen-edition", name: "IRIS" } as Collection;
 
 describe("collection permissions", () => {
   it("parses repeated form fields without granting an implicit default", () => {
@@ -26,6 +27,18 @@ describe("collection permissions", () => {
     const db = { collaboratorCollectionAccess: { findMany } } as unknown as PrismaClient;
     expect(await loadCollaboratorCollections(db, { id: "gugoco", collection: null })).toEqual([ararat, sayat]);
     expect(findMany).toHaveBeenCalledWith({ where: { user_id: "gugoco" }, include: { collection: true } });
+  });
+
+  it("includes legacy NULL inventory only with an explicit core grant", () => {
+    expect(collaboratorArtworkScope([core])).toEqual({ collection_id: null });
+    expect(collectionArtworkId(core)).toBeNull();
+    expect(collectionArtworkId(ararat)).toBe("ararat");
+    expect(collaboratorArtworkScope([core, ararat])).toEqual({ AND: [{ OR: [{ collection_id: null }, { collection_id: { in: ["ararat"] } }] }] });
+  });
+
+  it("offers core access without creating a record or duplicating an existing core entry", () => {
+    expect(collaboratorCollectionOptions([ararat, sayat])).toContainEqual({ id: "__iris_core__", slug: core.slug, name: "IRIS - The Unseen Edition" });
+    expect(collaboratorCollectionOptions([ararat, core]).map((item) => item.id)).toEqual(["ararat", "core-record"]);
   });
 
   it("keeps old accounts working before the additive migration without broadening access", async () => {

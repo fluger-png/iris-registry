@@ -16,8 +16,9 @@ const db = vi.hoisted(() => ({
   collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
-  collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
-  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn(), aggregate: vi.fn() },
+  collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), upsert: vi.fn() },
+  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  webhookReceipt: { create: vi.fn() }, shopifyOrder: { upsert: vi.fn() }, event: { create: vi.fn() },
   $transaction: vi.fn(), $queryRaw: vi.fn(), $disconnect: vi.fn()
 }));
 
@@ -28,13 +29,14 @@ vi.mock("../src/env.js", () => ({ env: {
   partnerInviteTtlHours: 24, partnerSessionTtlDays: 30, releaseIntervalMinutes: 60,
   r2AccountId: "test", r2AccessKeyId: "test", r2SecretAccessKey: "test",
   r2Bucket: "test", r2PublicBaseUrl: "https://images.example.test",
-  resendApiKey: "", resendFromEmail: ""
+  resendApiKey: "", resendFromEmail: "", shopifyWebhookSecret: "test-webhook-secret"
 } }));
 
 import { createServer } from "../src/server.js";
 
 const ararat = { id: "ararat", slug: "ararat-heart", name: "Ararat Heart", edition_size: 100, status: "active" };
 const sayat = { id: "sayat", slug: "sayat-nova", name: "Sayat Nova", edition_size: 100, status: "active" };
+const core = { id: "core-record", slug: "iris-the-unseen-edition", name: "IRIS - The Unseen Edition", artist_name: "IRIS", edition_size: 10000, status: "active" };
 const salt = Buffer.from("partner-test-salt");
 const password = "collection-password";
 const passwordHash = `${salt.toString("hex")}:${crypto.scryptSync(password, salt, 64).toString("hex")}`;
@@ -58,6 +60,7 @@ beforeEach(async () => {
   readPrice.mockResolvedValue(readyPrice);
   updatePrice.mockResolvedValue({ ...readyPrice, priceCents: 13000 });
   db.collection.findMany.mockResolvedValue([ararat, sayat]);
+  db.collection.upsert.mockResolvedValue(core);
   db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: ararat }, { collection: sayat }]);
   db.collaboratorUser.findUnique.mockResolvedValue(user);
   db.collaboratorUser.findMany.mockResolvedValue([]);
@@ -331,7 +334,7 @@ describe("partner collection editor", () => {
     }
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
-    expect(db.collection.findFirst).not.toHaveBeenCalled();
+    expect(db.collection.findFirst).toHaveBeenCalledWith({ where: { slug: core.slug } });
     expect(db.collaboratorUser.findMany).not.toHaveBeenCalled();
     expect(db.artwork.findMany).not.toHaveBeenCalled();
   });
@@ -580,6 +583,112 @@ describe("partner workspace", () => {
 afterEach(async () => { await app.close(); vi.unstubAllGlobals(); });
 
 describe("partner access routes", () => {
+  it("offers an explicit core grant in the admin form without writing anything", async () => {
+    const response = await app.inject({ method: "GET", url: "/admin/collaborators/new", headers: auth });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('value="__iris_core__"');
+    expect(response.body).toContain(core.name);
+    expect(db.collection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("invites the IRIS author with only the core grant and does not move or generate inventory", async () => {
+    const response = await app.inject({ method: "POST", url: "/admin/collaborators", headers: { ...auth, ...form },
+      payload: "full_name=IRIS&email=info%40irisnyc.store&collection_ids=__iris_core__" });
+    expect(response.statusCode).toBe(200);
+    expect(db.collection.upsert).toHaveBeenCalledWith({ where: { slug: core.slug }, update: {}, create: {
+      slug: core.slug, name: core.name, artist_name: "IRIS", edition_size: 10000, artworks_count: 10000, status: "active", shopify_handle: core.slug
+    } });
+    expect(db.collaboratorUser.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      full_name: "IRIS", email: "info@irisnyc.store", collection_id: null,
+      collection_access: { create: [{ collection_id: core.id }] }
+    }) });
+    expect(db.collection.create).not.toHaveBeenCalled();
+    expect(db.artwork.findMany).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
+    expect(db.collaboratorInvite.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("prevents creating a duplicate core collection through the new-draft form", async () => {
+    for (const slug of ["iris", "iris-collection", core.slug]) {
+      const response = await app.inject({ method: "POST", url: "/admin/collaborators", headers: { ...auth, ...form },
+        payload: `full_name=IRIS&email=info%40irisnyc.store&collection_name=IRIS&collection_slug=${slug}&edition_size=10000` });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(db.collection.create).not.toHaveBeenCalled();
+    expect(db.collaboratorUser.create).not.toHaveBeenCalled();
+  });
+
+  it("shows the core author only legacy IRIS, including when searching", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: core }]);
+    db.artwork.count.mockResolvedValue(1);
+    db.artwork.findMany.mockResolvedValue([{ iris_id: "IRIS-1234", image_url: null, collection: null, owner_email: "owner@example.test", activated_at: new Date(), assigned_order_id: "#1000" }]);
+    const response = await app.inject({ method: "GET", url: "/partner/irises?q=1234", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(core.name);
+    expect(response.body).not.toContain("Ararat Heart");
+    expect(db.artwork.findMany.mock.calls[0][0].where).toMatchObject({ collection_id: null, status: "activated", OR: expect.any(Array) });
+    const denied = await app.inject({ method: "GET", url: "/partner/irises?collection=ararat", headers: partnerCookie });
+    expect(denied.statusCode).toBe(404);
+  });
+
+  it("keeps a mixed core/partner grant bounded when the search adds OR conditions", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: core }, { collection: ararat }]);
+    await app.inject({ method: "GET", url: "/partner/irises?q=owner", headers: partnerCookie });
+    expect(db.artwork.count.mock.calls[0][0].where).toMatchObject({
+      AND: [{ OR: [{ collection_id: null }, { collection_id: { in: ["ararat"] } }] }],
+      OR: expect.any(Array)
+    });
+  });
+
+  it("uses the core inventory for author metrics and preserves collection editing isolation", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: core }]);
+    expect((await app.inject({ method: "GET", url: "/partner/collections/core-record", headers: partnerCookie })).statusCode).toBe(200);
+    expect(db.artwork.findMany).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } }, select: { status: true, weight_grams: true } });
+    for (const method of ["GET", "POST"] as const) {
+      expect((await app.inject({ method, url: "/partner/collections/ararat", headers: partnerCookie })).statusCode).toBe(404);
+    }
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: ararat }, { collection: sayat }]);
+    expect((await app.inject({ method: "GET", url: "/partner/collections/core-record", headers: partnerCookie })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: "/partner/collections/core-record/price", headers: partnerCookie })).statusCode).toBe(404);
+  });
+
+  it("publishes core author presentation while counting only legacy core sales", async () => {
+    db.collection.findFirst.mockResolvedValue(core);
+    db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "The Unseen Edition", description: "IRIS story", visible: true, gallery_urls: [] });
+    db.collaboratorUser.findMany.mockResolvedValue([{ full_name: "IRIS", profile: { avatar_url: "https://images.test/iris.png" } }]);
+    const response = await app.inject({ method: "GET", url: `/apps/iris/collection-presentation?handle=${core.slug}` });
+    expect(response.json()).toMatchObject({ display_name: "The Unseen Edition", description: "IRIS story", brand_name: "IRIS", brand_avatar_url: "https://images.test/iris.png", edition_size: 10000 });
+    expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
+  });
+
+  it("does not turn core author metadata into a different random reservation pool", async () => {
+    db.collection.findFirst.mockResolvedValue(core);
+    db.$queryRaw.mockResolvedValue([]);
+    const response = await app.inject({ method: "POST", url: "/apps/iris/reserve-random", payload: { collection_slug: core.slug } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe("no_available_artwork");
+    const [query, ...values] = db.$queryRaw.mock.calls[0];
+    expect(query.join("?")).toContain('"collection_id" IS NULL');
+    expect(values).not.toContain(core.id);
+  });
+
+  it("still assigns paid core orders from NULL inventory after the author metadata exists", async () => {
+    db.collection.findFirst.mockResolvedValue(core);
+    db.artwork.count.mockResolvedValue(0);
+    db.$queryRaw.mockResolvedValue([{ iris_id: "IRIS-1234" }]);
+    db.artwork.findUnique.mockResolvedValue({ pin_code: "123456", activation_token: "existing-test-token" });
+    const payload = JSON.stringify({ id: 123, name: "#123", financial_status: "paid", line_items: [{ id: 1, product_id: 100, title: "IRIS - The Unseen Edition", quantity: 1, properties: [] }] });
+    const response = await app.inject({ method: "POST", url: "/webhooks/shopify/orders-paid", payload, headers: {
+      "content-type": "application/json", "x-shopify-webhook-id": "core-assignment-test", "x-shopify-topic": "orders/paid",
+      "x-shopify-hmac-sha256": crypto.createHmac("sha256", "test-webhook-secret").update(payload).digest("base64")
+    } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "ok" });
+    expect(db.$queryRaw.mock.calls[0][0].join("?")).toContain('"collection_id" IS NULL');
+    expect(db.artwork.update).toHaveBeenCalledWith({ where: { iris_id: "IRIS-1234" }, data: expect.objectContaining({ status: "assigned", assigned_order_id: "#123" }) });
+    expect(db.event.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "assigned", payload_json: expect.objectContaining({ core_collection: true, collection_slug: core.slug }) }) });
+  });
+
   it("redirects an anonymous visitor without reading inventory", async () => {
     const response = await app.inject({ method: "GET", url: "/partner" });
     expect(response.statusCode).toBe(302);

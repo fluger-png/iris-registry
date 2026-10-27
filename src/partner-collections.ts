@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Collection, CollectionPresentation, Prisma, PrismaClient } from "@prisma/client";
 import { collectionPricing, CollectionPriceState } from "./shopify-product-pricing.js";
+import { collectionArtworkId } from "./collaborator-access.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
@@ -97,7 +98,7 @@ export const loadPartnerCollection = async (db: PrismaClient, collection: Collec
     ? { priceCents: priceState.priceCents, currency: priceState.currency, imageUrl: storefrontProduct?.imageUrl ?? null }
     : storefrontProduct;
   const works = await db.artwork.findMany({
-    where: purchasedArtworkWhere(collection.id),
+    where: purchasedArtworkWhere(collectionArtworkId(collection)),
     select: { status: true, weight_grams: true }
   });
   const weights = works.map((work) => work.weight_grams).filter((weight): weight is number => weight !== null && Number.isFinite(weight) && weight > 0);
