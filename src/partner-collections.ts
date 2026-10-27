@@ -71,6 +71,23 @@ export const purchasedArtworkWhere = (collectionId: string | null): Prisma.Artwo
   status: { in: ["assigned", "activated"] }
 });
 
+export const loadPublicCollectionBrand = async (db: PrismaClient, collection: Pick<Collection, "id" | "artist_name">) => {
+  const artistName = collection.artist_name?.trim() || null;
+  try {
+    const partners = await db.collaboratorUser.findMany({
+      where: { status: "active", OR: [{ collection_id: collection.id }, { collection_access: { some: { collection_id: collection.id } } }] },
+      select: { full_name: true, profile: { select: { avatar_url: true } } }
+    });
+    const matches = artistName ? partners.filter((partner) => partner.full_name.trim().toLowerCase() === artistName.toLowerCase()) : [];
+    // Do not attribute a collection to an arbitrary account when multiple partners have access.
+    const brand = matches.length === 1 ? matches[0] : partners.length === 1 ? partners[0] : null;
+    return { name: brand?.full_name.trim() || artistName, avatarUrl: brand?.profile?.avatar_url ?? null };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") return { name: artistName, avatarUrl: null };
+    throw error;
+  }
+};
+
 export const loadPartnerCollection = async (db: PrismaClient, collection: Collection): Promise<PartnerCollectionView> => {
   const presentation = await loadCollectionPresentation(db, collection.id);
   const [storefrontProduct, priceState] = await Promise.all([

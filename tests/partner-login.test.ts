@@ -60,6 +60,7 @@ beforeEach(async () => {
   db.collection.findMany.mockResolvedValue([ararat, sayat]);
   db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: ararat }, { collection: sayat }]);
   db.collaboratorUser.findUnique.mockResolvedValue(user);
+  db.collaboratorUser.findMany.mockResolvedValue([]);
   db.collaboratorUser.create.mockResolvedValue({ ...user, status: "invited" });
   db.collaboratorSession.findFirst.mockResolvedValue({ id: "session", token_hash: sessionHash, user });
   db.collaboratorProfile.findUnique.mockResolvedValue(null);
@@ -315,7 +316,7 @@ describe("partner collection editor", () => {
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();
@@ -326,11 +327,12 @@ describe("partner collection editor", () => {
     for (const handle of ["iris-the-unseen-edition", "iris-collection", "iris"]) {
       const response = await app.inject({ method: "GET", url: `/apps/iris/collection-presentation?handle=${handle}` });
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({ visible: true, edition_size: 10000, sold_count: 150 });
+      expect(response.json()).toMatchObject({ visible: true, edition_size: 10000, sold_count: 150, brand_name: "IRIS NYC", brand_avatar_url: null });
     }
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.collection.findFirst).not.toHaveBeenCalled();
+    expect(db.collaboratorUser.findMany).not.toHaveBeenCalled();
     expect(db.artwork.findMany).not.toHaveBeenCalled();
   });
 
@@ -357,6 +359,40 @@ describe("partner collection editor", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({ sold_count: 6, average_sold_weight_grams: null });
     }
+  });
+
+  it("publishes only the brand name and avatar from the active collection partner", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collaboratorUser.findMany.mockResolvedValue([{ full_name: "Gugoco", profile: { avatar_url: "https://images.test/gugoco.png" } }]);
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.json()).toMatchObject({ brand_name: "Gugoco", brand_avatar_url: "https://images.test/gugoco.png" });
+    expect(db.collaboratorUser.findMany).toHaveBeenCalledWith({
+      where: { status: "active", OR: [{ collection_id: "ararat" }, { collection_access: { some: { collection_id: "ararat" } } }] },
+      select: { full_name: true, profile: { select: { avatar_url: true } } }
+    });
+    expect(response.body).not.toContain(user.email);
+    expect(response.body).not.toContain("password_hash");
+  });
+
+  it("does not choose an arbitrary brand for a collection with multiple partners", async () => {
+    db.collection.findFirst.mockResolvedValue({ ...ararat, artist_name: "Gugoco" });
+    db.collaboratorUser.findMany.mockResolvedValue([
+      { full_name: "Another studio", profile: { avatar_url: "https://images.test/other.png" } },
+      { full_name: " gugoco ", profile: { avatar_url: "https://images.test/gugoco.png" } }
+    ]);
+    const matching = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(matching.json()).toMatchObject({ brand_name: "gugoco", brand_avatar_url: "https://images.test/gugoco.png" });
+    db.collection.findFirst.mockResolvedValue({ ...ararat, artist_name: "Original artist" });
+    const ambiguous = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(ambiguous.json()).toMatchObject({ brand_name: "Original artist", brand_avatar_url: null });
+  });
+
+  it("retains collection data if the optional partner profile tables are unavailable", async () => {
+    db.collection.findFirst.mockResolvedValue({ ...ararat, artist_name: "Gugoco" });
+    db.collaboratorUser.findMany.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ brand_name: "Gugoco", brand_avatar_url: null, average_sold_weight_grams: 0.41 });
   });
 });
 

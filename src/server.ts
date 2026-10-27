@@ -12,7 +12,7 @@ import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } 
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
-import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere } from "./partner-collections.js";
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
 
@@ -7621,13 +7621,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
     const soldWhere = purchasedArtworkWhere(collection?.id ?? null);
-    const [soldCount, soldWeight] = await Promise.all([
+    const [soldCount, soldWeight, brand] = await Promise.all([
       prisma.artwork.count({ where: soldWhere }),
-      prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } })
+      prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } }),
+      collection ? loadPublicCollectionBrand(prisma, collection) : Promise.resolve({ name: "IRIS NYC", avatarUrl: null })
     ]);
     const averageWeight = soldWeight._avg.weight_grams;
     reply.header("Cache-Control", "public, max-age=30").send({
       display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
+      brand_name: brand.name, brand_avatar_url: brand.avatarUrl,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
       visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount,
       average_sold_weight_grams: averageWeight !== null && Number.isFinite(averageWeight) && averageWeight > 0 ? averageWeight : null
