@@ -65,6 +65,12 @@ export type PartnerCollectionView = {
   weighed: number;
 };
 
+export const purchasedArtworkWhere = (collectionId: string | null): Prisma.ArtworkWhereInput => ({
+  collection_id: collectionId,
+  assigned_order_id: { not: null },
+  status: { in: ["assigned", "activated"] }
+});
+
 export const loadPartnerCollection = async (db: PrismaClient, collection: Collection): Promise<PartnerCollectionView> => {
   const presentation = await loadCollectionPresentation(db, collection.id);
   const [storefrontProduct, priceState] = await Promise.all([
@@ -74,7 +80,7 @@ export const loadPartnerCollection = async (db: PrismaClient, collection: Collec
     ? { priceCents: priceState.priceCents, currency: priceState.currency, imageUrl: storefrontProduct?.imageUrl ?? null }
     : storefrontProduct;
   const works = await db.artwork.findMany({
-    where: { collection_id: collection.id, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } },
+    where: purchasedArtworkWhere(collection.id),
     select: { status: true, weight_grams: true }
   });
   const weights = works.map((work) => work.weight_grams).filter((weight): weight is number => weight !== null && Number.isFinite(weight) && weight > 0);

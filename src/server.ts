@@ -12,7 +12,7 @@ import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } 
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
-import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache } from "./partner-collections.js";
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
 
@@ -7614,15 +7614,17 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/apps/iris/collection-presentation", async (req, reply) => {
     const handle = readSingleValue((req.query as Record<string, unknown>).handle);
     if (!/^[a-z0-9-]{1,120}$/.test(handle)) return reply.code(400).send({ error: "invalid_collection" });
-    const collection = await prisma.collection.findFirst({ where: { OR: [{ slug: handle }, { shopify_handle: handle }] } });
-    if (!collection) return reply.code(404).send({ error: "collection_not_found" });
-    const presentation = await loadCollectionPresentation(prisma, collection.id);
+    const core = isCoreCollectionAlias(handle);
+    const collection = core ? null : await prisma.collection.findFirst({ where: { OR: [{ slug: handle }, { shopify_handle: handle }] } });
+    if (!core && !collection) return reply.code(404).send({ error: "collection_not_found" });
+    const presentation = collection ? await loadCollectionPresentation(prisma, collection.id) : { available: true, record: null };
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
+    const soldCount = await prisma.artwork.count({ where: purchasedArtworkWhere(collection?.id ?? null) });
     reply.header("Cache-Control", "public, max-age=30").send({
       display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
-      visible: record?.visible ?? true
+      visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount
     });
   });
 

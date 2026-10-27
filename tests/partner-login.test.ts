@@ -66,6 +66,7 @@ beforeEach(async () => {
   db.collectionPresentation.findUnique.mockResolvedValue(null);
   db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
   db.artwork.findMany.mockResolvedValue([]);
+  db.artwork.count.mockResolvedValue(6);
   upload.mockResolvedValue({} as never);
   db.collaboratorInvite.findFirst.mockResolvedValue({
     id: "invite", accepted_at: null, revoked_at: null, expires_at: new Date(Date.now() + 60_000),
@@ -308,13 +309,39 @@ describe("partner collection editor", () => {
     expect(db.collectionPresentation.create).not.toHaveBeenCalled();
   });
 
-  it("publishes presentation only, without owner emails, orders, weights or rarity", async () => {
+  it("publishes presentation and aggregate sales only, without owner emails, orders, weights or rarity", async () => {
     db.collection.findFirst.mockResolvedValue(ararat);
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6 });
+    expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();
+  });
+
+  it("counts only core sales for each legacy core collection alias", async () => {
+    db.artwork.count.mockResolvedValue(150);
+    for (const handle of ["iris-the-unseen-edition", "iris-collection", "iris"]) {
+      const response = await app.inject({ method: "GET", url: `/apps/iris/collection-presentation?handle=${handle}` });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ visible: true, edition_size: 10000, sold_count: 150 });
+    }
+    expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: null, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
+    expect(db.collection.findFirst).not.toHaveBeenCalled();
+    expect(db.artwork.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns zero sales honestly and never counts all artwork for an unknown collection", async () => {
+    db.collection.findFirst.mockResolvedValue(sayat);
+    db.artwork.count.mockResolvedValue(0);
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=sayat-nova" });
+    expect(response.json()).toMatchObject({ edition_size: 100, sold_count: 0 });
+    expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "sayat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
+    db.artwork.count.mockClear();
+    db.collection.findFirst.mockResolvedValue(null);
+    expect((await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=unknown" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=invalid!" })).statusCode).toBe(400);
+    expect(db.artwork.count).not.toHaveBeenCalled();
   });
 });
 
