@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import { S3Client } from "@aws-sdk/client-s3";
 import { collaboratorProfileCsrf } from "../src/collaborator-profile.js";
 import { collectionCsrf } from "../src/partner-collections.js";
+import { collectionPricing, CollectionPriceError, priceRevision, ReadyPrice } from "../src/shopify-product-pricing.js";
 
 const db = vi.hoisted(() => ({
   collaboratorUser: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -17,7 +18,7 @@ const db = vi.hoisted(() => ({
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
-  $transaction: vi.fn(), $disconnect: vi.fn()
+  $transaction: vi.fn(), $queryRaw: vi.fn(), $disconnect: vi.fn()
 }));
 
 vi.mock("../src/db.js", () => ({ prisma: db }));
@@ -43,11 +44,19 @@ const form = { "content-type": "application/x-www-form-urlencoded" };
 const partnerCookie = { cookie: "iris_partner_session=test" };
 const sessionHash = "test-session-hash";
 const upload = vi.spyOn(S3Client.prototype, "send");
+const inspectPrice = vi.spyOn(collectionPricing, "inspect");
+const readPrice = vi.spyOn(collectionPricing, "read");
+const updatePrice = vi.spyOn(collectionPricing, "update");
+const readyPrice: ReadyPrice = { ready: true, productId: "gid://shopify/Product/100", variantId: "gid://shopify/ProductVariant/200", handle: "ararat-heart", priceCents: 12000, currency: "USD", updatedAt: "2026-10-26T20:00:00Z" };
 let app: FastifyInstance;
 
 beforeEach(async () => {
   vi.resetAllMocks();
   db.$transaction.mockImplementation((fn) => fn(db));
+  db.$queryRaw.mockResolvedValue([{ locked: true }]);
+  inspectPrice.mockResolvedValue({ ready: false, message: "Shopify pricing is temporarily unavailable." });
+  readPrice.mockResolvedValue(readyPrice);
+  updatePrice.mockResolvedValue({ ...readyPrice, priceCents: 13000 });
   db.collection.findMany.mockResolvedValue([ararat, sayat]);
   db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: ararat }, { collection: sayat }]);
   db.collaboratorUser.findUnique.mockResolvedValue(user);
@@ -90,6 +99,75 @@ const collectionPayload = (fields = collectionFields, files: Array<{ field: stri
   ...files.flatMap((file) => [Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name ?? "image.png"}"\r\nContent-Type: image/png\r\n\r\n`), file.data, Buffer.from("\r\n")]),
   Buffer.from(`--${boundary}--\r\n`)
 ]);
+
+describe("partner Shopify price editor", () => {
+  const priceFields = () => ({ csrf_token: collectionCsrf(sessionHash, "ararat"), price_revision: priceRevision(sessionHash, "ararat", readyPrice), price: "130" });
+  const submit = (fields = priceFields(), id = "ararat") => app.inject({ method: "POST", url: `/partner/collections/${id}/price`, headers: { ...partnerCookie, ...form }, payload: new URLSearchParams(fields).toString() });
+
+  it("renders a separate price form with an authoritative price and no trailing zeros", async () => {
+    inspectPrice.mockResolvedValue(readyPrice);
+    const response = await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie });
+    expect(response.body).toContain('form="collection-price-form" type="text" inputmode="decimal" maxlength="9" value="120"');
+    expect(response.body).toContain('action="/partner/collections/ararat/price"');
+    expect(response.body).toContain(`value="${priceRevision(sessionHash, "ararat", readyPrice)}"`);
+    expect(response.body).toContain('form="collection-price-form">Save price</button>');
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "price-editor.html"), response.body);
+    }
+  });
+
+  it("requires a partner session and collection access before reading prices", async () => {
+    expect((await app.inject({ method: "POST", url: "/partner/collections/ararat/price", headers: form, payload: "price=130" })).statusCode).toBe(302);
+    expect((await submit(priceFields(), "unseen")).statusCode).toBe(404);
+    expect(readPrice).not.toHaveBeenCalled();
+    expect(updatePrice).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid CSRF, forged product IDs, duplicate values and invalid prices", async () => {
+    expect((await submit({ ...priceFields(), csrf_token: collectionCsrf(sessionHash, "sayat") })).statusCode).toBe(403);
+    expect((await submit({ ...priceFields(), product_id: "other" } as ReturnType<typeof priceFields>)).statusCode).toBe(400);
+    for (const price of ["0", "-1", "120.001", "1e3", "", "1000000"]) expect((await submit({ ...priceFields(), price })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/partner/collections/ararat/price", headers: { ...partnerCookie, ...form }, payload: `${new URLSearchParams(priceFields())}&price=1` })).statusCode).toBe(400);
+    expect(updatePrice).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale revisions and busy locks without writing to Shopify", async () => {
+    readPrice.mockResolvedValue({ ...readyPrice, priceCents: 12500 });
+    expect((await submit()).statusCode).toBe(409);
+    readPrice.mockResolvedValue(readyPrice);
+    db.$queryRaw.mockResolvedValue([{ locked: false }]);
+    expect((await submit()).statusCode).toBe(409);
+    expect(updatePrice).not.toHaveBeenCalled();
+  });
+
+  it("saves only the authorized price and redirects after Shopify confirmation", async () => {
+    const response = await submit();
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe("/partner/collections/ararat?price_saved=1");
+    expect(updatePrice).toHaveBeenCalledTimes(1);
+    expect(updatePrice).toHaveBeenCalledWith(ararat, readyPrice, 13000);
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.updateMany).not.toHaveBeenCalled();
+    expect(db.collection.create).not.toHaveBeenCalled();
+  });
+
+  it("shows uncertain outcomes without a success redirect", async () => {
+    updatePrice.mockRejectedValue(new CollectionPriceError("unconfirmed", "Reload to check the current price."));
+    const response = await submit();
+    expect(response.statusCode).toBe(503);
+    expect(response.headers.location).toBeUndefined();
+    expect(response.body).toContain("Reload to check the current price.");
+    expect(response.body).not.toContain("Price saved in Shopify.");
+  });
+
+  it("does not call Shopify writes when saving collection presentation", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders, payload: collectionPayload() });
+    expect(response.statusCode).toBe(303);
+    expect(updatePrice).not.toHaveBeenCalled();
+  });
+});
 
 describe("partner collection editor", () => {
   it("uses live storefront prices instead of stale collection defaults", async () => {

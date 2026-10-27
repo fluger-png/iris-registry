@@ -12,7 +12,8 @@ import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } 
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds } from "./collaborator-access.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
-import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation } from "./partner-collections.js";
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache } from "./partner-collections.js";
+import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
 
 const MAX_PAGE_SIZE = 100;
@@ -2688,6 +2689,9 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .collection-form .hint { font-size:16px; color:var(--muted); margin:0; }
         .collection-form textarea { resize:vertical; min-height:180px; }
         .collection-form .btn { justify-self:start; }
+        .collection-price-controls { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
+        .collection-price-controls input { flex:1 1 180px; max-width:320px; }
+        .collection-price-controls .btn { flex:0 0 auto; }
         .collection-settings-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:28px; align-items:end; }
         .collection-settings-row .field { min-width:0; }
         .collection-status { display:flex; gap:12px; align-items:center; min-height:54px; }
@@ -2912,7 +2916,7 @@ const partnerCollectionPrice = (view: PartnerCollectionView) => view.product
   : "Unavailable";
 
 const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
-  view: PartnerCollectionView; csrf: string; error?: string; saved?: boolean;
+  view: PartnerCollectionView; csrf: string; priceRevision?: string; error?: string; saved?: boolean; priceSaved?: boolean;
 }) => {
   const { view } = params;
   const record = view.presentation.record;
@@ -2922,6 +2926,7 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
     <div class="section-heading"><h2>${escapeHtml(record?.display_name || view.collection.name)}</h2><a href="/partner">Back</a></div>
     ${params.error ? `<div class="error" role="alert">${escapeHtml(params.error)}</div>` : ""}
     ${params.saved ? '<div class="success-message" role="status">Collection saved.</div>' : ""}
+    ${params.priceSaved ? '<div class="success-message" role="status">Price saved in Shopify.</div>' : ""}
     ${!view.presentation.available ? '<div class="error" role="status">Collection settings are temporarily unavailable.</div>' : ""}
     <form class="collection-form" method="POST" enctype="multipart/form-data" action="/partner/collections/${encodeURIComponent(view.collection.id)}">
       <input type="hidden" name="csrf_token" value="${params.csrf}" />
@@ -2947,7 +2952,12 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
         <div><dt>Average gold weight</dt><dd>${view.averageWeight === null ? "-" : `${view.averageWeight.toFixed(3)} g`}</dd></div>
       </dl>
       ${view.weighed < view.purchased ? `<p class="hint">Gold weight recorded for ${view.weighed} of ${view.purchased} purchased IRIS.</p>` : ""}
-      <div class="field"><label for="collection-price">Price per IRIS</label><input id="collection-price" value="${partnerCollectionPrice(view)}" disabled /><p class="hint">Shopify price · Editing unavailable while the Shopify connection is offline.</p></div>
+      <div class="field"><label for="collection-price">Price per IRIS${view.priceState.ready ? " (USD)" : ""}</label>
+        ${view.priceState.ready && params.priceRevision ? `<div class="collection-price-controls">
+          <input id="collection-price" name="price" form="collection-price-form" type="text" inputmode="decimal" maxlength="9" value="${view.priceState.priceCents / 100}" required />
+          <button class="btn" type="submit" form="collection-price-form">Save price</button>
+        </div>` : `<input id="collection-price" value="${partnerCollectionPrice(view)}" disabled /><p class="hint">${escapeHtml(view.priceState.ready ? "Reload to edit this price." : view.priceState.message)}</p>`}
+      </div>
       <div class="field"><label for="collection-description">Collection description</label><textarea id="collection-description" name="description" maxlength="${COLLECTION_DESCRIPTION_MAX}" rows="7">${escapeHtml(record?.description || "")}</textarea></div>
       <div class="collection-gallery">${Array.from({ length: 4 }, (_, index) => `<div class="field">
         <label for="collection-image-${index}">Image ${index + 1}</label>
@@ -2957,6 +2967,10 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
       </div>`).join("")}</div>
       <button class="btn" type="submit"${view.presentation.available ? "" : " disabled"}>Save Collection</button>
     </form>
+    ${view.priceState.ready && params.priceRevision ? `<form id="collection-price-form" method="POST" action="/partner/collections/${encodeURIComponent(view.collection.id)}/price">
+      <input type="hidden" name="csrf_token" value="${params.csrf}" />
+      <input type="hidden" name="price_revision" value="${params.priceRevision}" />
+    </form>` : ""}
   </section>`);
 };
 
@@ -9424,10 +9438,58 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const collections = await loadCollaboratorCollections(prisma, session.user);
     const collection = collections.find((item) => item.id === id);
     if (!collection) return reply.code(404).send("Collection not found");
+    const view = await loadPartnerCollection(prisma, collection);
     reply.type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
-      ...await loadPartnerIdentity(session.user), view: await loadPartnerCollection(prisma, collection),
-      csrf: collectionCsrf(session.token_hash, id), saved: (req.query as Record<string, unknown>).saved === "1"
+      ...await loadPartnerIdentity(session.user), view,
+      csrf: collectionCsrf(session.token_hash, id),
+      priceRevision: view.priceState.ready ? priceRevision(session.token_hash, id, view.priceState) : undefined,
+      saved: (req.query as Record<string, unknown>).saved === "1",
+      priceSaved: (req.query as Record<string, unknown>).price_saved === "1"
     }));
+  });
+
+  app.post("/partner/collections/:id/price", { bodyLimit: 2048 }, async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const { id } = req.params as { id: string };
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const collection = collections.find((item) => item.id === id);
+    if (!collection) return reply.code(404).send("Collection not found");
+    const fail = async (status: number, error: string) => {
+      const view = await loadPartnerCollection(prisma, collection);
+      return reply.code(status).type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
+        ...await loadPartnerIdentity(session.user), view, error,
+        csrf: collectionCsrf(session.token_hash, id),
+        priceRevision: view.priceState.ready ? priceRevision(session.token_hash, id, view.priceState) : undefined
+      }));
+    };
+    if (req.headers["content-type"]?.split(";")[0].trim() !== "application/x-www-form-urlencoded") return fail(400, "Please submit the price form.");
+    const body = req.body as Record<string, unknown> | null;
+    const keys = ["csrf_token", "price_revision", "price"];
+    if (!body || Object.keys(body).length !== keys.length || !keys.every((key) => typeof body[key] === "string")) return fail(400, "Invalid price form.");
+    if (!validCollectionCsrf(body.csrf_token as string, session.token_hash, id)) return fail(403, "Your form expired. Reload this page and try again.");
+    const cents = parsePriceCents(body.price);
+    if (cents === null || cents <= 0) return fail(400, "Enter a price from $0.01 to $999,999.99, with up to two decimal places.");
+    try {
+      // Serialize partner price writes across server instances; Shopify remains the price source of truth.
+      await prisma.$transaction(async (tx) => {
+        const locks = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtextextended(${`partner-price:${id}`}, 0)) AS locked`;
+        if (!locks[0]?.locked) throw new CollectionPriceError("busy", "Another price change is in progress. Reload before saving.", 409);
+        const current = await collectionPricing.read(collection);
+        if (!validPriceRevision(body.price_revision, session.token_hash, id, current)) {
+          throw new CollectionPriceError("stale", "The Shopify price changed since this page was opened. Review the current price before saving again.", 409);
+        }
+        const audit = { partnerId: session.user.id, collectionId: id, productId: current.productId, previousPriceCents: current.priceCents, requestedPriceCents: cents, currency: current.currency };
+        req.log.info(audit, "Partner Shopify price change requested");
+        const confirmed = await collectionPricing.update(collection, current, cents);
+        req.log.info({ ...audit, confirmedPriceCents: confirmed.priceCents }, "Partner Shopify price confirmed");
+      }, { maxWait: 2000, timeout: 120000 });
+      clearCollectionProductCache(collection.shopify_handle);
+      return reply.redirect(303, `/partner/collections/${encodeURIComponent(id)}?price_saved=1`);
+    } catch (error) {
+      req.log.warn({ partnerId: session.user.id, collectionId: id, code: error instanceof CollectionPriceError ? error.code : "internal" }, "Partner Shopify price change failed or unconfirmed");
+      return fail(error instanceof CollectionPriceError ? error.status : 503, error instanceof CollectionPriceError ? error.message : "The price change could not be confirmed. Reload to check the current Shopify price before trying again.");
+    }
   });
 
   app.post("/partner/collections/:id", async (req, reply) => {
@@ -9440,7 +9502,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const view = await loadPartnerCollection(prisma, collection);
     const identity = await loadPartnerIdentity(session.user);
     const fail = (status: number, error: string) => reply.code(status).type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
-      ...identity, view, csrf: collectionCsrf(session.token_hash, id), error
+      ...identity, view, csrf: collectionCsrf(session.token_hash, id), error,
+      priceRevision: view.priceState.ready ? priceRevision(session.token_hash, id, view.priceState) : undefined
     }));
     if (!view.presentation.available) return fail(503, "Collection settings are temporarily unavailable.");
     if (!req.isMultipart()) return fail(400, "Please submit the collection form.");

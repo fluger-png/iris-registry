@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Collection, CollectionPresentation, Prisma, PrismaClient } from "@prisma/client";
+import { collectionPricing, CollectionPriceState } from "./shopify-product-pricing.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
@@ -31,6 +32,8 @@ export const validCollectionCsrf = (value: unknown, sessionHash: string, collect
 export type CollectionProductView = { priceCents: number; currency: string; imageUrl: string | null };
 const productCache = new Map<string, { value: CollectionProductView; expires: number }>();
 
+export const clearCollectionProductCache = (handle: string | null) => { if (handle) productCache.delete(handle); };
+
 export const loadCollectionProduct = async (handle: string | null): Promise<CollectionProductView | null> => {
   if (!handle || !/^[a-z0-9-]+$/.test(handle)) return null;
   const cached = productCache.get(handle);
@@ -55,6 +58,7 @@ export type PartnerCollectionView = {
   collection: Collection;
   presentation: CollectionPresentationView;
   product: CollectionProductView | null;
+  priceState: CollectionPriceState;
   purchased: number;
   activated: number;
   averageWeight: number | null;
@@ -63,14 +67,19 @@ export type PartnerCollectionView = {
 
 export const loadPartnerCollection = async (db: PrismaClient, collection: Collection): Promise<PartnerCollectionView> => {
   const presentation = await loadCollectionPresentation(db, collection.id);
-  const product = await loadCollectionProduct(collection.shopify_handle);
+  const [storefrontProduct, priceState] = await Promise.all([
+    loadCollectionProduct(collection.shopify_handle), collectionPricing.inspect(collection)
+  ]);
+  const product = priceState.ready
+    ? { priceCents: priceState.priceCents, currency: priceState.currency, imageUrl: storefrontProduct?.imageUrl ?? null }
+    : storefrontProduct;
   const works = await db.artwork.findMany({
     where: { collection_id: collection.id, assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } },
     select: { status: true, weight_grams: true }
   });
   const weights = works.map((work) => work.weight_grams).filter((weight): weight is number => weight !== null && Number.isFinite(weight) && weight > 0);
   return {
-    collection, presentation, product, purchased: works.length,
+    collection, presentation, product, priceState, purchased: works.length,
     activated: works.filter((work) => work.status === "activated").length,
     averageWeight: weights.length ? weights.reduce((sum, weight) => sum + weight, 0) / weights.length : null,
     weighed: weights.length
