@@ -3400,6 +3400,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           align-items:center;
           justify-self:center;
           width:90px;
+          aspect-ratio:1;
         }
         .site-logo img {
           width:90px;
@@ -4688,7 +4689,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         <header class="site-header">
           <div class="header-inner">
             <a class="site-logo" href="/" aria-label="IRIS NYC Home">
-              <img src="https://irisnyc.store/cdn/shop/files/blacklogo_4x_fab96a79-d7af-4c49-968e-176fa1fb41e6.png?v=1776815083&width=180" alt="IRIS NYC" />
+              <img src="https://cdn.shopify.com/s/files/1/0710/5239/4589/files/IRISNYC-LOGO.svg?v=1793919322" alt="IRIS NYC" width="180" height="166" />
             </a>
             <nav class="main-nav" aria-label="Main navigation">
               <a class="header-shop-button" href="/products/iris-the-unseen-edition"><span>Shop IRIS</span></a>
