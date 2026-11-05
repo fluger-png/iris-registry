@@ -18,6 +18,7 @@ import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision
 import fs from "node:fs";
 import { registerAdminCollections } from "./admin-collections.js";
 import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-collections.js";
+import { COLLECTION_VIDEO_MAX_BYTES, isCollectionMp4, loadCollectionProductMedia } from "./collection-product-media.js";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
@@ -2921,12 +2922,13 @@ const partnerCollectionPrice = (view: PartnerCollectionView) => view.product
   : "Unavailable";
 
 const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
-  view: PartnerCollectionView; csrf: string; priceRevision?: string; error?: string; saved?: boolean; priceSaved?: boolean;
+  view: PartnerCollectionView; csrf: string; priceRevision?: string; error?: string; saved?: boolean; priceSaved?: boolean; videoSaved?: boolean;
 }) => {
   const { view } = params;
   const record = view.presentation.record;
   const image = record?.banner_url || view.product?.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE;
   const gallery = record?.gallery_urls || [];
+  const media = view.productMedia;
   return buildPartnerWorkspaceHtml(params, "collections", `<section>
     <div class="section-heading"><h2>${escapeHtml(record?.display_name || view.collection.name)}</h2><a href="/partner">Back</a></div>
     ${params.error ? `<div class="error" role="alert">${escapeHtml(params.error)}</div>` : ""}
@@ -2976,6 +2978,19 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
       <input type="hidden" name="csrf_token" value="${params.csrf}" />
       <input type="hidden" name="price_revision" value="${params.priceRevision}" />
     </form>` : ""}
+    <form class="collection-form" method="POST" enctype="multipart/form-data" action="/partner/collections/${encodeURIComponent(view.collection.id)}/video" style="margin-top:32px;padding-top:28px;border-top:1px solid var(--line);">
+      <input type="hidden" name="csrf_token" value="${params.csrf}" />
+      <input type="hidden" name="media_revision" value="${media.record?.revision ?? -1}" />
+      <div class="field"><label for="collection-video">Product video</label>
+        ${params.videoSaved ? '<div class="success-message" role="status">Video saved.</div>' : ""}
+        ${media.record?.video_url ? `<video controls preload="metadata" playsinline poster="${escapeHtml(image)}" style="display:block;width:100%;max-width:560px;aspect-ratio:16/9;background:#000;object-fit:contain;"><source src="${escapeHtml(media.record.video_url)}" type="video/mp4" /></video>` : ""}
+        <input id="collection-video" type="file" name="video" accept="video/mp4,.mp4"${media.available ? "" : " disabled"} />
+        <p class="hint">MP4 · Maximum 30 MB.</p>
+        ${media.record?.video_url ? '<label class="remove-image"><input type="checkbox" name="remove_video" value="1" /> Remove video</label>' : ""}
+        ${!media.available ? '<div class="error" role="status">Video uploads are unavailable until the database migration is applied.</div>' : ""}
+      </div>
+      <button class="btn" type="submit"${media.available ? "" : " disabled"}>Save Video</button>
+    </form>
   </section>`);
 };
 
@@ -7658,10 +7673,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
     const soldWhere = purchasedArtworkWhere(core ? null : collection?.id ?? null);
-    const [soldCount, soldWeight, brand] = await Promise.all([
+    const [soldCount, soldWeight, brand, productMedia] = await Promise.all([
       prisma.artwork.count({ where: soldWhere }),
       prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } }),
-      collection ? loadPublicCollectionBrand(prisma, collection) : Promise.resolve({ name: "IRIS NYC", avatarUrl: null })
+      collection ? loadPublicCollectionBrand(prisma, collection) : Promise.resolve({ name: "IRIS NYC", avatarUrl: null }),
+      collection ? loadCollectionProductMedia(prisma, collection.id) : Promise.resolve({ available: true, record: null })
     ]);
     const averageWeight = soldWeight._avg.weight_grams;
     reply.header("Cache-Control", "public, max-age=30").send({
@@ -7669,6 +7685,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       brand_name: brand.name, brand_avatar_url: brand.avatarUrl,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
       product_url: collection?.shopify_handle && /^[a-z0-9-]+$/.test(collection.shopify_handle) ? `/products/${collection.shopify_handle}` : null,
+      video_url: productMedia.record?.video_url ?? null,
       visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount,
       average_sold_weight_grams: averageWeight !== null && Number.isFinite(averageWeight) && averageWeight > 0 ? averageWeight : null
     });
@@ -9503,7 +9520,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       csrf: collectionCsrf(session.token_hash, id),
       priceRevision: view.priceState.ready ? priceRevision(session.token_hash, id, view.priceState) : undefined,
       saved: (req.query as Record<string, unknown>).saved === "1",
-      priceSaved: (req.query as Record<string, unknown>).price_saved === "1"
+      priceSaved: (req.query as Record<string, unknown>).price_saved === "1",
+      videoSaved: (req.query as Record<string, unknown>).video_saved === "1"
     }));
   });
 
@@ -9548,6 +9566,63 @@ export const createServer = async (): Promise<FastifyInstance> => {
     } catch (error) {
       req.log.warn({ partnerId: session.user.id, collectionId: id, code: error instanceof CollectionPriceError ? error.code : "internal" }, "Partner Shopify price change failed or unconfirmed");
       return fail(error instanceof CollectionPriceError ? error.status : 503, error instanceof CollectionPriceError ? error.message : "The price change could not be confirmed. Reload to check the current Shopify price before trying again.");
+    }
+  });
+
+  app.post("/partner/collections/:id/video", { bodyLimit: COLLECTION_VIDEO_MAX_BYTES + 8192 }, async (req, reply) => {
+    const session = await requireCollaborator(req, reply);
+    if (!session) return;
+    const { id } = req.params as { id: string };
+    const collections = await loadCollaboratorCollections(prisma, session.user);
+    const collection = collections.find((item) => item.id === id);
+    if (!collection) return reply.code(404).send("Collection not found");
+    const view = await loadPartnerCollection(prisma, collection);
+    const identity = await loadPartnerIdentity(session.user);
+    const fail = (status: number, error: string) => reply.code(status).type("text/html; charset=utf-8").send(buildPartnerCollectionHtml({
+      ...identity, view, csrf: collectionCsrf(session.token_hash, id), error,
+      priceRevision: view.priceState.ready ? priceRevision(session.token_hash, id, view.priceState) : undefined
+    }));
+    if (!view.productMedia.available) return fail(503, "Video uploads are unavailable until the database migration is applied.");
+    if (!req.isMultipart()) return fail(400, "Please submit the video form.");
+    const fields: Record<string, string> = {};
+    let video: Buffer | null = null;
+    try {
+      for await (const part of req.parts({ limits: { fileSize: COLLECTION_VIDEO_MAX_BYTES, files: 1, fields: 3, parts: 4, fieldSize: 256 } })) {
+        if (part.type === "file") {
+          if (part.fieldname !== "video") return fail(400, "Unexpected video field.");
+          const buffer = await part.toBuffer();
+          if (part.filename) video = buffer;
+        } else {
+          if (!["csrf_token", "media_revision", "remove_video"].includes(part.fieldname) || fields[part.fieldname] !== undefined || part.valueTruncated || typeof part.value !== "string") return fail(400, "Invalid video form.");
+          fields[part.fieldname] = part.value;
+        }
+      }
+    } catch { return fail(400, "Upload one MP4 video, 30 MB or smaller."); }
+    if (!validCollectionCsrf(fields.csrf_token, session.token_hash, id)) return fail(403, "Your form expired. Reload this page and try again.");
+    const current = view.productMedia.record;
+    if (!/^-?\d+$/.test(fields.media_revision ?? "") || !Number.isSafeInteger(Number(fields.media_revision)) || Number(fields.media_revision) !== (current?.revision ?? -1)) return fail(409, "This video changed in another window. Reload before saving.");
+    if (fields.remove_video !== undefined && fields.remove_video !== "1") return fail(400, "Invalid video removal value.");
+    if (video && fields.remove_video === "1") return fail(400, "Upload or remove a video, not both.");
+    if (!video && fields.remove_video !== "1") return fail(400, "Choose an MP4 video to upload.");
+    if (video && !isCollectionMp4(video)) return fail(400, "Upload a valid MP4 video, 30 MB or smaller.");
+    try {
+      let videoUrl: string | null = null;
+      if (video) {
+        if (!env.r2Bucket || !env.r2PublicBaseUrl) return fail(503, "Video uploads are temporarily unavailable.");
+        const key = `collections/${id}/product-video/${crypto.randomUUID()}.mp4`;
+        await r2.send(new PutObjectCommand({ Bucket: env.r2Bucket, Key: key, Body: video, ContentType: "video/mp4", CacheControl: "public, max-age=31536000, immutable" }));
+        videoUrl = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${key}`;
+      }
+      if (current) {
+        const saved = await prisma.collectionProductMedia.updateMany({ where: { collection_id: id, revision: current.revision }, data: { video_url: videoUrl, revision: { increment: 1 } } });
+        if (saved.count !== 1) return fail(409, "This video changed in another window. Reload before saving.");
+      } else await prisma.collectionProductMedia.create({ data: { collection_id: id, video_url: videoUrl } });
+      req.log.info({ collectionId: id, removed: videoUrl === null }, "Partner collection video saved");
+      return reply.redirect(303, `/partner/collections/${encodeURIComponent(id)}?video_saved=1`);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return fail(409, "This video changed in another window. Reload before saving.");
+      req.log.error({ err: error, collectionId: id }, "Partner collection video update failed");
+      return fail(503, "The video could not be saved. Please try again.");
     }
   });
 

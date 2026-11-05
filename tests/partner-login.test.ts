@@ -16,6 +16,7 @@ const db = vi.hoisted(() => ({
   collaboratorProfile: { findUnique: vi.fn(), upsert: vi.fn() },
   collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collectionStorefrontOrder: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  collectionProductMedia: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), upsert: vi.fn() },
@@ -73,6 +74,8 @@ beforeEach(async () => {
   db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
   db.collectionStorefrontOrder.findUnique.mockResolvedValue({ collection_ids: ["sayat", "ararat"], revision: 2 });
   db.collectionStorefrontOrder.updateMany.mockResolvedValue({ count: 1 });
+  db.collectionProductMedia.findUnique.mockResolvedValue(null);
+  db.collectionProductMedia.updateMany.mockResolvedValue({ count: 1 });
   db.artwork.findMany.mockResolvedValue([]);
   db.artwork.count.mockResolvedValue(6);
   db.artwork.aggregate.mockResolvedValue({ _avg: { weight_grams: 0.41 } });
@@ -109,6 +112,101 @@ const collectionPayload = (fields = collectionFields, files: Array<{ field: stri
   ...files.flatMap((file) => [Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name ?? "image.png"}"\r\nContent-Type: image/png\r\n\r\n`), file.data, Buffer.from("\r\n")]),
   Buffer.from(`--${boundary}--\r\n`)
 ]);
+
+describe("partner product videos", () => {
+  const mp4 = Buffer.from("000000186674797069736f6d0000020069736f6d6d703432000000086d646174", "hex");
+  const fields = { csrf_token: collectionCsrf(sessionHash, "ararat"), media_revision: "-1" };
+  const submit = (values = fields, video: Buffer | null = mp4, id = "ararat") => app.inject({ method: "POST", url: `/partner/collections/${id}/video`, headers: profileHeaders,
+    payload: collectionPayload(values as typeof collectionFields, video ? [{ field: "video", data: video, name: "movie.mp4" }] : []) });
+
+  it("renders a separate MP4 upload form with preview and removal", async () => {
+    db.collectionProductMedia.findUnique.mockResolvedValue({ video_url: "https://images.test/collection.mp4", revision: 3 });
+    const response = await app.inject({ method: "GET", url: "/partner/collections/ararat?video_saved=1", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('action="/partner/collections/ararat/video"');
+    expect(response.body).toContain('name="media_revision" value="3"');
+    expect(response.body).toContain('name="remove_video"');
+    expect(response.body).toContain("Maximum 30 MB");
+    expect(response.body).toContain("Video saved.");
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "video-editor.html"), response.body);
+    }
+  });
+
+  it("requires a partner session and collection access before processing files", async () => {
+    expect((await app.inject({ method: "POST", url: "/partner/collections/ararat/video" })).statusCode).toBe(302);
+    expect((await submit(fields, mp4, "foreign")).statusCode).toBe(404);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionProductMedia.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects CSRF failures, stale forms, non-video data and empty submissions", async () => {
+    expect((await submit({ ...fields, csrf_token: "bad" })).statusCode).toBe(403);
+    expect((await submit({ ...fields, media_revision: "4" })).statusCode).toBe(409);
+    expect((await submit(fields, png)).statusCode).toBe(400);
+    expect((await submit(fields, null)).statusCode).toBe(400);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionProductMedia.create).not.toHaveBeenCalled();
+  });
+
+  it("uploads a verified MP4 only to the authorized collection prefix", async () => {
+    const response = await submit();
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe("/partner/collections/ararat?video_saved=1");
+    expect(upload.mock.calls[0][0].input).toMatchObject({ ContentType: "video/mp4", Body: mp4 });
+    expect((upload.mock.calls[0][0].input as { Key: string }).Key).toMatch(/^collections\/ararat\/product-video\/.+\.mp4$/);
+    expect(db.collectionProductMedia.create.mock.calls[0][0].data).toMatchObject({ collection_id: "ararat", video_url: expect.stringMatching(/^https:\/\/images.example.test\/collections\/ararat\//) });
+    expect(db.collectionPresentation.updateMany).not.toHaveBeenCalled();
+    expect(db.artwork.update).not.toHaveBeenCalled();
+  });
+
+  it("enforces the video size limit before uploading", async () => {
+    const oversized = Buffer.alloc(30 * 1024 * 1024 + 1); mp4.copy(oversized);
+    expect((await submit(fields, oversized)).statusCode).toBe(400);
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionProductMedia.create).not.toHaveBeenCalled();
+  });
+
+  it("removes a video without uploading or modifying other collection settings", async () => {
+    db.collectionProductMedia.findUnique.mockResolvedValue({ video_url: "https://images.test/old.mp4", revision: 2 });
+    const response = await submit({ ...fields, media_revision: "2", remove_video: "1" } as typeof fields, null);
+    expect(response.statusCode).toBe(303);
+    expect(db.collectionProductMedia.updateMany).toHaveBeenCalledWith({ where: { collection_id: "ararat", revision: 2 }, data: { video_url: null, revision: { increment: 1 } } });
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects uploading and removing together, duplicate fields and unknown file fields", async () => {
+    expect((await submit({ ...fields, remove_video: "1" } as typeof fields)).statusCode).toBe(400);
+    const duplicate = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="csrf_token"\r\n\r\nbad\r\n`), collectionPayload(fields as typeof collectionFields, [{ field: "video", data: mp4 }])]);
+    expect((await app.inject({ method: "POST", url: "/partner/collections/ararat/video", headers: profileHeaders, payload: duplicate })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/partner/collections/ararat/video", headers: profileHeaders, payload: collectionPayload(fields as typeof collectionFields, [{ field: "banner", data: mp4 }]) })).statusCode).toBe(400);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("rejects a racing update and keeps existing settings available before migration", async () => {
+    db.collectionProductMedia.findUnique.mockResolvedValue({ revision: 0 });
+    db.collectionProductMedia.updateMany.mockResolvedValue({ count: 0 });
+    expect((await submit({ ...fields, media_revision: "0" })).statusCode).toBe(409);
+    db.collectionProductMedia.findUnique.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    expect((await app.inject({ method: "GET", url: "/partner/collections/ararat", headers: partnerCookie })).statusCode).toBe(200);
+    expect((await submit()).statusCode).toBe(503);
+    db.collection.findFirst.mockResolvedValue(ararat);
+    const publicResponse = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(publicResponse.statusCode).toBe(200);
+    expect(publicResponse.json().video_url).toBeNull();
+  });
+
+  it("publishes only the active video URL, never internal revisions or account details", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collectionProductMedia.findUnique.mockResolvedValue({ video_url: "https://images.test/movie.mp4", revision: 7 });
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.json().video_url).toBe("https://images.test/movie.mp4");
+    expect(response.body).not.toContain('"revision"');
+    expect(response.body).not.toContain(user.email);
+  });
+});
 
 describe("global admin collections", () => {
   const csrf = () => adminCollectionsCsrf("test-password", Date.now());
@@ -473,7 +571,7 @@ describe("partner collection editor", () => {
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], product_url: null, visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], product_url: null, video_url: null, visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();

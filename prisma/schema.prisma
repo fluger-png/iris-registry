@@ -52,6 +52,7 @@ model Collection {
   collaborator_user   CollaboratorUser?
   collaborator_access CollaboratorCollectionAccess[]
   presentation        CollectionPresentation?
+  product_media       CollectionProductMedia?
 
   @@index([status])
 }
@@ -73,6 +74,14 @@ model CollectionStorefrontOrder {
   collection_ids String[] @default([])
   revision       Int      @default(0)
   updated_at     DateTime @updatedAt
+}
+
+model CollectionProductMedia {
+  collection_id String   @id
+  video_url     String?
+  revision      Int      @default(0)
+  updated_at    DateTime @updatedAt
+  collection    Collection @relation(fields: [collection_id], references: [id], onDelete: Cascade)
 }
 
 model Artwork {

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { Collection, CollectionPresentation, Prisma, PrismaClient } from "@prisma/client";
 import { collectionPricing, CollectionPriceState } from "./shopify-product-pricing.js";
 import { collectionArtworkId } from "./collaborator-access.js";
+import { CollectionProductMediaView, loadCollectionProductMedia } from "./collection-product-media.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
@@ -61,6 +62,7 @@ export type PartnerCollectionView = {
   presentation: CollectionPresentationView;
   product: CollectionProductView | null;
   priceState: CollectionPriceState;
+  productMedia: CollectionProductMediaView;
   purchased: number;
   activated: number;
   averageWeight: number | null;
@@ -92,8 +94,8 @@ export const loadPublicCollectionBrand = async (db: PrismaClient, collection: Pi
 
 export const loadPartnerCollection = async (db: PrismaClient, collection: Collection): Promise<PartnerCollectionView> => {
   const presentation = await loadCollectionPresentation(db, collection.id);
-  const [storefrontProduct, priceState] = await Promise.all([
-    loadCollectionProduct(collection.shopify_handle), collectionPricing.inspect(collection)
+  const [storefrontProduct, priceState, productMedia] = await Promise.all([
+    loadCollectionProduct(collection.shopify_handle), collectionPricing.inspect(collection), loadCollectionProductMedia(db, collection.id)
   ]);
   const product = priceState.ready
     ? { priceCents: priceState.priceCents, currency: priceState.currency, imageUrl: storefrontProduct?.imageUrl ?? null }
@@ -104,7 +106,7 @@ export const loadPartnerCollection = async (db: PrismaClient, collection: Collec
   });
   const weights = works.map((work) => work.weight_grams).filter((weight): weight is number => weight !== null && Number.isFinite(weight) && weight > 0);
   return {
-    collection, presentation, product, priceState, purchased: works.length,
+    collection, presentation, product, priceState, productMedia, purchased: works.length,
     activated: works.filter((work) => work.status === "activated").length,
     averageWeight: weights.length ? weights.reduce((sum, weight) => sum + weight, 0) / weights.length : null,
     weighed: weights.length

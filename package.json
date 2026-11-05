@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "collection:create": "tsx scripts/create-collection.ts",
     "collection:setup-okg": "tsx scripts/setup-okg-collection.ts",
+    "product:template": "tsx scripts/assign-product-template.ts",
     "order:recover": "tsx scripts/recover-missed-order.ts",
     "order:recover-random": "tsx scripts/recover-random-order.ts",
     "order:swap-artworks": "tsx scripts/swap-order-artworks.ts",
