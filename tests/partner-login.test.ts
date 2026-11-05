@@ -106,6 +106,30 @@ const collectionPayload = (fields = collectionFields, files: Array<{ field: stri
   Buffer.from(`--${boundary}--\r\n`)
 ]);
 
+describe("scheduled collection reservations", () => {
+  it("rejects prelaunch reservations before touching inventory", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-19T23:59:59-05:00"));
+    try {
+      for (const payload of [{ product_handle: "the-art-of-adornment" }, { product_id: "15499616190557" },
+        { collection_slug: "the-art-of-adornment" }]) {
+        const response = await app.inject({ method: "POST", url: "/apps/iris/reserve-random", payload });
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toMatchObject({ error: "collection_not_launched" });
+      }
+      expect(db.collection.findFirst).not.toHaveBeenCalled();
+      expect(db.$transaction).not.toHaveBeenCalled();
+      expect(db.event.create).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it("does not apply the OKG launch gate to other products", async () => {
+    db.collection.findFirst.mockResolvedValue(null);
+    const response = await app.inject({ method: "POST", url: "/apps/iris/reserve-random", payload: { product_handle: "not-a-collection" } });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "collection_not_found" });
+  });
+});
+
 describe("partner Shopify price editor", () => {
   const priceFields = () => ({ csrf_token: collectionCsrf(sessionHash, "ararat"), price_revision: priceRevision(sessionHash, "ararat", readyPrice), price: "130" });
   const submit = (fields = priceFields(), id = "ararat") => app.inject({ method: "POST", url: `/partner/collections/${id}/price`, headers: { ...partnerCookie, ...form }, payload: new URLSearchParams(fields).toString() });

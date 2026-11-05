@@ -11,6 +11,7 @@ import { prisma } from "./db.js";
 import { decodeCursor, encodeCursor, parseShopifyLineItems, verifyShopifyHmac } from "./utils.js";
 import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds, collaboratorCollectionOptions, CORE_AUTHOR_OPTION_ID, CORE_AUTHOR_COLLECTION_SLUG, CORE_AUTHOR_COLLECTION_NAME, isCoreAuthorCollection } from "./collaborator-access.js";
+import { OKG_COLLECTION, pendingCollectionRelease } from "./collection-release.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
@@ -647,7 +648,7 @@ const sendOwnershipTransferEmailBestEffort = async (params: {
     : `<div style="height:260px;border:1px solid #E5E7EB;background:#F8FAFC;display:flex;align-items:center;justify-content:center;color:#6B7280;font-size:14px;">IRIS image</div>`;
   const detailRows = [
     ["Weight", weightLabel],
-    ["Rarity", rarityLabel],
+    ...(params.rarityCode ? [["Rarity", rarityLabel]] : []),
     ["First activation", activatedAtLabel]
   ]
     .map(
@@ -841,7 +842,7 @@ const sendOrderAssignmentEmailBestEffort = async (params: {
       const isActivated = item.status === "activated";
       const imageUrl = isActivated && item.imageUrl ? item.imageUrl : ORDER_ASSIGNMENT_UNREVEALED_IMAGE;
       const metaLabel = isActivated
-        ? `Status: ${formatOrderAssignmentStatus(item)} · Rarity: ${item.rarityCode || "-"} · Weight: ${formatIrisAccountWeight(item.weightGrams)}`
+        ? `Status: ${formatOrderAssignmentStatus(item)}${item.rarityCode ? ` · Rarity: ${item.rarityCode}` : ""} · Weight: ${formatIrisAccountWeight(item.weightGrams)}`
         : `Status: ${formatOrderAssignmentStatus(item)} · Details reveal after activation`;
       return `
         <tr>
@@ -5069,7 +5070,7 @@ const buildIrisAccountPassportHtml = (params: {
             <p class="v2-passport-eyebrow">Digital Passport</p>
             <h1 class="v2-passport-page__title">IRIS Passport</h1>
             <p class="v2-passport-page__summary">
-              This passport confirms the image, rarity, and gold content assigned to the activated work.
+              This passport confirms the image${params.item.rarity_code ? ", rarity," : ""} and gold content assigned to the activated work.
             </p>
           </div>
           <div class="account-top-actions">
@@ -5099,10 +5100,10 @@ const buildIrisAccountPassportHtml = (params: {
                 <div class="v2-passport-meta__label">Gold Content</div>
                 <div class="v2-passport-meta__value">${escapeHtml(formatIrisAccountGold(params.item.weight_grams))}</div>
               </div>
-              <div class="v2-passport-meta__row">
+              ${params.item.rarity_code ? `<div class="v2-passport-meta__row">
                 <div class="v2-passport-meta__label">Rarity</div>
-                <div class="v2-passport-meta__value">${escapeHtml(params.item.rarity_code || "Hidden until activated")}</div>
-              </div>
+                <div class="v2-passport-meta__value">${escapeHtml(params.item.rarity_code)}</div>
+              </div>` : ""}
             </div>
 
             <div class="v2-passport-actions">
@@ -5459,7 +5460,7 @@ const buildIrisAccountOrderCardHtml = (order: IrisAccountOrderView, sessionToken
               : `<span class="iris-order-artwork__link">Not Activated</span>`;
           const status = formatIrisAccountOrderArtworkStatus(item);
           const meta = isActivated
-            ? `Rarity: ${item.rarity_code || "-"} · Weight: ${formatIrisAccountWeight(item.weight_grams)} · Status: ${status}`
+            ? `${item.rarity_code ? `Rarity: ${item.rarity_code} · ` : ""}Weight: ${formatIrisAccountWeight(item.weight_grams)} · Status: ${status}`
             : `Status: ${status} · Details reveal after activation`;
           return `
             <div class="iris-order-artwork">
@@ -6492,6 +6493,9 @@ const pickAvailableArtwork = async (
   const rows = await tx.$queryRaw<{ iris_id: string }[]>`
     SELECT "iris_id" FROM "Artwork"
     WHERE "status" = 'available'
+      AND ("collection_id" IS NULL OR "collection_id" NOT IN (
+        SELECT "id" FROM "Collection" WHERE "slug" = ${OKG_COLLECTION.slug}
+      ))
     ORDER BY random()
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -6635,6 +6639,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
               ? query.productHandle
               : null;
 
+    const requestedLaunch = pendingCollectionRelease({ productId, productHandle, collectionSlug });
+    if (requestedLaunch) {
+      sendJson(reply, 409, { error: "collection_not_launched", launches_at: requestedLaunch });
+      return;
+    }
+
     const collection = await resolveCollection({
       collectionId,
       collectionSlug,
@@ -6648,6 +6658,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     if ((collectionSlug || collectionId || productId || productHandle) && !collection && !coreCollectionRequested) {
       sendJson(reply, 404, { error: "collection_not_found" });
+      return;
+    }
+
+    const launchesAt = pendingCollectionRelease({ collectionSlug: collection?.slug, productId: collection?.shopify_product_id });
+    if (launchesAt) {
+      sendJson(reply, 409, { error: "collection_not_launched", launches_at: launchesAt });
       return;
     }
 
