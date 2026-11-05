@@ -68,6 +68,13 @@ model CollectionPresentation {
   collection    Collection @relation(fields: [collection_id], references: [id], onDelete: Cascade)
 }
 
+model CollectionStorefrontOrder {
+  id             String   @id @default("global")
+  collection_ids String[] @default([])
+  revision       Int      @default(0)
+  updated_at     DateTime @updatedAt
+}
+
 model Artwork {
   iris_id                 String          @id
   status                  ArtworkStatus

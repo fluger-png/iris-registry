@@ -16,6 +16,8 @@ import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCs
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, COLLECTION_BANNER_MAX_BYTES, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
+import { registerAdminCollections } from "./admin-collections.js";
+import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-collections.js";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
@@ -1197,6 +1199,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
     activeTab === "unactivated";
   const allActive = activeTab === "all-iris";
   const ordersActive = activeTab === "orders";
+  const collectionsActive = activeTab === "collections";
   const logsActive = activeTab === "activation-logs";
   const collaboratorsActive = activeTab === "collaborators";
   return `<!doctype html>
@@ -1583,6 +1586,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           <div class="nav">
             <a class="${allActive ? "active" : ""}" href="/admin">IRIS Archive</a>
             <a class="${ordersActive ? "active" : ""}" href="/admin/orders">Orders</a>
+            <a class="${collectionsActive ? "active" : ""}" href="/admin/collections">Collections</a>
             <a class="${activitiesActive ? "active" : ""}" href="/admin/activities">Activities</a>
             <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
             <a class="${collaboratorsActive ? "active" : ""}" href="/admin/collaborators">Collaborators</a>
@@ -6595,6 +6599,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
   );
 
+  registerAdminCollections(app, { db: prisma, secret: env.adminBasicPass, authorize: requireAdmin, shell: buildAdminShell, escape: escapeHtml });
+
   app.post("/apps/iris/reserve-random", async (req, reply) => {
     const body = (req.body as Record<string, unknown> | null) ?? {};
     const query = (req.query as Record<string, unknown> | null) ?? {};
@@ -7629,6 +7635,18 @@ export const createServer = async (): Promise<FastifyInstance> => {
     });
   });
 
+  app.get("/apps/iris/collections", async (_req, reply) => {
+    const order = await loadStorefrontOrder(prisma);
+    if (!order.available) return reply.header("Cache-Control", "no-store").send({ available: false, collections: [] });
+    const collections = sortStorefrontCollections(await prisma.collection.findMany(), order.ids);
+    const items = await Promise.all(collections.map(async (collection) => {
+      const presentation = await loadCollectionPresentation(prisma, collection.id);
+      return { id: collection.id, slug: collection.slug, handle: collection.shopify_handle,
+        visible: presentation.record?.visible ?? true };
+    }));
+    return reply.header("Cache-Control", "no-store").send({ available: true, collections: items });
+  });
+
   app.get("/apps/iris/collection-presentation", async (req, reply) => {
     const handle = readSingleValue((req.query as Record<string, unknown>).handle);
     if (!/^[a-z0-9-]{1,120}$/.test(handle)) return reply.code(400).send({ error: "invalid_collection" });
@@ -7649,6 +7667,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
       brand_name: brand.name, brand_avatar_url: brand.avatarUrl,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
+      product_url: collection?.shopify_handle && /^[a-z0-9-]+$/.test(collection.shopify_handle) ? `/products/${collection.shopify_handle}` : null,
       visible: record?.visible ?? true, edition_size: collection?.edition_size ?? 10_000, sold_count: soldCount,
       average_sold_weight_grams: averageWeight !== null && Number.isFinite(averageWeight) && averageWeight > 0 ? averageWeight : null
     });

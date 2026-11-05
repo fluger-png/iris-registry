@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import { S3Client } from "@aws-sdk/client-s3";
 import { collaboratorProfileCsrf } from "../src/collaborator-profile.js";
 import { collectionCsrf } from "../src/partner-collections.js";
+import { adminCollectionsCsrf } from "../src/storefront-collections.js";
 import { collectionPricing, CollectionPriceError, priceRevision, ReadyPrice } from "../src/shopify-product-pricing.js";
 
 const db = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const db = vi.hoisted(() => ({
   collaboratorCollectionAccess: { findMany: vi.fn() },
   collaboratorProfile: { findUnique: vi.fn(), upsert: vi.fn() },
   collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  collectionStorefrontOrder: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), upsert: vi.fn() },
@@ -69,6 +71,8 @@ beforeEach(async () => {
   db.collaboratorProfile.findUnique.mockResolvedValue(null);
   db.collectionPresentation.findUnique.mockResolvedValue(null);
   db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
+  db.collectionStorefrontOrder.findUnique.mockResolvedValue({ collection_ids: ["sayat", "ararat"], revision: 2 });
+  db.collectionStorefrontOrder.updateMany.mockResolvedValue({ count: 1 });
   db.artwork.findMany.mockResolvedValue([]);
   db.artwork.count.mockResolvedValue(6);
   db.artwork.aggregate.mockResolvedValue({ _avg: { weight_grams: 0.41 } });
@@ -105,6 +109,110 @@ const collectionPayload = (fields = collectionFields, files: Array<{ field: stri
   ...files.flatMap((file) => [Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name ?? "image.png"}"\r\nContent-Type: image/png\r\n\r\n`), file.data, Buffer.from("\r\n")]),
   Buffer.from(`--${boundary}--\r\n`)
 ]);
+
+describe("global admin collections", () => {
+  const csrf = () => adminCollectionsCsrf("test-password", Date.now());
+  const orderPayload = () => ({ csrf_token: csrf(), ids: ["ararat", "sayat"], revision: 2 });
+  const orderPost = (payload: unknown = orderPayload(), headers = auth) => app.inject({ method: "POST", url: "/admin/collections/order", headers, payload });
+  const visibilityPost = (payload: unknown = { csrf_token: csrf(), visible: false, revision: -1 }, headers = auth) => app.inject({ method: "POST", url: "/admin/collections/ararat/visibility", headers, payload });
+
+  it("requires super-admin credentials, never accepts a partner session", async () => {
+    for (const headers of [{}, partnerCookie]) {
+      expect((await app.inject({ method: "GET", url: "/admin/collections", headers })).statusCode).toBe(401);
+      expect((await orderPost(orderPayload(), headers as typeof auth)).statusCode).toBe(401);
+      expect((await visibilityPost(undefined, headers as typeof auth)).statusCode).toBe(401);
+    }
+    expect(db.collection.findMany).not.toHaveBeenCalled();
+  });
+
+  it("renders all collections in saved order with statistics, prices and toggles", async () => {
+    inspectPrice.mockResolvedValue(readyPrice);
+    db.artwork.findMany.mockResolvedValue([{ status: "assigned", weight_grams: 0.4 }, { status: "activated", weight_grams: 0.5 }]);
+    const response = await app.inject({ method: "GET", url: "/admin/collections", headers: auth });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.indexOf('data-collection-id="sayat"')).toBeLessThan(response.body.indexOf('data-collection-id="ararat"'));
+    expect(response.body).toContain('href="/admin/collections">Collections</a>');
+    expect(response.body).toContain("$120");
+    expect(response.body).not.toContain("$120.00");
+    expect(response.body).toContain('role="switch"');
+    expect(response.body).toContain("<th>Sold</th><th>Activated</th>");
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "admin-collections.html"), response.body);
+    }
+  });
+
+  it("saves a complete order atomically without modifying artwork or collections", async () => {
+    const response = await orderPost();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ revision: 3 });
+    expect(db.collectionStorefrontOrder.updateMany).toHaveBeenCalledWith({ where: { id: "global", revision: 2 }, data: { collection_ids: ["ararat", "sayat"], revision: { increment: 1 } } });
+    expect(db.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: "Serializable" });
+    expect(db.artwork.update).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicates, missing collections, forged IDs and stale revisions", async () => {
+    for (const ids of [["ararat", "ararat"], ["ararat"], ["ararat", "foreign"]]) {
+      expect((await orderPost({ ...orderPayload(), ids })).statusCode).toBe(409);
+    }
+    expect((await orderPost({ ...orderPayload(), revision: 1 })).statusCode).toBe(409);
+    db.collectionStorefrontOrder.updateMany.mockResolvedValue({ count: 0 });
+    expect((await orderPost()).statusCode).toBe(409);
+  });
+
+  it("rejects CSRF failures, malformed revisions and unexpected fields", async () => {
+    expect((await orderPost({ ...orderPayload(), csrf_token: "bad" })).statusCode).toBe(403);
+    expect((await orderPost({ ...orderPayload(), revision: "2" })).statusCode).toBe(400);
+    expect((await orderPost({ ...orderPayload(), extra: true })).statusCode).toBe(400);
+    expect((await visibilityPost({ csrf_token: csrf(), visible: "false", revision: -1 })).statusCode).toBe(400);
+    expect((await visibilityPost({ csrf_token: "bad", visible: false, revision: -1 })).statusCode).toBe(403);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("changes visibility only and preserves every presentation field", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collectionPresentation.findUnique.mockResolvedValue({ visible: true, revision: 5, display_name: "Custom", banner_url: "banner" });
+    const response = await visibilityPost({ csrf_token: csrf(), visible: false, revision: 5 });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ revision: 6 });
+    expect(db.collectionPresentation.updateMany).toHaveBeenCalledWith({ where: { collection_id: "ararat", revision: 5 }, data: { visible: false, revision: { increment: 1 } } });
+    expect(db.artwork.update).not.toHaveBeenCalled();
+    expect(db.collectionStorefrontOrder.updateMany).not.toHaveBeenCalled();
+    expect(updatePrice).not.toHaveBeenCalled();
+  });
+
+  it("creates missing presentation and rejects stale partner changes or unknown collections", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    expect((await visibilityPost()).statusCode).toBe(200);
+    expect(db.collectionPresentation.create).toHaveBeenCalledWith({ data: { collection_id: "ararat", visible: false } });
+    db.collectionPresentation.findUnique.mockResolvedValue({ revision: 7 });
+    expect((await visibilityPost()).statusCode).toBe(409);
+    db.collection.findFirst.mockResolvedValue(null);
+    expect((await visibilityPost()).statusCode).toBe(404);
+  });
+
+  it("publishes only ordering and visibility, without customer data", async () => {
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collections" });
+    expect(response.json()).toEqual({ available: true, collections: [
+      { id: "sayat", slug: "sayat-nova", visible: true }, { id: "ararat", slug: "ararat-heart", visible: true }
+    ] });
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).not.toContain("email");
+  });
+
+  it("degrades safely while the new migration is pending", async () => {
+    db.collectionStorefrontOrder.findUnique.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collections" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ available: false, collections: [] });
+    const page = await app.inject({ method: "GET", url: "/admin/collections", headers: auth });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("Ordering is unavailable until the database migration is applied.");
+    expect((await orderPost()).statusCode).toBe(503);
+  });
+});
 
 describe("scheduled collection reservations", () => {
   it("rejects prelaunch reservations before touching inventory", async () => {
@@ -365,7 +473,7 @@ describe("partner collection editor", () => {
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], product_url: null, visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();
