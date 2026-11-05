@@ -13,7 +13,7 @@ import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds, collaboratorCollectionOptions, CORE_AUTHOR_OPTION_ID, CORE_AUTHOR_COLLECTION_SLUG, CORE_AUTHOR_COLLECTION_NAME, isCoreAuthorCollection } from "./collaborator-access.js";
 import { OKG_COLLECTION, pendingCollectionRelease } from "./collection-release.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
-import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
+import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, COLLECTION_BANNER_MAX_BYTES, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
 
@@ -2942,7 +2942,7 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
       <div class="collection-banner-editor">
         <img class="collection-banner" src="${escapeHtml(image)}" alt="Collection banner" width="640" height="360" />
         <div class="field"><label for="collection-banner">Collection banner</label><input id="collection-banner" type="file" name="banner" accept="image/png,image/jpeg,image/webp" />
-          <p class="hint">16:9 · JPG, PNG or WebP · Maximum 2 MB.</p>
+          <p class="hint">16:9 · JPG, PNG or WebP · Maximum 3 MB.</p>
           ${record?.banner_url ? '<label class="remove-image"><input type="checkbox" name="remove_banner" value="1" /> Reset banner</label>' : ""}
         </div>
       </div>
@@ -9551,7 +9551,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const allowedFiles = ["banner", "image_0", "image_1", "image_2", "image_3"];
     const allowedFields = ["csrf_token", "revision", "display_name", "visible", "description", "remove_banner", ...Array.from({ length: 4 }, (_, i) => `remove_image_${i}`)];
     try {
-      for await (const part of req.parts({ limits: { fileSize: PARTNER_AVATAR_MAX_BYTES, files: 5, fields: 10, parts: 15, fieldSize: 25_000 } })) {
+      for await (const part of req.parts({ limits: { fileSize: COLLECTION_BANNER_MAX_BYTES, files: 5, fields: 10, parts: 15, fieldSize: 25_000 } })) {
         if (part.type === "file") {
           const buffer = await part.toBuffer();
           if (!allowedFiles.includes(part.fieldname) || files[part.fieldname]) return fail(400, "Unexpected or duplicate image field.");
@@ -9561,7 +9561,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           fields[part.fieldname] = part.value;
         }
       }
-    } catch { return fail(400, "Use JPG, PNG or WebP images, up to 2 MB each. Maximum one banner and four images."); }
+    } catch { return fail(400, "Use JPG, PNG or WebP. Maximum 3 MB for the banner and 2 MB per preview image. Maximum one banner and four images."); }
     if (!validCollectionCsrf(fields.csrf_token, session.token_hash, id)) return fail(403, "Your form expired. Reload this page and try again.");
     const name = fields.display_name?.trim();
     if (!name || name.length > COLLECTION_NAME_MAX || fields.description === undefined || fields.description.length > COLLECTION_DESCRIPTION_MAX) return fail(400, "Check the collection name and description length.");
@@ -9570,7 +9570,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
     for (const key of allowedFiles) {
       if (fields[`remove_${key}`] !== undefined && fields[`remove_${key}`] !== "1") return fail(400, "Invalid image removal value.");
       if (files[key] && fields[`remove_${key}`] === "1") return fail(400, "Upload or remove an image, not both.");
-      if (files[key] && !detectPartnerAvatarType(files[key])) return fail(400, "Only JPG, PNG or WebP images are supported.");
+      const maxBytes = key === "banner" ? COLLECTION_BANNER_MAX_BYTES : PARTNER_AVATAR_MAX_BYTES;
+      if (files[key]?.length > maxBytes) return fail(400, key === "banner" ? "The collection banner must be 3 MB or smaller." : "Preview images must be 2 MB or smaller.");
+      if (files[key] && !detectPartnerAvatarType(files[key], maxBytes)) return fail(400, "Only JPG, PNG or WebP images are supported.");
     }
     try {
       const imageUrls: Record<string, string | null> = {};
@@ -9578,7 +9580,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
         if (fields[`remove_${key}`] === "1") imageUrls[key] = null;
         if (!files[key]) continue;
         if (!env.r2Bucket || !env.r2PublicBaseUrl) return fail(503, "Image uploads are temporarily unavailable.");
-        const type = detectPartnerAvatarType(files[key])!;
+        const type = detectPartnerAvatarType(files[key], key === "banner" ? COLLECTION_BANNER_MAX_BYTES : PARTNER_AVATAR_MAX_BYTES)!;
         const objectKey = `collections/${id}/${crypto.randomUUID()}.${type.extension}`;
         await r2.send(new PutObjectCommand({ Bucket: env.r2Bucket, Key: objectKey, Body: files[key], ContentType: type.contentType, CacheControl: "public, max-age=31536000, immutable" }));
         imageUrls[key] = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${objectKey}`;

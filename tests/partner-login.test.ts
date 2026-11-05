@@ -288,6 +288,28 @@ describe("partner collection editor", () => {
     expect(db.collectionPresentation.create.mock.calls[0][0].data.gallery_urls).toHaveLength(4);
   });
 
+  it("accepts a collection banner up to exactly 3 MB", async () => {
+    const image = Buffer.alloc(3 * 1024 * 1024);
+    png.copy(image);
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+      payload: collectionPayload(collectionFields, [{ field: "banner", data: image }]) });
+    expect(response.statusCode).toBe(303);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect((upload.mock.calls[0][0] as { input: { Body: Buffer } }).input.Body.length).toBe(image.length);
+  });
+
+  it("rejects banners over 3 MB and preserves the 2 MB preview limit", async () => {
+    for (const [field, size] of [["banner", 3 * 1024 * 1024 + 1], ["image_0", 2 * 1024 * 1024 + 1]] as const) {
+      const image = Buffer.alloc(size);
+      png.copy(image);
+      const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+        payload: collectionPayload(collectionFields, [{ field, data: image }]) });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collectionPresentation.create).not.toHaveBeenCalled();
+  });
+
   it("rejects unexpected editable fields, a fifth preview, duplicate files, and SVGs", async () => {
     for (const payload of [
       collectionPayload({ ...collectionFields, price_cents: "1" } as typeof collectionFields),

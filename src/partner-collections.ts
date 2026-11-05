@@ -5,6 +5,7 @@ import { collectionArtworkId } from "./collaborator-access.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
+export const COLLECTION_BANNER_MAX_BYTES = 3 * 1024 * 1024;
 
 export type CollectionPresentationView = {
   record: CollectionPresentation | null;

@@ -31,8 +31,8 @@ export const validCollaboratorProfileCsrf = (value: unknown, sessionHash: string
   return crypto.timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(collaboratorProfileCsrf(sessionHash), "hex"));
 };
 
-export const detectPartnerAvatarType = (data: Buffer): { extension: string; contentType: string } | null => {
-  if (data.length < 12 || data.length > PARTNER_AVATAR_MAX_BYTES) return null;
+export const detectPartnerAvatarType = (data: Buffer, maxBytes = PARTNER_AVATAR_MAX_BYTES): { extension: string; contentType: string } | null => {
+  if (data.length < 12 || data.length > maxBytes) return null;
   if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
     return { extension: "png", contentType: "image/png" };
   }
