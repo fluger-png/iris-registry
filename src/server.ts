@@ -2646,6 +2646,9 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .workspace-header { display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:32px; }
         .workspace-header > div { min-width:0; flex:1; }
         .workspace-header .ghost { flex-shrink:0; white-space:nowrap; }
+        .workspace-header .workspace-header-actions { display:flex; align-items:center; gap:20px; flex:0 0 auto; }
+        .workspace-header-actions .ghost { margin:0; }
+        .workspace-header-actions .ghost:hover { color:var(--gold); }
         .workspace h1 { margin:0 0 12px; font-size:32px; letter-spacing:0; overflow-wrap:anywhere; }
         .workspace .eyebrow { letter-spacing:0; margin-bottom:12px; }
         .workspace p { overflow-wrap:anywhere; }
@@ -2682,8 +2685,16 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .collection-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; }
         .collection-summary { padding:24px 0; }
         .collection-summary h3 { overflow-wrap:anywhere; }
-        .collection-card { display:block; min-width:0; text-decoration:none; border:1px solid var(--line); background:var(--bg-soft); transition:border-color .2s; }
-        .collection-card:hover { border-color:var(--gold); }
+        .collection-card { position:relative; display:block; min-width:0; border:1px solid var(--line); background:var(--bg-soft); transition:border-color .2s; }
+        .collection-card:hover, .collection-card:focus-within { border-color:var(--gold); }
+        .collection-card-main { display:block; text-decoration:none; }
+        .collection-card-actions { position:absolute; top:14px; right:14px; display:flex; gap:8px; }
+        .collection-card-action { position:relative; display:grid; place-items:center; width:40px; height:40px; flex:none; color:var(--text); background:rgba(0,0,0,.88); border:1px solid var(--line-strong); border-radius:4px; text-decoration:none; }
+        .collection-card-action svg { display:block; width:20px; height:20px; pointer-events:none; }
+        .collection-card-action:hover:not([aria-disabled="true"]) { color:var(--gold-bright); border-color:var(--gold); }
+        .collection-card-action[aria-disabled="true"] { color:var(--muted); cursor:not-allowed; }
+        .collection-card-action::after { content:attr(data-tooltip); position:absolute; top:calc(100% + 8px); right:0; z-index:1; padding:6px 10px; border:1px solid var(--line-strong); background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:16px; line-height:1.4; white-space:nowrap; opacity:0; visibility:hidden; pointer-events:none; }
+        .collection-card-action:hover::after, .collection-card-action:focus-visible::after { opacity:1; visibility:visible; }
         .collection-banner { display:block; width:100%; height:auto; aspect-ratio:16/9; object-fit:cover; background:#151515; }
         .collection-card-body { padding:24px; }
         .collection-card h3 { font-size:20px; margin:0 0 24px; overflow-wrap:anywhere; }
@@ -2758,7 +2769,8 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .success-message { color:#7bd88f; padding:14px 16px; border:1px solid rgba(123,216,143,.3); margin-bottom:24px; }
         @media (max-width: 640px) {
           .partner-workspace .page { padding:24px 16px; }
-          .partner-workspace .workspace-header { gap:12px; align-items:flex-start; }
+          .partner-workspace .workspace-header { gap:12px; align-items:flex-start; flex-wrap:wrap; }
+          .workspace-header .workspace-header-actions { margin-left:auto; gap:16px; }
           .partner-workspace .brand-identity { gap:12px; }
           .partner-workspace .brand-identity h1 { font-size:24px; }
           .brand-avatar { width:48px; height:48px; flex-basis:48px; }
@@ -2883,12 +2895,19 @@ const buildPartnerWorkspaceHtml = (identity: PartnerWorkspaceIdentity, active: "
       <div class="brand-identity">${buildPartnerAvatar(identity)}<div>
         <h1>${escapeHtml(identity.fullName)}</h1><p>${escapeHtml(identity.email)}</p>
       </div></div>
-      <a class="ghost" style="margin:0" href="/partner/logout">Log out</a>
+      <div class="workspace-header-actions">
+        <a class="ghost" href="https://irisnyc.store/" target="_blank" rel="noopener noreferrer">Visit website</a>
+        <a class="ghost" href="/partner/logout">Log out</a>
+      </div>
     </header>
     <nav class="partner-nav" aria-label="Partner navigation">${tabs.map((tab) => `<a href="${tab.url}"${tab.key === active ? ' aria-current="page"' : ""}>${tab.label}</a>`).join("")}</nav>
     ${content}
   </div>`, true);
 };
+
+// Lucide Pencil and Eye, ISC license: THIRD_PARTY_NOTICES.md.
+const partnerEditIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
+const partnerPreviewIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>';
 
 const buildPartnerDashboardHtml = (params: PartnerWorkspaceIdentity & {
   collections: PartnerCollectionView[];
@@ -2897,16 +2916,30 @@ const buildPartnerDashboardHtml = (params: PartnerWorkspaceIdentity & {
       <section>
         <div class="section-heading"><h2>Collections</h2><button class="btn" type="button" disabled title="Coming soon">+ Create Collection</button></div>
         <div class="collection-list">
-        ${params.collections.map((view) => `<a class="collection-card" href="/partner/collections/${encodeURIComponent(view.collection.id)}">
+        ${params.collections.map((view) => {
+          const name = escapeHtml(view.presentation.record?.display_name || view.collection.name);
+          const editUrl = `/partner/collections/${encodeURIComponent(view.collection.id)}`;
+          const handle = view.collection.shopify_handle;
+          const previewUrl = handle && /^[a-z0-9-]{1,120}$/.test(handle) ? `https://irisnyc.store/products/${handle}` : null;
+          return `<article class="collection-card">
+          <a class="collection-card-main" href="${editUrl}">
           <img class="collection-banner" src="${escapeHtml(view.presentation.record?.banner_url || view.product?.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE)}" alt="${escapeHtml(view.presentation.record?.display_name || view.collection.name)}" width="640" height="360" />
-          <div class="collection-card-body"><h3>${escapeHtml(view.presentation.record?.display_name || view.collection.name)}</h3>
+          <div class="collection-card-body"><h3>${name}</h3>
           <dl class="collection-metrics">
             <div><dt>Edition Size</dt><dd>${view.collection.edition_size}</dd></div>
             <div><dt>Price</dt><dd>${partnerCollectionPrice(view)}</dd></div>
             <div><dt>Purchased</dt><dd>${view.purchased}</dd></div>
             <div><dt>Activated</dt><dd>${view.activated}</dd></div>
           </dl></div>
-        </a>`).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
+          </a>
+          <div class="collection-card-actions" role="group" aria-label="${name} actions">
+            <a class="collection-card-action" href="${editUrl}" aria-label="Edit ${name}" data-tooltip="Edit collection">${partnerEditIcon}</a>
+            ${previewUrl
+              ? `<a class="collection-card-action" href="${previewUrl}" target="_blank" rel="noopener noreferrer" aria-label="Preview ${name}" data-tooltip="Preview on website">${partnerPreviewIcon}</a>`
+              : `<span class="collection-card-action" role="link" aria-disabled="true" tabindex="0" aria-label="Preview unavailable for ${name}" data-tooltip="Product page is not linked">${partnerPreviewIcon}</span>`}
+          </div>
+        </article>`;
+        }).join("") || `<p>No collections assigned. Contact the IRIS team.</p>`}
         </div>
       </section>
   `;

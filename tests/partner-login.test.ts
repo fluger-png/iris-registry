@@ -408,6 +408,56 @@ describe("partner Shopify price editor", () => {
 });
 
 describe("partner collection editor", () => {
+  it("provides separate edit and safe storefront preview links", async () => {
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: { ...ararat, shopify_handle: "ararat-heart" } }]);
+    const response = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<article class="collection-card">');
+    expect(response.body).toContain('class="collection-card-action" href="/partner/collections/ararat" aria-label="Edit Ararat Heart"');
+    expect(response.body).toContain('class="collection-card-action" href="https://irisnyc.store/products/ararat-heart" target="_blank" rel="noopener noreferrer" aria-label="Preview Ararat Heart"');
+    expect(response.body).toContain('data-tooltip="Edit collection"');
+    expect(response.body).toContain('data-tooltip="Preview on website"');
+    expect(response.body).not.toContain('aria-label="Preview unavailable for Ararat Heart"');
+  });
+
+  it("previews the OKG product and preserves its full collection title", async () => {
+    const okg = { ...ararat, id: "okg", slug: "the-art-of-adornment", name: "THE ART OF ADORNMENT", shopify_handle: "the-art-of-adornment" };
+    db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: okg }]);
+    db.collaboratorSession.findFirst.mockResolvedValue({ id: "session", token_hash: sessionHash, user: { ...user, full_name: "OKG Jewelry", email: "partner@okg.example.test" } });
+    db.collectionPresentation.findUnique.mockResolvedValue({ banner_url: "https://pub-5c6f0538ba3a49bc8622e2c681b7bb2c.r2.dev/collections/cmw32xjuf0001vmeu6pcuy2wi/a5989e15-13fa-4de3-91f1-34dd987b73eb.png" });
+    inspectPrice.mockResolvedValue({ ...readyPrice, handle: okg.shopify_handle, priceCents: 30000 });
+    const response = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<h3>THE ART OF ADORNMENT</h3>');
+    expect(response.body).toContain('href="https://irisnyc.store/products/the-art-of-adornment" target="_blank"');
+    expect(response.body.match(/class="collection-card-action"/g)).toHaveLength(2);
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "okg-collections.html"), response.body);
+    }
+  });
+
+  it("keeps preview disabled when a product handle is missing or invalid", async () => {
+    for (const shopify_handle of [null, "//other.test", 'bad\" onclick=\"alert(1)']) {
+      db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: { ...ararat, shopify_handle } }]);
+      const response = await app.inject({ method: "GET", url: "/partner", headers: partnerCookie });
+      expect(response.body).toContain('aria-disabled="true"');
+      expect(response.body).toContain('aria-label="Preview unavailable for Ararat Heart"');
+      expect(response.body).not.toContain('aria-label="Preview Ararat Heart"');
+      expect(response.body).not.toContain('href="https://irisnyc.store/products/');
+    }
+  });
+
+  it("shows a website link beside logout throughout the partner workspace", async () => {
+    for (const url of ["/partner", "/partner/collections/ararat", "/partner/profile", "/partner/irises"]) {
+      const response = await app.inject({ method: "GET", url, headers: partnerCookie });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('<div class="workspace-header-actions">');
+      expect(response.body).toContain('href="https://irisnyc.store/" target="_blank" rel="noopener noreferrer">Visit website</a>');
+      expect(response.body).toContain('href="/partner/logout">Log out</a>');
+    }
+  });
+
   it("uses live storefront prices instead of stale collection defaults", async () => {
     db.collaboratorCollectionAccess.findMany.mockResolvedValue([{ collection: { ...ararat, shopify_handle: "ararat-test", default_price_cents: 99900 } }, { collection: { ...sayat, shopify_handle: "sayat-test" } }]);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify({ price: url.includes("ararat") ? 12000 : 16000, featured_image: `https://cdn.shopify.com/s/files/1/0710/5239/4589/files/${url.includes("ararat") ? "ararat.png?v=1777477903" : "sayat.png?v=1777277215"}` }))));
