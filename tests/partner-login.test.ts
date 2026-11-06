@@ -14,6 +14,7 @@ const db = vi.hoisted(() => ({
   collaboratorUser: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   collaboratorCollectionAccess: { findMany: vi.fn() },
   collaboratorProfile: { findUnique: vi.fn(), upsert: vi.fn() },
+  collaboratorSocialLinks: { findUnique: vi.fn(), upsert: vi.fn() },
   collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collectionStorefrontOrder: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collectionProductMedia: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
@@ -70,6 +71,7 @@ beforeEach(async () => {
   db.collaboratorUser.create.mockResolvedValue({ ...user, status: "invited" });
   db.collaboratorSession.findFirst.mockResolvedValue({ id: "session", token_hash: sessionHash, user });
   db.collaboratorProfile.findUnique.mockResolvedValue(null);
+  db.collaboratorSocialLinks.findUnique.mockResolvedValue(null);
   db.collectionPresentation.findUnique.mockResolvedValue(null);
   db.collectionPresentation.updateMany.mockResolvedValue({ count: 1 });
   db.collectionStorefrontOrder.findUnique.mockResolvedValue({ collection_ids: ["sayat", "ararat"], revision: 2 });
@@ -623,7 +625,7 @@ describe("partner collection editor", () => {
     db.collectionPresentation.findUnique.mockResolvedValue({ display_name: "Ararat", banner_url: "https://images.test/banner.png", description: "Story", gallery_urls: ["", "https://images.test/one.png"], visible: false, revision: 5 });
     const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, description: "Story", images: ["https://images.test/one.png"], product_url: null, video_url: null, visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
+    expect(response.json()).toEqual({ display_name: "Ararat", banner_url: "https://images.test/banner.png", brand_name: null, brand_avatar_url: null, brand_links: { instagram: null, website: null, tiktok: null }, description: "Story", images: ["https://images.test/one.png"], product_url: null, video_url: null, visible: false, edition_size: 100, sold_count: 6, average_sold_weight_grams: 0.41 });
     expect(db.artwork.count).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] } } });
     expect(db.artwork.aggregate).toHaveBeenCalledWith({ where: { collection_id: "ararat", assigned_order_id: { not: null }, status: { in: ["assigned", "activated"] }, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } });
     expect(db.artwork.findMany).not.toHaveBeenCalled();
@@ -675,7 +677,7 @@ describe("partner collection editor", () => {
     expect(response.json()).toMatchObject({ brand_name: "Gugoco", brand_avatar_url: "https://images.test/gugoco.png" });
     expect(db.collaboratorUser.findMany).toHaveBeenCalledWith({
       where: { status: "active", OR: [{ collection_id: "ararat" }, { collection_access: { some: { collection_id: "ararat" } } }] },
-      select: { full_name: true, profile: { select: { avatar_url: true } } }
+      select: { id: true, full_name: true, profile: { select: { avatar_url: true } } }
     });
     expect(response.body).not.toContain(user.email);
     expect(response.body).not.toContain("password_hash");
@@ -694,6 +696,27 @@ describe("partner collection editor", () => {
     expect(ambiguous.json()).toMatchObject({ brand_name: "Original artist", brand_avatar_url: null });
   });
 
+  it("publishes validated links from the selected author without private account data", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collaboratorUser.findMany.mockResolvedValue([{ id: "gugoco", full_name: "Gugoco", profile: { avatar_url: null } }]);
+    db.collaboratorSocialLinks.findUnique.mockResolvedValue({ instagram_url: "https://instagram.com/gugoco", website_url: "https://gugoco.com", tiktok_url: "javascript:bad" });
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().brand_links).toEqual({ instagram: "https://www.instagram.com/gugoco/", website: "https://gugoco.com/", tiktok: null });
+    expect(db.collaboratorSocialLinks.findUnique).toHaveBeenCalledWith({ where: { user_id: "gugoco" } });
+    expect(response.body).not.toContain(user.email);
+    expect(response.body).not.toContain("user_id");
+  });
+
+  it("preserves author name, avatar and collection data before the social-links migration", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.collaboratorUser.findMany.mockResolvedValue([{ id: "gugoco", full_name: "Gugoco", profile: { avatar_url: "https://images.test/gugoco.png" } }]);
+    db.collaboratorSocialLinks.findUnique.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    const response = await app.inject({ method: "GET", url: "/apps/iris/collection-presentation?handle=ararat-heart" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ brand_name: "Gugoco", brand_avatar_url: "https://images.test/gugoco.png", sold_count: 6, brand_links: { instagram: null, website: null, tiktok: null } });
+  });
+
   it("retains collection data if the optional partner profile tables are unavailable", async () => {
     db.collection.findFirst.mockResolvedValue({ ...ararat, artist_name: "Gugoco" });
     db.collaboratorUser.findMany.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
@@ -704,6 +727,67 @@ describe("partner collection editor", () => {
 });
 
 describe("partner workspace", () => {
+  it("shows saved social links in the existing profile form", async () => {
+    db.collaboratorSocialLinks.findUnique.mockResolvedValue({ instagram_url: "https://www.instagram.com/gugoco/", website_url: "https://gugoco.com/", tiktok_url: null });
+    const response = await app.inject({ method: "GET", url: "/partner/profile", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('name="instagram_url"');
+    expect(response.body).toContain('value="https://www.instagram.com/gugoco/"');
+    expect(response.body).toContain('name="website_url"');
+    expect(response.body).toContain('name="tiktok_url"');
+    if (process.env.IRIS_PARTNER_PREVIEW_DIR) {
+      await fs.mkdir(process.env.IRIS_PARTNER_PREVIEW_DIR, { recursive: true });
+      await fs.writeFile(path.join(process.env.IRIS_PARTNER_PREVIEW_DIR, "profile-social-links.html"), response.body);
+    }
+  });
+
+  it("saves normalized social links only for the authenticated partner", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/profile?user_id=other", headers: profileHeaders,
+      payload: profilePayload({ ...validProfileFields, user_id: "other", instagram_url: "https://instagram.com/gugoco?igsh=tracking", website_url: "https://gugoco.com", tiktok_url: "https://tiktok.com/@gugoco" }) });
+    expect(response.statusCode).toBe(303);
+    const links = { instagram_url: "https://www.instagram.com/gugoco/", website_url: "https://gugoco.com/", tiktok_url: "https://www.tiktok.com/@gugoco" };
+    expect(db.collaboratorSocialLinks.upsert).toHaveBeenCalledWith({ where: { user_id: "gugoco" }, create: { user_id: "gugoco", ...links }, update: links });
+    expect(db.$transaction).toHaveBeenCalled();
+  });
+
+  it("clears an explicitly empty social field and preserves omitted fields", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/profile", headers: profileHeaders,
+      payload: profilePayload({ ...validProfileFields, instagram_url: "" }) });
+    expect(response.statusCode).toBe(303);
+    expect(db.collaboratorSocialLinks.upsert.mock.calls[0][0].update).toEqual({ instagram_url: null });
+  });
+
+  it("rejects unsafe links and wrong social domains before uploads or profile writes", async () => {
+    for (const fields of [{ website_url: "javascript:alert(1)" }, { instagram_url: "https://instagram.com.evil.test/gugoco" }, { tiktok_url: "https://tiktok.com@evil.test/@gugoco" }, { website_url: "https://example.test/" + "a".repeat(2048) }]) {
+      const response = await app.inject({ method: "POST", url: "/partner/profile", headers: profileHeaders,
+        payload: profilePayload({ ...validProfileFields, ...fields }, { data: png, name: "avatar.png", type: "image/png" }) });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(upload).not.toHaveBeenCalled();
+    expect(db.collaboratorProfile.upsert).not.toHaveBeenCalled();
+    expect(db.collaboratorSocialLinks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps the profile editable before the additive social-links migration", async () => {
+    db.collaboratorSocialLinks.findUnique.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("missing", { code: "P2021", clientVersion: "5.22.0" }));
+    const profile = await app.inject({ method: "GET", url: "/partner/profile", headers: partnerCookie });
+    expect(profile.statusCode).toBe(200);
+    expect(profile.body).toContain('name="instagram_url" maxlength="2048" value="" placeholder="https://www.instagram.com/yourbrand/" disabled');
+    const response = await app.inject({ method: "POST", url: "/partner/profile", headers: profileHeaders, payload: profilePayload(validProfileFields) });
+    expect(response.statusCode).toBe(303);
+    expect(db.collaboratorProfile.upsert).toHaveBeenCalled();
+    expect(db.collaboratorSocialLinks.upsert).not.toHaveBeenCalled();
+    const forged = await app.inject({ method: "POST", url: "/partner/profile", headers: profileHeaders, payload: profilePayload({ ...validProfileFields, website_url: "https://gugoco.com" }) });
+    expect(forged.statusCode).toBe(503);
+  });
+
+  it("never writes social links on a CSRF failure", async () => {
+    const response = await app.inject({ method: "POST", url: "/partner/profile", headers: profileHeaders,
+      payload: profilePayload({ ...validProfileFields, csrf_token: "bad", website_url: "https://gugoco.com" }) });
+    expect(response.statusCode).toBe(403);
+    expect(db.collaboratorSocialLinks.upsert).not.toHaveBeenCalled();
+  });
+
   it("uses the IRIS account typography and palette on partner pages", async () => {
     for (const url of ["/partner/login", "/partner", "/partner/profile"]) {
       const response = await app.inject({ method: "GET", url, headers: url === "/partner/login" ? {} : partnerCookie });

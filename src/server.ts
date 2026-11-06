@@ -13,6 +13,7 @@ import { computeLeaf, verifyMerkleProof } from "./rarity.js";
 import { collaboratorArtworkScope, loadCollaboratorCollections, parseCollectionIds, collaboratorCollectionOptions, CORE_AUTHOR_OPTION_ID, CORE_AUTHOR_COLLECTION_SLUG, CORE_AUTHOR_COLLECTION_NAME, isCoreAuthorCollection } from "./collaborator-access.js";
 import { OKG_COLLECTION, pendingCollectionRelease } from "./collection-release.js";
 import { CollaboratorProfileView, loadCollaboratorProfile, collaboratorProfileCsrf, validCollaboratorProfileCsrf, detectPartnerAvatarType, PARTNER_AVATAR_MAX_BYTES, PARTNER_DESCRIPTION_MAX_LENGTH } from "./collaborator-profile.js";
+import { loadCollaboratorSocialLinks, normalizePartnerLink, emptyPartnerSocialLinks, PARTNER_LINK_KINDS, PARTNER_LINK_MAX_LENGTH, PartnerSocialLinks } from "./collaborator-social-links.js";
 import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, COLLECTION_BANNER_MAX_BYTES, PartnerCollectionView, collectionCsrf, validCollectionCsrf, loadPartnerCollection, loadCollectionPresentation, clearCollectionProductCache, purchasedArtworkWhere, loadPublicCollectionBrand } from "./partner-collections.js";
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
@@ -2872,12 +2873,14 @@ type PartnerWorkspaceIdentity = {
   fullName: string;
   email: string;
   profile: CollaboratorProfileView;
+  social: { links: PartnerSocialLinks; available: boolean };
 };
 
 const loadPartnerIdentity = async (user: { id: string; full_name: string; email: string }): Promise<PartnerWorkspaceIdentity> => ({
   fullName: user.full_name,
   email: user.email,
-  profile: await loadCollaboratorProfile(prisma, user.id)
+  profile: await loadCollaboratorProfile(prisma, user.id),
+  social: await loadCollaboratorSocialLinks(prisma, user.id)
 });
 
 const buildPartnerAvatar = (identity: PartnerWorkspaceIdentity) => identity.profile.avatarUrl
@@ -3074,6 +3077,12 @@ const buildPartnerProfileHtml = (params: PartnerWorkspaceIdentity & { csrf: stri
         <textarea id="brand-description" name="description" maxlength="${PARTNER_DESCRIPTION_MAX_LENGTH}" rows="7">${escapeHtml(params.profile.description)}</textarea>
         <p class="hint">Up to ${PARTNER_DESCRIPTION_MAX_LENGTH} characters.</p>
       </div>
+      ${!params.social.available ? '<div class="error" role="status">Social links will be available after the database migration.</div>' : ""}
+      ${PARTNER_LINK_KINDS.map((kind) => {
+        const label = kind === "instagram" ? "Instagram" : kind === "tiktok" ? "TikTok" : "Website";
+        const placeholder = kind === "instagram" ? "https://www.instagram.com/yourbrand/" : kind === "tiktok" ? "https://www.tiktok.com/@yourbrand" : "https://yourbrand.com";
+        return `<div class="field"><label for="brand-${kind}">${label}</label><input id="brand-${kind}" type="url" inputmode="url" name="${kind}_url" maxlength="${PARTNER_LINK_MAX_LENGTH}" value="${escapeHtml(params.social.links[kind] ?? "")}" placeholder="${placeholder}"${params.social.available ? "" : " disabled"} /></div>`;
+      }).join("")}
       <button class="btn" type="submit"${params.profile.available ? "" : " disabled"}>Save Profile</button>
     </form>
   </section>`);
@@ -7711,13 +7720,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const [soldCount, soldWeight, brand, productMedia] = await Promise.all([
       prisma.artwork.count({ where: soldWhere }),
       prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } }),
-      collection ? loadPublicCollectionBrand(prisma, collection) : Promise.resolve({ name: "IRIS NYC", avatarUrl: null }),
+      collection ? loadPublicCollectionBrand(prisma, collection) : Promise.resolve({ name: "IRIS NYC", avatarUrl: null, links: emptyPartnerSocialLinks() }),
       collection ? loadCollectionProductMedia(prisma, collection.id) : Promise.resolve({ available: true, record: null })
     ]);
     const averageWeight = soldWeight._avg.weight_grams;
     reply.header("Cache-Control", "public, max-age=30").send({
       display_name: record?.display_name ?? null, banner_url: record?.banner_url ?? null,
-      brand_name: brand.name, brand_avatar_url: brand.avatarUrl,
+      brand_name: brand.name, brand_avatar_url: brand.avatarUrl, brand_links: brand.links,
       description: record?.description ?? "", images: record?.gallery_urls.filter(Boolean) ?? [],
       product_url: collection?.shopify_handle && /^[a-z0-9-]+$/.test(collection.shopify_handle) ? `/products/${collection.shopify_handle}` : null,
       video_url: productMedia.record?.video_url ?? null,
@@ -9803,6 +9812,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const fail = (status: number, message: string) => reply.code(status).type("text/html; charset=utf-8").send(buildPartnerProfileHtml({
       ...identity,
       profile: { ...identity.profile, description: (fields.description ?? identity.profile.description).slice(0, PARTNER_DESCRIPTION_MAX_LENGTH) },
+      social: { ...identity.social, links: Object.fromEntries(PARTNER_LINK_KINDS.map((kind) => [kind, (fields[`${kind}_url`] ?? identity.social.links[kind] ?? "").slice(0, PARTNER_LINK_MAX_LENGTH)])) as PartnerSocialLinks },
       csrf: collaboratorProfileCsrf(session.token_hash), error: message
     }));
     if (!identity.profile.available) return fail(503, "Profile settings are temporarily unavailable. Please try again shortly.");
@@ -9810,12 +9820,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     let avatar: Buffer | null = null;
     try {
-      for await (const part of req.parts({ limits: { fileSize: PARTNER_AVATAR_MAX_BYTES, files: 1, fields: 5, parts: 6, fieldSize: 10_000 } })) {
+      for await (const part of req.parts({ limits: { fileSize: PARTNER_AVATAR_MAX_BYTES, files: 1, fields: 9, parts: 10, fieldSize: 10_000 } })) {
         if (part.type === "file") {
           const buffer = await part.toBuffer();
           if (part.fieldname !== "avatar") return fail(400, "Unexpected file field.");
           if (part.filename) avatar = buffer;
-        } else if (["csrf_token", "description", "remove_avatar"].includes(part.fieldname)) {
+        } else if (["csrf_token", "description", "remove_avatar", ...PARTNER_LINK_KINDS.map((kind) => `${kind}_url`)].includes(part.fieldname)) {
           if (fields[part.fieldname] !== undefined || part.valueTruncated || typeof part.value !== "string") {
             return fail(400, "Invalid profile form.");
           }
@@ -9830,6 +9840,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (fields.description === undefined) return fail(400, "The description field is missing. Reload this page and try again.");
     const description = fields.description?.trim() ?? "";
     if (description.length > PARTNER_DESCRIPTION_MAX_LENGTH) return fail(400, `Keep the description within ${PARTNER_DESCRIPTION_MAX_LENGTH} characters.`);
+    const links: Partial<Record<`${typeof PARTNER_LINK_KINDS[number]}_url`, string | null>> = {};
+    for (const kind of PARTNER_LINK_KINDS) {
+      const key = `${kind}_url` as const;
+      if (fields[key] === undefined) continue;
+      if (!identity.social.available) return fail(503, "Social links are unavailable until the database migration is applied.");
+      try { links[key] = normalizePartnerLink(fields[key], kind); }
+      catch (error) { return fail(400, (error as Error).message); }
+    }
     const removeAvatar = fields.remove_avatar === "1";
     if (removeAvatar && avatar) return fail(400, "Choose a new avatar or remove the current one, not both.");
     const imageType = avatar ? detectPartnerAvatarType(avatar) : null;
@@ -9847,10 +9865,15 @@ export const createServer = async (): Promise<FastifyInstance> => {
         avatarUrl = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${objectKey}`;
       }
       // No client-supplied user or collection ID may select the profile being edited.
-      await prisma.collaboratorProfile.upsert({
-        where: { user_id: session.user.id },
-        create: { user_id: session.user.id, description, avatar_url: avatarUrl ?? null },
-        update: { description, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) }
+      await prisma.$transaction(async (tx) => {
+        await tx.collaboratorProfile.upsert({
+          where: { user_id: session.user.id },
+          create: { user_id: session.user.id, description, avatar_url: avatarUrl ?? null },
+          update: { description, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) }
+        });
+        if (Object.keys(links).length) await tx.collaboratorSocialLinks.upsert({
+          where: { user_id: session.user.id }, create: { user_id: session.user.id, ...links }, update: links
+        });
       });
       reply.redirect(303, "/partner/profile?saved=1");
     } catch (error) {

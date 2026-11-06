@@ -3,6 +3,7 @@ import { Collection, CollectionPresentation, Prisma, PrismaClient } from "@prism
 import { collectionPricing, CollectionPriceState } from "./shopify-product-pricing.js";
 import { collectionArtworkId } from "./collaborator-access.js";
 import { CollectionProductMediaView, loadCollectionProductMedia } from "./collection-product-media.js";
+import { emptyPartnerSocialLinks, loadCollaboratorSocialLinks } from "./collaborator-social-links.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
@@ -80,14 +81,15 @@ export const loadPublicCollectionBrand = async (db: PrismaClient, collection: Pi
   try {
     const partners = await db.collaboratorUser.findMany({
       where: { status: "active", OR: [{ collection_id: collection.id }, { collection_access: { some: { collection_id: collection.id } } }] },
-      select: { full_name: true, profile: { select: { avatar_url: true } } }
+      select: { id: true, full_name: true, profile: { select: { avatar_url: true } } }
     });
     const matches = artistName ? partners.filter((partner) => partner.full_name.trim().toLowerCase() === artistName.toLowerCase()) : [];
     // Do not attribute a collection to an arbitrary account when multiple partners have access.
     const brand = matches.length === 1 ? matches[0] : partners.length === 1 ? partners[0] : null;
-    return { name: brand?.full_name.trim() || artistName, avatarUrl: brand?.profile?.avatar_url ?? null };
+    const social = brand ? await loadCollaboratorSocialLinks(db, brand.id) : null;
+    return { name: brand?.full_name.trim() || artistName, avatarUrl: brand?.profile?.avatar_url ?? null, links: social?.links ?? emptyPartnerSocialLinks() };
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") return { name: artistName, avatarUrl: null };
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") return { name: artistName, avatarUrl: null, links: emptyPartnerSocialLinks() };
     throw error;
   }
 };
