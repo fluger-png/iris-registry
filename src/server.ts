@@ -2769,8 +2769,8 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .success-message { color:#7bd88f; padding:14px 16px; border:1px solid rgba(123,216,143,.3); margin-bottom:24px; }
         @media (max-width: 640px) {
           .partner-workspace .page { padding:24px 16px; }
-          .partner-workspace .workspace-header { gap:12px; align-items:flex-start; flex-wrap:wrap; }
-          .workspace-header .workspace-header-actions { margin-left:auto; gap:16px; }
+          .partner-workspace .workspace-header { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-items:start; }
+          .workspace-header .workspace-header-actions { justify-self:end; gap:16px; }
           .partner-workspace .brand-identity { gap:12px; }
           .partner-workspace .brand-identity h1 { font-size:24px; }
           .brand-avatar { width:48px; height:48px; flex-basis:48px; }
