@@ -3421,6 +3421,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           width:90px;
           height:auto;
           display:block;
+          transform:scale(.8);
+          transform-origin:center;
         }
         .main-nav {
           grid-area:nav;
@@ -4704,7 +4706,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         <header class="site-header">
           <div class="header-inner">
             <a class="site-logo" href="/" aria-label="IRIS NYC Home">
-              <img src="https://cdn.shopify.com/s/files/1/0710/5239/4589/files/IRISNYC-LOGO.svg?v=1793919322" alt="IRIS NYC" width="180" height="166" />
+              <img src="https://cdn.shopify.com/s/files/1/0710/5239/4589/files/IRISNYC-LOGO-Microchip.svg?v=1793922934" alt="IRIS NYC" width="180" height="165" />
             </a>
             <nav class="main-nav" aria-label="Main navigation">
               <a class="header-shop-button" href="/products/iris-the-unseen-edition"><span>Shop IRIS</span></a>
