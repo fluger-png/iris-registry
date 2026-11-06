@@ -231,6 +231,8 @@ describe("global admin collections", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body.indexOf('data-collection-id="sayat"')).toBeLessThan(response.body.indexOf('data-collection-id="ararat"'));
     expect(response.body).toContain('href="/admin/collections">Collections</a>');
+    expect(response.body).toContain('class="logo-img" src="https://cdn.shopify.com/s/files/1/0710/5239/4589/files/IRIS_NYC_Logo-Full_Black.svg?v=1793924143"');
+    expect(response.body).not.toContain('IRIS-LOGO_1500x_492d2916-f667-4e0c-9e94-1669d0309d1c.png');
     expect(response.body).toContain("$120");
     expect(response.body).not.toContain("$120.00");
     expect(response.body).toContain('role="switch"');

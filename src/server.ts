@@ -1581,7 +1581,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
       <div class="layout">
         <aside class="sidebar">
           <div class="logo">
-            <img class="logo-img" src="https://irisnyc.store/cdn/shop/files/IRIS-LOGO_1500x_492d2916-f667-4e0c-9e94-1669d0309d1c.png" alt="IRIS NYC" />
+            <img class="logo-img" src="https://cdn.shopify.com/s/files/1/0710/5239/4589/files/IRIS_NYC_Logo-Full_Black.svg?v=1793924143" alt="IRIS NYC" width="100" height="91" />
           </div>
           <h2>Admin Dashboard</h2>
           <div class="nav">
