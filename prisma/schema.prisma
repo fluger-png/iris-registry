@@ -322,6 +322,7 @@ model CollaboratorSocialLinks {
   instagram_url String?
   website_url   String?
   tiktok_url    String?
+  x_url         String?
   updated_at    DateTime @updatedAt
 
   user CollaboratorUser @relation(fields: [user_id], references: [id], onDelete: Cascade)

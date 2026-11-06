@@ -2873,7 +2873,7 @@ type PartnerWorkspaceIdentity = {
   fullName: string;
   email: string;
   profile: CollaboratorProfileView;
-  social: { links: PartnerSocialLinks; available: boolean };
+  social: { links: PartnerSocialLinks; available: boolean; xAvailable: boolean };
 };
 
 const loadPartnerIdentity = async (user: { id: string; full_name: string; email: string }): Promise<PartnerWorkspaceIdentity> => ({
@@ -3078,10 +3078,11 @@ const buildPartnerProfileHtml = (params: PartnerWorkspaceIdentity & { csrf: stri
         <p class="hint">Up to ${PARTNER_DESCRIPTION_MAX_LENGTH} characters.</p>
       </div>
       ${!params.social.available ? '<div class="error" role="status">Social links will be available after the database migration.</div>' : ""}
+      ${params.social.available && !params.social.xAvailable ? '<div class="error" role="status">The X field will be available after the database migration.</div>' : ""}
       ${PARTNER_LINK_KINDS.map((kind) => {
-        const label = kind === "instagram" ? "Instagram" : kind === "tiktok" ? "TikTok" : "Website";
-        const placeholder = kind === "instagram" ? "https://www.instagram.com/yourbrand/" : kind === "tiktok" ? "https://www.tiktok.com/@yourbrand" : "https://yourbrand.com";
-        return `<div class="field"><label for="brand-${kind}">${label}</label><input id="brand-${kind}" type="url" inputmode="url" name="${kind}_url" maxlength="${PARTNER_LINK_MAX_LENGTH}" value="${escapeHtml(params.social.links[kind] ?? "")}" placeholder="${placeholder}"${params.social.available ? "" : " disabled"} /></div>`;
+        const label = { website: "Website", instagram: "Instagram", tiktok: "TikTok", x: "X" }[kind];
+        const placeholder = { website: "https://yourbrand.com", instagram: "https://www.instagram.com/yourbrand/", tiktok: "https://www.tiktok.com/@yourbrand", x: "https://x.com/yourbrand" }[kind];
+        return `<div class="field"><label for="brand-${kind}">${label}</label><input id="brand-${kind}" type="url" inputmode="url" name="${kind}_url" maxlength="${PARTNER_LINK_MAX_LENGTH}" value="${escapeHtml(params.social.links[kind] ?? "")}" placeholder="${placeholder}"${params.social.available && (kind !== "x" || params.social.xAvailable) ? "" : " disabled"} /></div>`;
       }).join("")}
       <button class="btn" type="submit"${params.profile.available ? "" : " disabled"}>Save Profile</button>
     </form>
@@ -9845,6 +9846,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       const key = `${kind}_url` as const;
       if (fields[key] === undefined) continue;
       if (!identity.social.available) return fail(503, "Social links are unavailable until the database migration is applied.");
+      if (kind === "x" && !identity.social.xAvailable) return fail(503, "X links are unavailable until the database migration is applied.");
       try { links[key] = normalizePartnerLink(fields[key], kind); }
       catch (error) { return fail(400, (error as Error).message); }
     }
@@ -9872,7 +9874,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           update: { description, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) }
         });
         if (Object.keys(links).length) await tx.collaboratorSocialLinks.upsert({
-          where: { user_id: session.user.id }, create: { user_id: session.user.id, ...links }, update: links
+          where: { user_id: session.user.id }, create: { user_id: session.user.id, ...links }, update: links, select: { user_id: true }
         });
       });
       reply.redirect(303, "/partner/profile?saved=1");
