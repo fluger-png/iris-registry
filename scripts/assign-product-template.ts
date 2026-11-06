@@ -27,7 +27,7 @@ const run = async () => {
   if (!host.startsWith("ep-aged-flower-ahtjeivv") || !host.endsWith(".neon.tech")) throw new Error("Run this in the active iris-registry Render Shell.");
   const collection = await prisma.collection.findUnique({ where: { slug: handle } });
   const id = collection?.shopify_product_id?.replace(/^gid:\/\/shopify\/Product\//, "");
-  if (!collection || collection.shopify_handle !== handle || !id || !/^\d+$/.test(id)) throw new Error("No verified Shopify product binding. Nothing changed.");
+  if (!collection || collection.shopify_handle !== handle || (id != null && !/^\d+$/.test(id))) throw new Error("No verified Shopify product binding. Nothing changed.");
   const domain = env.shopifyAuthShopDomain ?? "";
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(domain) || !env.shopifyClientId || !env.shopifyClientSecret) throw new Error("Shopify product credentials are not configured.");
   const auth = await fetch(`https://${domain}/admin/oauth/access_token`, {
@@ -49,7 +49,15 @@ const run = async () => {
     if (!result.data || result.errors?.length) throw new Error("Shopify request failed; no confirmed template change.");
     return result.data;
   };
-  const productId = `gid://shopify/Product/${id}`;
+  let productId = id ? `gid://shopify/Product/${id}` : "";
+  if (!productId) {
+    const data = await graphql<{ products: { nodes: ProductTemplate[] } }>(
+      `query ProductTemplateByHandle($query: String!) { products(first: 2, query: $query) { nodes { id handle title templateSuffix } } }`,
+      { query: `handle:${handle}` });
+    const matches = data.products.nodes.filter(product => product.handle === handle);
+    if (matches.length !== 1 || !/^gid:\/\/shopify\/Product\/\d+$/.test(matches[0].id)) throw new Error("No unique verified Shopify product for this handle. Nothing changed.");
+    productId = matches[0].id;
+  }
   const read = async () => {
     const data = await graphql<{ product: ProductTemplate | null }>(`query ProductTemplate($id: ID!) { product(id: $id) { id handle title templateSuffix } }`, { id: productId });
     if (!data.product || data.product.id !== productId || data.product.handle !== handle) throw new Error("Shopify product identity differs from the collection. Nothing changed.");

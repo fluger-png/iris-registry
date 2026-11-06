@@ -8,7 +8,8 @@ const fetchMock = vi.fn<typeof fetch>();
 const originalArgv = process.argv;
 const originalExitCode = process.exitCode;
 let suffix: string | null;
-const product = () => ({ id: "gid://shopify/Product/123", handle: "the-art-of-adornment", title: "THE ART OF ADORNMENT", templateSuffix: suffix });
+let productHandle: string;
+const product = () => ({ id: "gid://shopify/Product/123", handle: productHandle, title: "Collection product", templateSuffix: suffix });
 const json = (value: unknown) => new Response(JSON.stringify(value));
 let log: ReturnType<typeof vi.spyOn>;
 let error: ReturnType<typeof vi.spyOn>;
@@ -16,6 +17,7 @@ let error: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.resetModules(); vi.resetAllMocks();
   suffix = "iris";
+  productHandle = "the-art-of-adornment";
   vi.stubEnv("DATABASE_URL", "postgresql://test@ep-aged-flower-ahtjeivv.c-3.us-east-1.aws.neon.tech/test");
   vi.stubGlobal("fetch", fetchMock);
   log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -25,6 +27,7 @@ beforeEach(() => {
     if (String(url).endsWith("access_token")) return json({ access_token: "private-token", scope: "write_products" });
     const body = JSON.parse(init?.body as string);
     if (body.query.startsWith("mutation")) { suffix = body.variables.product.templateSuffix; return json({ data: { productUpdate: { userErrors: [] } } }); }
+    if (body.query.startsWith("query ProductTemplateByHandle")) return json({ data: { products: { nodes: [product()] } } });
     return json({ data: { product: product() } });
   });
 });
@@ -58,6 +61,49 @@ describe("scoped product template assignment", () => {
   it("does nothing when the correct template is already assigned", async () => {
     suffix = "iris-okg";
     await run(["--apply"]);
+    expect(mutations()).toHaveLength(0);
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("resolves an older collection by its exact handle without writing a database binding", async () => {
+    productHandle = "ararat-heart";
+    mocks.findUnique.mockResolvedValue({ slug: productHandle, shopify_handle: productHandle, shopify_product_id: null });
+    await run(["--handle", productHandle]);
+    expect(error).not.toHaveBeenCalled();
+    expect(mutations()).toHaveLength(0);
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([, init]) => typeof init?.body === "string" && JSON.parse(init.body).variables?.query === "handle:ararat-heart")).toBe(true);
+    expect(log.mock.calls.flat().join(" ")).toContain('"requested_template": "iris-ararat"');
+  });
+
+  it("backs up and assigns a legacy collection template after verifying Shopify identity", async () => {
+    productHandle = "sayat-nova";
+    mocks.findUnique.mockResolvedValue({ slug: productHandle, shopify_handle: productHandle, shopify_product_id: null });
+    await run(["--handle", productHandle, "--apply"]);
+    expect(error).not.toHaveBeenCalled();
+    expect(mutations()).toHaveLength(1);
+    expect(mocks.writeFile).toHaveBeenCalledOnce();
+    expect(JSON.parse(mutations()[0][1]?.body as string).variables).toEqual({ product: { id: "gid://shopify/Product/123", templateSuffix: "iris-sayat-nova" } });
+  });
+
+  it("rejects missing, ambiguous, mismatched or malformed handle lookup results", async () => {
+    mocks.findUnique.mockResolvedValue({ slug: productHandle, shopify_handle: productHandle, shopify_product_id: null });
+    for (const nodes of [[], [product(), product()], [{ ...product(), handle: "another-product" }], [{ ...product(), id: "invalid" }]]) {
+      fetchMock.mockImplementation(async (url) => String(url).endsWith("access_token")
+        ? json({ access_token: "private-token", scope: "write_products" }) : json({ data: { products: { nodes } } }));
+      mocks.disconnect.mockClear();
+      await run(["--apply"]);
+      expect(mutations()).toHaveLength(0);
+      expect(mocks.writeFile).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalled();
+      vi.resetModules();
+    }
+  });
+
+  it("does not use handle fallback to replace an invalid stored product binding", async () => {
+    mocks.findUnique.mockResolvedValue({ slug: productHandle, shopify_handle: productHandle, shopify_product_id: "invalid" });
+    await run(["--apply"]);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(mutations()).toHaveLength(0);
     expect(mocks.writeFile).not.toHaveBeenCalled();
   });
