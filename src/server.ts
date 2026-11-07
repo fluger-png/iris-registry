@@ -18,6 +18,8 @@ import { COLLECTION_DESCRIPTION_MAX, COLLECTION_NAME_MAX, COLLECTION_BANNER_MAX_
 import { collectionPricing, CollectionPriceError, parsePriceCents, priceRevision, validPriceRevision } from "./shopify-product-pricing.js";
 import fs from "node:fs";
 import { registerAdminCollections } from "./admin-collections.js";
+import { buildAdminOwnersBody, buildAdminOwnersHref, getAdminCurrentOwnerEmail, loadAdminOwners, parseAdminOwnersQuery } from "./admin-owners.js";
+import type { AdminOwnersQuery } from "./admin-owners.js";
 import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-collections.js";
 import { COLLECTION_VIDEO_MAX_BYTES, isCollectionMp4, loadCollectionProductMedia } from "./collection-product-media.js";
 
@@ -1201,6 +1203,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
     activeTab === "unactivated";
   const allActive = activeTab === "all-iris";
   const ordersActive = activeTab === "orders";
+  const ownersActive = activeTab === "owners";
   const collectionsActive = activeTab === "collections";
   const logsActive = activeTab === "activation-logs";
   const collaboratorsActive = activeTab === "collaborators";
@@ -1588,6 +1591,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
           <div class="nav">
             <a class="${allActive ? "active" : ""}" href="/admin">IRIS Archive</a>
             <a class="${ordersActive ? "active" : ""}" href="/admin/orders">Orders</a>
+            <a class="${ownersActive ? "active" : ""}" href="/admin/owners">IRIS Owners</a>
             <a class="${collectionsActive ? "active" : ""}" href="/admin/collections">Collections</a>
             <a class="${activitiesActive ? "active" : ""}" href="/admin/activities">Activities</a>
             <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
@@ -2182,11 +2186,12 @@ const buildAdminOrdersHtml = (
   return buildAdminShell("IRIS Admin", body, searchValue, "orders");
 };
 
-const buildAdminCustomerHtml = (customer: AdminCustomerView): string => {
+const buildAdminCustomerHtml = (customer: AdminCustomerView, ownersQuery: AdminOwnersQuery | null): string => {
   const totalOrders = customer.total_order_count;
-  const totalIris = customer.artworks.length;
+  const held = ownersQuery ? customer.artworks.filter((item) => getAdminCurrentOwnerEmail(item) === customer.email) : customer.artworks;
+  const linked = ownersQuery ? customer.artworks.filter((item) => getAdminCurrentOwnerEmail(item) !== customer.email) : [];
   const activatedIris = customer.artworks.filter((item) => item.status === "activated").length;
-  const pendingTransfers = customer.artworks.filter((item) => item.transfer_pending).length;
+  const pendingTransfers = held.filter((item) => item.transfer_pending).length;
   const displayName = customer.customer_name ?? customer.email;
   const ordersRows = customer.orders
     .map((order) => {
@@ -2208,13 +2213,15 @@ const buildAdminCustomerHtml = (customer: AdminCustomerView): string => {
         <h1>${escapeHtml(displayName)}</h1>
         <div class="muted">${escapeHtml(customer.email)}</div>
       </div>
-      <a class="page-link" href="/admin/orders?q=${encodeURIComponent(customer.email)}">Back to Orders</a>
+      ${ownersQuery
+        ? `<a class="page-link" href="${escapeHtml(buildAdminOwnersHref(ownersQuery))}">Back to IRIS Owners</a>`
+        : `<a class="page-link" href="/admin/orders?q=${encodeURIComponent(customer.email)}">Back to Orders</a>`}
     </div>
 
     <div class="admin-stat-grid">
       <div class="admin-stat"><span>Total Orders</span><strong>${escapeHtml(String(totalOrders))}</strong></div>
-      <div class="admin-stat"><span>Total IRIS</span><strong>${escapeHtml(String(totalIris))}</strong></div>
-      <div class="admin-stat"><span>Activated</span><strong>${escapeHtml(String(activatedIris))}</strong></div>
+      <div class="admin-stat"><span>${ownersQuery ? "IRIS Held" : "Total IRIS"}</span><strong>${held.length}</strong></div>
+      <div class="admin-stat"><span>${ownersQuery ? "Other Linked IRIS" : "Activated"}</span><strong>${ownersQuery ? linked.length : activatedIris}</strong></div>
       <div class="admin-stat"><span>Pending Transfer</span><strong>${escapeHtml(String(pendingTransfers))}</strong></div>
     </div>
 
@@ -2236,12 +2243,13 @@ const buildAdminCustomerHtml = (customer: AdminCustomerView): string => {
       </table>
     </div>
 
-    <h2 class="admin-section-title">IRIS Held / Connected</h2>
+    <h2 class="admin-section-title">${ownersQuery ? "IRIS Held" : "IRIS Held / Connected"}</h2>
     <div class="card">
-      ${buildAdminOrderArtworkListHtml(customer.artworks, "No IRIS connected")}
+      ${buildAdminOrderArtworkListHtml(held, ownersQuery ? "No IRIS currently held" : "No IRIS connected")}
     </div>
+    ${linked.length ? `<h2 class="admin-section-title">Other Linked IRIS</h2><div class="card">${buildAdminOrderArtworkListHtml(linked)}</div>` : ""}
   `;
-  return buildAdminShell("IRIS Customer", body, "", "orders");
+  return buildAdminShell("IRIS Customer", body, "", ownersQuery ? "owners" : "orders");
 };
 
 const buildActivationLogsHtml = (
@@ -9898,17 +9906,28 @@ export const createServer = async (): Promise<FastifyInstance> => {
     reply.redirect(302, "/partner/login");
   });
 
+  app.get("/admin/owners", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return;
+
+    const query = parseAdminOwnersQuery(req.query as Record<string, unknown>);
+    const view = await loadAdminOwners(prisma, query, formatDisplayIrisId, extractAdminOrderCustomerName);
+    reply.header("Cache-Control", "private, no-store").type("text/html; charset=utf-8")
+      .send(buildAdminShell("IRIS Owners", buildAdminOwnersBody(view, escapeHtml), query.search, "owners"));
+  });
+
   app.get("/admin/customers/:email", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
     const params = req.params as { email: string };
-    const email = normalizeEmail(decodeURIComponent(params.email || ""));
+    const email = normalizeEmail(params.email);
     if (!isValidEmail(email)) {
       reply.code(400).type("text/plain; charset=utf-8").send("Invalid customer email");
       return;
     }
 
-    const [shopifyOrders, assignedArtworks] = await Promise.all([
+    const query = req.query as Record<string, unknown>;
+    const ownersQuery = query.from === "owners" ? parseAdminOwnersQuery(query) : null;
+    const [shopifyOrders, assignedArtworks, profile] = await Promise.all([
       prisma.shopifyOrder.findMany({
         where: { email: { equals: email, mode: "insensitive" } },
         select: {
@@ -9945,9 +9964,12 @@ export const createServer = async (): Promise<FastifyInstance> => {
             }
           }
         },
-        orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }],
-        take: 1000
-      })
+        orderBy: [{ updated_at: "desc" }, { iris_id: "desc" }]
+      }),
+      ownersQuery ? prisma.irisUser.findFirst({
+        where: { email: { equals: email, mode: "insensitive" } },
+        select: { display_name: true }
+      }) : null
     ]);
 
     const assignedEvents = await prisma.event.findMany({
@@ -10054,15 +10076,16 @@ export const createServer = async (): Promise<FastifyInstance> => {
 
     reply
       .code(200)
+      .header("Cache-Control", "private, no-store")
       .type("text/html; charset=utf-8")
       .send(
         buildAdminCustomerHtml({
           email,
-          customer_name: customerName,
+          customer_name: profile?.display_name?.trim() || customerName,
           total_order_count: totalOrderCount,
           orders: rows.map((row) => ({ ...row, total_order_count: totalOrderCount })),
           artworks
-        })
+        }, ownersQuery)
       );
   });
 
