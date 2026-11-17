@@ -50,18 +50,22 @@ export const buildIrisPromoDialog = (session: string, csrf: string): string => `
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify(request)
           });
-          const data = await response.json();
+          const data = await response.json().catch(() => null);
           if (!response.ok) {
-            status.textContent = data.message || 'Your discount is unavailable.';
-            retry.hidden = response.status < 500;
+            status.textContent = data?.message || 'The store returned an error (' + response.status + ').';
+            retry.hidden = !(data?.retryable ?? (response.status >= 500));
             return;
           }
-          if (!data.code || !Number.isFinite(data.percent)) throw new Error('invalid_response');
+          if (!data?.code || !Number.isFinite(data.percent)) {
+            status.textContent = 'The store did not return a discount code. Please try again.';
+            retry.hidden = false;
+            return;
+          }
           code.value = data.code;
           status.textContent = data.percent + '% off one purchase. Use your account email at checkout.';
           result.hidden = false;
         } catch {
-          status.textContent = 'Could not load your discount. Please try again.';
+          status.textContent = 'Could not connect to the store. Please try again.';
           retry.hidden = false;
         } finally {
           pending = false;

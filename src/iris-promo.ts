@@ -16,7 +16,7 @@ export const validIrisPromoCsrf = (value: unknown, sessionHash: string): boolean
   crypto.timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(irisPromoCsrf(sessionHash), "hex"));
 
 export class IrisPromoError extends Error {
-  constructor(public code: string, message: string, public status = 503) { super(message); }
+  constructor(public code: string, message: string, public status = 503, public diagnostic?: string) { super(message); }
 }
 
 const DISCOUNT_FIELDS = `
@@ -43,8 +43,14 @@ export const createIrisPromo = (credentials: ShopifyAppCredentials) => {
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
     try { return await admin.graphql<T>(query, variables, SCOPES); }
     catch (error) {
-      if (error instanceof ShopifyAdminError && error.code === "scope") {
-        throw new IrisPromoError("scope", "Shopify discount permissions are not enabled yet.");
+      if (error instanceof ShopifyAdminError) {
+        if (error.diagnostic === "oauth_scope_missing") {
+          throw new IrisPromoError("scope", "Shopify discount permissions are not enabled yet.", 503, error.diagnostic);
+        }
+        if (error.diagnostic === "graphql_access_denied") {
+          throw new IrisPromoError("scope", "Shopify blocked access to discounts or customer data.", 503, error.diagnostic);
+        }
+        throw new IrisPromoError("connection", "Shopify is temporarily unavailable. Please try again.", 503, error.diagnostic);
       }
       throw new IrisPromoError("connection", "Shopify is temporarily unavailable. Please try again.");
     }
@@ -60,7 +66,7 @@ export const createIrisPromo = (credentials: ShopifyAppCredentials) => {
       customers(first: 2, query: $search) { nodes { id defaultEmailAddress { emailAddress } } pageInfo { hasNextPage } }
       codeDiscountNodeByCode(code: $code) { codeDiscount { ${DISCOUNT_FIELDS} } }
     }`, { search: `email:"${PILOT_EMAIL}"`, code });
-    const matches = data.customers.nodes.filter((customer) => customer.defaultEmailAddress?.emailAddress.trim().toLowerCase() === PILOT_EMAIL);
+    const matches = data.customers.nodes.filter((customer) => customer.defaultEmailAddress?.emailAddress?.trim().toLowerCase() === PILOT_EMAIL);
     if (data.customers.pageInfo.hasNextPage || matches.length !== 1 || !/^gid:\/\/shopify\/Customer\/\d+$/.test(matches[0].id)) {
       throw new IrisPromoError("customer", "Could not verify the matching Shopify customer.", 409);
     }
@@ -86,6 +92,7 @@ export const createIrisPromo = (credentials: ShopifyAppCredentials) => {
     if (existing) return confirm(existing, code, customerId);
 
     let created: Discount | undefined;
+    let diagnostic: string | undefined;
     try {
       const data = await graphql<{ discountCodeBasicCreate: { codeDiscountNode: { codeDiscount: Discount } | null; userErrors: unknown[] } }>(
         `mutation IrisPromoCreate($input: DiscountCodeBasicInput!) {
@@ -97,11 +104,15 @@ export const createIrisPromo = (credentials: ShopifyAppCredentials) => {
           usageLimit: 1, appliesOncePerCustomer: true, combinesWith: COMBINATIONS
         } });
       if (!data.discountCodeBasicCreate.userErrors.length) created = data.discountCodeBasicCreate.codeDiscountNode?.codeDiscount;
-    } catch { /* Shopify may have written before timing out. Read back the same code. */ }
+      else diagnostic = "mutation_rejected";
+    } catch (error) {
+      // Shopify may have written before timing out. Read back the same code.
+      diagnostic = error instanceof IrisPromoError ? error.diagnostic : "mutation_invalid_response";
+    }
     if (created) return confirm(created, code, customerId);
     const retry = await lookup();
     if (retry.existing && retry.customerId === customerId) return confirm(retry.existing, code, customerId);
-    throw new IrisPromoError("unconfirmed", "Shopify did not confirm the discount. Please try again.");
+    throw new IrisPromoError("unconfirmed", "Shopify did not confirm the discount. Please try again.", 503, diagnostic);
   };
 
   return {

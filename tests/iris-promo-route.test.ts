@@ -68,10 +68,23 @@ describe("My IRIS promo access", () => {
     expect(redeem).toHaveBeenCalledWith();
   });
 
-  it("does not display a fallback code when Shopify scopes are missing", async () => {
+  it("keeps a missing-scope message in a response Shopify's proxy can forward", async () => {
     redeem.mockRejectedValueOnce(new IrisPromoError("scope", "Shopify discount permissions are not enabled yet."));
     const response = await app.inject({ method: "POST", url, payload: { session: "pilot", csrf_token: csrf("pilot") } });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ message: "Shopify discount permissions are not enabled yet." });
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ message: "Shopify discount permissions are not enabled yet.", retryable: false });
+  });
+
+  it("accepts a valid body session even if an unrelated browser cookie is malformed", async () => {
+    const response = await app.inject({ method: "POST", url, headers: { cookie: "unrelated=%ZZ" }, payload: { session: "pilot", csrf_token: csrf("pilot") } });
+    expect(response.statusCode).toBe(200);
+    expect(redeem).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a retryable failure without returning internal error details", async () => {
+    redeem.mockRejectedValueOnce(new Error("upstream private detail"));
+    const response = await app.inject({ method: "POST", url, payload: { session: "pilot", csrf_token: csrf("pilot") } });
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ message: "My IRIS could not finish the discount request. Please try again.", retryable: true });
   });
 });

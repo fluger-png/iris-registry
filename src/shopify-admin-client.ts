@@ -1,7 +1,7 @@
 export type ShopifyAppCredentials = { domain: string; clientId: string; clientSecret: string };
 
 export class ShopifyAdminError extends Error {
-  constructor(public code: "connection" | "scope") { super(`Shopify Admin API: ${code}`); }
+  constructor(public code: "connection" | "scope", public diagnostic: string) { super(`Shopify Admin API: ${code}`); }
 }
 
 export const createShopifyAdminClient = (credentials: ShopifyAppCredentials) => {
@@ -10,9 +10,9 @@ export const createShopifyAdminClient = (credentials: ShopifyAppCredentials) => 
   type Token = { value: string; expiresAt: number; scopes: Set<string> };
   let cached: Token | null = null;
   let pending: Promise<Token> | null = null;
-  const unavailable = () => new ShopifyAdminError("connection");
+  const unavailable = (diagnostic: string) => new ShopifyAdminError("connection", diagnostic);
   const token = async (): Promise<Token> => {
-    if (!configured) throw unavailable();
+    if (!configured) throw unavailable("oauth_not_configured");
     if (cached && cached.expiresAt > Date.now() + 60_000) return cached;
     if (pending) return pending;
     pending = (async () => {
@@ -22,15 +22,16 @@ export const createShopifyAdminClient = (credentials: ShopifyAppCredentials) => 
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ grant_type: "client_credentials", client_id: credentials.clientId, client_secret: credentials.clientSecret })
         });
-        if (!response.ok) throw unavailable();
+        if (!response.ok) throw unavailable(`oauth_http_${response.status}`);
         const data = await response.json() as { access_token?: unknown; expires_in?: unknown; scope?: unknown };
         if (typeof data.access_token !== "string" || !data.access_token || typeof data.expires_in !== "number" ||
-            !Number.isFinite(data.expires_in) || data.expires_in <= 60) throw unavailable();
+            !Number.isFinite(data.expires_in) || data.expires_in <= 60) throw unavailable("oauth_invalid_token_response");
         return { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000,
           scopes: new Set(typeof data.scope === "string" ? data.scope.split(",").map((scope) => scope.trim()) : []) };
-      } catch {
+      } catch (error) {
         // Never attach upstream responses or tokens to errors.
-        throw unavailable();
+        if (error instanceof ShopifyAdminError) throw error;
+        throw unavailable("oauth_request_failed");
       }
     })();
     try { return cached = await pending; } finally { pending = null; }
@@ -43,7 +44,7 @@ export const createShopifyAdminClient = (credentials: ShopifyAppCredentials) => 
           (scope.startsWith("read_") && auth.scopes.has(`write_${scope.slice(5)}`)))) {
         // A merchant may have just granted a new scope.
         if (cached === auth) cached = null;
-        throw new ShopifyAdminError("scope");
+        throw new ShopifyAdminError("scope", "oauth_scope_missing");
       }
       let response: Response;
       try {
@@ -52,19 +53,23 @@ export const createShopifyAdminClient = (credentials: ShopifyAppCredentials) => 
           headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": auth.value },
           body: JSON.stringify({ query, variables })
         });
-      } catch { throw unavailable(); }
+      } catch { throw unavailable("graphql_request_failed"); }
       if (response.status === 401 && attempt === 0) {
         if (cached === auth) cached = null;
         continue;
       }
-      if (!response.ok) throw unavailable();
+      if (!response.ok) throw unavailable(`graphql_http_${response.status}`);
+      let result: { data?: T; errors?: { extensions?: { code?: string } }[] };
       try {
-        const result = await response.json() as { data?: T; errors?: unknown[] };
-        if (result.errors?.length || !result.data) throw unavailable();
-        return result.data;
-      } catch { throw unavailable(); }
+        result = await response.json() as typeof result;
+      } catch { throw unavailable("graphql_invalid_json"); }
+      if (result?.errors?.some((error) => error?.extensions?.code === "ACCESS_DENIED")) {
+        throw new ShopifyAdminError("scope", "graphql_access_denied");
+      }
+      if (result?.errors?.length || !result?.data) throw unavailable("graphql_invalid_response");
+      return result.data;
     }
-    throw unavailable();
+    throw unavailable("graphql_request_failed");
   };
   return { graphql };
 };

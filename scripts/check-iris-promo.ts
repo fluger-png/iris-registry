@@ -4,6 +4,8 @@ try {
   await irisPromo.check();
   console.log("Shopify discount scopes, lookup and customer verified. No discount created.");
 } catch (error) {
-  console.error(error instanceof IrisPromoError ? `${error.code}: ${error.message}` : "Shopify promo check failed.");
+  console.error(error instanceof IrisPromoError
+    ? `${error.diagnostic ?? error.code}: ${error.message}`
+    : "Shopify promo check failed.");
   process.exitCode = 1;
 }

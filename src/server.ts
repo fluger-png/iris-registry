@@ -497,8 +497,8 @@ const createIrisAccountSession = async (userId: string) => {
 const getIrisAccountAuth = async (req: any, fallbackRawToken?: string) => {
   const query = (req.query as { session?: unknown } | null) ?? {};
   const queryRawToken = readSingleValue(query.session).trim();
-  const cookies = parseCookieHeader(req.headers.cookie as string | undefined);
-  const rawToken = fallbackRawToken?.trim() || queryRawToken || cookies[IRIS_ACCOUNT_SESSION_COOKIE];
+  const rawToken = fallbackRawToken?.trim() || queryRawToken ||
+    parseCookieHeader(req.headers.cookie as string | undefined)[IRIS_ACCOUNT_SESSION_COOKIE];
   if (!rawToken) {
     return null;
   }
@@ -8187,11 +8187,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return sendJson(reply, 200, await irisPromo.redeem());
     } catch (error) {
       if (error instanceof IrisPromoError) {
-        if (error.status >= 500) req.log.warn({ code: error.code }, "IRIS promo unavailable");
-        return sendJson(reply, error.status, { message: error.message });
+        const retryable = error.status >= 500 && error.code !== "scope";
+        req.log.warn({ code: error.code, diagnostic: error.diagnostic }, "IRIS promo unavailable");
+        // Shopify app proxies can replace origin 5xx bodies with storefront HTML.
+        return sendJson(reply, error.status >= 500 ? 422 : error.status, { message: error.message, retryable });
       }
-      req.log.error("IRIS promo request failed");
-      return sendJson(reply, 503, { message: "Could not load your discount. Please try again." });
+      req.log.error({ kind: error instanceof Error ? error.name : "unknown" }, "IRIS promo request failed");
+      return sendJson(reply, 422, { message: "My IRIS could not finish the discount request. Please try again.", retryable: true });
     }
   });
 

@@ -73,6 +73,23 @@ describe("My IRIS Shopify promo", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("distinguishes protected customer-data denial from connection failure without exposing upstream details", async () => {
+    fetchMock.mockResolvedValueOnce(token()).mockResolvedValueOnce(json({ errors: [
+      { message: "private upstream detail", extensions: { code: "ACCESS_DENIED" } }
+    ] }));
+    await expect(promo.check()).rejects.toMatchObject({ code: "scope", diagnostic: "graphql_access_denied", message: "Shopify blocked access to discounts or customer data." });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a redacted Shopify email as an unverified customer", async () => {
+    fetchMock.mockResolvedValueOnce(token()).mockResolvedValueOnce(json({ data: {
+      customers: { nodes: [{ id: customerId, defaultEmailAddress: { emailAddress: null } }], pageInfo: { hasNextPage: false } },
+      codeDiscountNodeByCode: null
+    } }));
+    await expect(promo.redeem()).rejects.toMatchObject({ code: "customer" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("checks the setup without issuing a code", async () => {
     fetchMock.mockResolvedValueOnce(token()).mockResolvedValueOnce(lookup());
     await promo.check();
