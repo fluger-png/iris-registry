@@ -61,6 +61,14 @@ npm run dev
 - Admin UI: `GET /admin` (Basic Auth required).
 - Upload IRIS image via the admin table (stored in Cloudflare R2 and saved to `image_url`).
 
+## My IRIS Discount Pilot
+
+- The offer is restricted server-side to the signed-in pilot account (`info@gugoco.com`). The current pilot is always 10%; holdings do not change the rate yet.
+- Uses the existing Shopify client-credentials integration (`SHOPIFY_AUTH_SHOP_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`). Grant `write_discounts` (includes read access) and ensure the app has `read_customers` or `write_customers`. Do not replace the legacy token or webhook secret.
+- On Render, `npm run promo:check` verifies the scopes, customer and discount lookup without issuing a code or printing credentials.
+- A code is created only after clicking Redeem My Discount. It is restricted to the matching Shopify customer, one checkout, with no discount combinations. Reopening the modal looks up the same code; an expired/deactivated or used code is not automatically replaced.
+- No database migration. The code is derived from the Shopify client secret for this pilot. If rotating that secret or ending the pilot, deactivate the existing discount in Shopify to prevent it from remaining usable. Keep the record when deactivating; deleting it permits a fresh issue.
+
 ## Rarity Commitment (Merkle Proof)
 
 We pre-assign rarity to all 10,000 IRIS using a deterministic seed and publish a Merkle root.

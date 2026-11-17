@@ -22,6 +22,8 @@ import { buildAdminOwnersBody, buildAdminOwnersHref, getAdminCurrentOwnerEmail, 
 import type { AdminOwnersQuery } from "./admin-owners.js";
 import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-collections.js";
 import { COLLECTION_VIDEO_MAX_BYTES, isCollectionMp4, loadCollectionProductMedia } from "./collection-product-media.js";
+import { canRedeemIrisPromo, IrisPromoError, irisPromo, irisPromoCsrf, validIrisPromoCsrf } from "./iris-promo.js";
+import { buildIrisPromoDialog } from "./iris-promo-dialog.js";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
@@ -4941,6 +4943,9 @@ const buildIrisAccountLibraryHtml = (params: {
           <p class="iris-library-stats">
             <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold<span class="iris-library-acquisition-total" hidden> · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total</span>
           </p>
+          ${params.sessionToken && canRedeemIrisPromo(params.user.email)
+            ? buildIrisPromoDialog(params.sessionToken, irisPromoCsrf(hashOpaqueToken(params.sessionToken)))
+            : ""}
         </div>
       </section>
     </div>
@@ -8145,6 +8150,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
   });
 
   app.get("/apps/iris/v3/account", async (req, reply) => {
+    reply.header("Cache-Control", "private, no-store");
     try {
       const auth = await getIrisAccountAuth(req);
       if (!auth) {
@@ -8165,6 +8171,27 @@ export const createServer = async (): Promise<FastifyInstance> => {
         reply,
         buildIrisAccountLoginHtml({ error: "IRIS Account V3 is not ready yet. Please check the backend migration." })
       );
+    }
+  });
+
+  app.post("/apps/iris/v3/promo/redeem", async (req, reply) => {
+    reply.header("Cache-Control", "private, no-store");
+    const body = (req.body as Record<string, unknown> | null) ?? {};
+    try {
+      const auth = await getIrisAccountAuth(req, readSingleValue(body.session));
+      if (!auth) return sendJson(reply, 401, { message: "Log in to My IRIS and try again." });
+      if (!canRedeemIrisPromo(auth.user.email)) return sendJson(reply, 404, { message: "This offer is unavailable." });
+      if (!validIrisPromoCsrf(body.csrf_token, hashOpaqueToken(auth.rawToken))) {
+        return sendJson(reply, 403, { message: "Reload My IRIS and try again." });
+      }
+      return sendJson(reply, 200, await irisPromo.redeem());
+    } catch (error) {
+      if (error instanceof IrisPromoError) {
+        if (error.status >= 500) req.log.warn({ code: error.code }, "IRIS promo unavailable");
+        return sendJson(reply, error.status, { message: error.message });
+      }
+      req.log.error("IRIS promo request failed");
+      return sendJson(reply, 503, { message: "Could not load your discount. Please try again." });
     }
   });
 

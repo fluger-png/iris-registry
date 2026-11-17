@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { env } from "./env.js";
+import { createShopifyAdminClient, ShopifyAdminError, type ShopifyAppCredentials } from "./shopify-admin-client.js";
 
-type Credentials = { domain: string; clientId: string; clientSecret: string };
 type CollectionBinding = { id: string; shopify_handle: string | null; shopify_product_id: string | null };
 export type ReadyPrice = {
   ready: true; productId: string; variantId: string; handle: string;
@@ -29,64 +29,17 @@ export const validPriceRevision = (value: unknown, sessionHash: string, collecti
   crypto.timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(priceRevision(sessionHash, collectionId, price), "hex"));
 
 // This client is deliberately separate from order/customer integration and webhook credentials.
-export const createProductPricingClient = (credentials: Credentials) => {
-  const configured = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(credentials.domain) &&
-    Boolean(credentials.clientId && credentials.clientSecret);
-  let cached: { value: string; expiresAt: number } | null = null;
-  let pending: Promise<string> | null = null;
+export const createProductPricingClient = (credentials: ShopifyAppCredentials) => {
+  const admin = createShopifyAdminClient(credentials);
   const unavailable = () => new CollectionPriceError("connection", "Shopify pricing is temporarily unavailable. Please try again shortly.");
-  const token = async (): Promise<string> => {
-    if (!configured) throw unavailable();
-    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.value;
-    if (pending) return pending;
-    pending = (async () => {
-      try {
-        const response = await fetch(`https://${credentials.domain}/admin/oauth/access_token`, {
-          method: "POST", redirect: "error", signal: AbortSignal.timeout(8000),
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ grant_type: "client_credentials", client_id: credentials.clientId, client_secret: credentials.clientSecret })
-        });
-        if (!response.ok) throw unavailable();
-        const data = await response.json() as { access_token?: unknown; expires_in?: unknown; scope?: unknown };
-        if (typeof data.access_token !== "string" || !data.access_token || typeof data.expires_in !== "number" ||
-          !Number.isFinite(data.expires_in) || data.expires_in <= 60) throw unavailable();
-        if (typeof data.scope !== "string" || !data.scope.split(",").map((scope) => scope.trim()).includes("write_products")) {
-          throw new CollectionPriceError("scope", "Shopify product editing permission is unavailable.");
-        }
-        cached = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-        return cached.value;
-      } catch (error) {
-        // Never include OAuth response bodies, credentials or tokens in errors/logs.
-        if (error instanceof CollectionPriceError) throw error;
-        throw unavailable();
-      }
-    })();
-    try { return await pending; } finally { pending = null; }
-  };
-
   const graphql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const usedToken = await token();
-      let response: Response;
-      try {
-        response = await fetch(`https://${credentials.domain}/admin/api/2026-10/graphql.json`, {
-          method: "POST", redirect: "error", signal: AbortSignal.timeout(8000),
-          headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": usedToken },
-          body: JSON.stringify({ query, variables })
-        });
-      } catch { throw unavailable(); }
-      if (response.status === 401 && attempt === 0) {
-        if (cached?.value === usedToken) cached = null;
-        continue;
+    try { return await admin.graphql<T>(query, variables, ["write_products"]); }
+    catch (error) {
+      if (error instanceof ShopifyAdminError && error.code === "scope") {
+        throw new CollectionPriceError("scope", "Shopify product editing permission is unavailable.");
       }
-      if (!response.ok) throw unavailable();
-      try {
-        const result = await response.json() as { data?: T; errors?: unknown[] };
-        if (result.errors?.length || !result.data) throw unavailable();
-        return result.data;
-      } catch { throw unavailable(); }
+      throw unavailable();
     }
-    throw unavailable();
   };
 
   const read = async (collection: CollectionBinding): Promise<ReadyPrice> => {
