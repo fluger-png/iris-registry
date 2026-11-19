@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { createRetailBatch, markRetailSold, retailBatchCsv, retailCsrf, validRetailCsrf, loadRetailSoldIds, retailSchemaReady } from "../src/retail-stock.js";
+import { createRetailBatch, markRetailSold, retailBatchCsv, retailCsrf, validRetailCsrf, loadRetailSoldIds, retailSchemaReady, retailEligibleWhere } from "../src/retail-stock.js";
 import { purchasedArtworkWhere } from "../src/partner-collections.js";
 vi.mock("../src/env.js", () => ({ env: {} }));
 
@@ -70,6 +70,15 @@ describe("retail allocation", () => {
     await expect(createRetailBatch(db, request)).rejects.toThrow("rolled back");
     expect(tx.event.create).not.toHaveBeenCalled();
   });
+  it("allocates core IRIS only from the legacy NULL pool and uses the same eligibility rules for the counter", async () => {
+    tx.collection.findUnique.mockResolvedValue({ id: "core", slug: "iris-the-unseen-edition" });
+    await createRetailBatch(db, { ...request, collectionId: "core" });
+    expect(tx.$queryRaw.mock.calls[1][1].sql).toBe('a."collection_id" IS NULL');
+    expect(tx.retailBatch.create.mock.calls[0][0].data.collection_id).toBe("core");
+    expect(retailEligibleWhere({ id: "core", slug: "iris-the-unseen-edition" })).toEqual(expect.objectContaining({ collection_id: null,
+      status: "available", retail_entry: null, reservations: { none: { status: "active" } } }));
+    expect(retailEligibleWhere({ id: "okg", slug: "the-art-of-adornment" }).collection_id).toBe("okg");
+  });
 });
 
 describe("in-store sales", () => {
@@ -121,5 +130,10 @@ describe("retail labels and sales statistics", () => {
     expect(await retailSchemaReady(db)).toBe(false);
     tx.retailBatchItem.findMany.mockRejectedValueOnce(new Error("offline"));
     await expect(loadRetailSoldIds(db, "okg")).rejects.toThrow("offline");
+  });
+  it("includes sold retail core works in the main collection statistics", async () => {
+    tx.retailBatchItem.findMany.mockResolvedValue([{ iris_id: "IRIS-1234" }]);
+    expect(await loadRetailSoldIds(db, null)).toEqual(["IRIS-1234"]);
+    expect(tx.retailBatchItem.findMany.mock.calls[0][0].where.batch).toEqual({ collection: { slug: "iris-the-unseen-edition" } });
   });
 });

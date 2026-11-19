@@ -1,7 +1,7 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { Prisma, ArtworkStatus, CollaboratorStatus } from "@prisma/client";
+import { Prisma, ArtworkStatus, CollaboratorStatus, Collection } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -27,6 +27,7 @@ import { buildIrisPromoDialog } from "./iris-promo-dialog.js";
 import { archiveCollectionScope, archiveHref, parseArchiveCollection } from "./admin-archive.js";
 import { retailSchemaReady, loadRetailSoldIds, isMissingRetailSchema } from "./retail-stock.js";
 import { registerRetailStockPages } from "./retail-stock-pages.js";
+import { registerAdminCollectionDetail } from "./admin-collection-detail.js";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
@@ -1748,7 +1749,7 @@ const buildAdminHtml = (
   return buildAdminShell("IRIS Admin", body, searchValue, activeTab);
 };
 
-const buildAdminAllHtml = (
+const buildAdminArchiveBody = (
   items: Array<{
     iris_id: string;
     display_iris_id: string;
@@ -1767,9 +1768,12 @@ const buildAdminAllHtml = (
   hasPrev: boolean,
   hasNext: boolean,
   selectedCollection: string,
-  collections: Array<{ id: string; name: string }>
+  collections: Array<{ id: string; name: string }>,
+  options: { collectionId?: string; basePath?: string } = {}
 ) => {
+  const basePath = options.basePath ?? "/admin";
   const detailParams = new URLSearchParams({ collection: selectedCollection, status: statusParam, q: searchValue });
+  if (options.collectionId) detailParams.set("from_collection", options.collectionId);
   const rows = items
     .map((item) => {
       const imageCell = item.image_url
@@ -1803,21 +1807,21 @@ const buildAdminAllHtml = (
     .join("");
 
   const statusHidden = statusParam !== "all" ? `<input type="hidden" name="status" value="${escapeHtml(statusParam)}" />` : "";
-  const prevHref = hasPrev ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page - 1)) : "#";
-  const nextHref = hasNext ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page + 1)) : "#";
+  const prevHref = hasPrev ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page - 1, basePath)) : "#";
+  const nextHref = hasNext ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page + 1, basePath)) : "#";
 
   const body = `
     <style>.main{min-width:0;}.card.table{max-width:100%;overflow-x:auto;}.card.table table{min-width:980px;}</style>
     <div class="title-row">
-      <h1>IRIS Archive</h1>
-      <form class="search" method="GET" action="/admin">
+      ${options.collectionId ? '<h2 style="margin:0;font-size:16px;">IRIS Archive</h2>' : "<h1>IRIS Archive</h1>"}
+      <form class="search" method="GET" action="${escapeHtml(basePath)}">
         ${statusHidden}
         <input type="hidden" name="collection" value="${escapeHtml(selectedCollection)}" />
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS number, order or email" value="${escapeHtml(searchValue)}" />
       </form>
     </div>
-    <form method="GET" action="/admin" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+    ${options.collectionId ? "" : `<form method="GET" action="/admin" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
       ${statusHidden}<input type="hidden" name="q" value="${escapeHtml(searchValue)}" />
       <label for="archive-collection">Collection</label>
       <select id="archive-collection" name="collection" style="font:inherit;max-width:100%;padding:8px;border:1px solid var(--line);border-radius:4px;">
@@ -1825,10 +1829,10 @@ const buildAdminAllHtml = (
         <option value="all"${selectedCollection === "all" ? " selected" : ""}>All collections</option>
         ${collections.map((c) => `<option value="${escapeHtml(c.id)}"${selectedCollection === c.id ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
       </select><button class="btn secondary" type="submit">Filter</button>
-    </form>
+    </form>`}
     <div class="tabs">
       ${[["all", "All"], ["activated", "Activated"], ["unactivated", "Unactivated"]].map(([key, label]) =>
-        `<a class="tab ${statusParam === key ? "active" : ""}" href="${escapeHtml(archiveHref(selectedCollection, searchValue, key))}">${label}</a>`).join("")}
+        `<a class="tab ${statusParam === key ? "active" : ""}" href="${escapeHtml(archiveHref(selectedCollection, searchValue, key, 1, basePath))}">${label}</a>`).join("")}
     </div>
     <div class="card table">
       <table>
@@ -1857,7 +1861,7 @@ const buildAdminAllHtml = (
       <a class="page-link ${hasNext ? "" : "disabled"}" href="${nextHref}">Next</a>
     </div>
   `;
-  return buildAdminShell("IRIS Admin", body, searchValue, "all-iris");
+  return body;
 };
 
 const parseAdminOrderNumberSortValue = (value: string | null | undefined): number => {
@@ -6136,8 +6140,11 @@ const buildAdminDetailHtml = (item: {
   archive_collection: string;
   archive_search: string;
   archive_status: string;
+  archive_from_collection?: string;
 }) => {
   const archiveParams = new URLSearchParams({ collection: item.archive_collection, q: item.archive_search, status: item.archive_status });
+  if (item.archive_from_collection) archiveParams.set("from_collection", item.archive_from_collection);
+  const archiveBasePath = item.archive_from_collection ? `/admin/collections/${encodeURIComponent(item.archive_from_collection)}` : "/admin";
   const displayId = item.display_iris_id.toUpperCase().startsWith("IRIS-")
     ? item.display_iris_id.replace(/^IRIS-/i, "#")
     : item.display_iris_id;
@@ -6155,7 +6162,8 @@ const buildAdminDetailHtml = (item: {
   const body = `
     <div class="passport-title">IRIS Passport</div>
     <div class="title-row" style="justify-content:center;margin-bottom:18px;">
-      <form class="search" method="GET" action="/admin">
+      <form class="search" method="GET" action="${escapeHtml(archiveBasePath)}">
+        <input type="hidden" name="collection" value="${escapeHtml(item.archive_collection)}" />
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" />
       </form>
@@ -6197,7 +6205,7 @@ const buildAdminDetailHtml = (item: {
           <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
         </dl>
         <div style="margin-top:16px;">
-          <a class="btn primary" href="${escapeHtml(archiveHref(item.archive_collection, item.archive_search, item.archive_status))}">Back</a>
+          <a class="btn primary" href="${escapeHtml(archiveHref(item.archive_collection, item.archive_search, item.archive_status, 1, archiveBasePath))}">Back</a>
         </div>
       </div>
       <div>
@@ -10358,19 +10366,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
       .send(buildAdminOrdersHtml(pageRowsWithCounts, q ?? "", page, hasPrev, hasNext));
   });
 
-  app.get("/admin", async (req, reply) => {
+  const handleAdminArchive = async (req: any, reply: any, detail?: { collection: Collection; prefix: string }) => {
     if (!(await requireAdmin(req, reply))) return;
 
     const query = req.query as { q?: string; page?: string; status?: string; collection?: string };
     const collections = (await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }))
       .filter((c) => !isCoreAuthorCollection(c));
-    const selectedCollection = parseArchiveCollection(query.collection);
+    const selectedCollection = detail
+      ? isCoreAuthorCollection(detail.collection) ? CORE_AUTHOR_OPTION_ID : detail.collection.id
+      : parseArchiveCollection(query.collection);
     if (selectedCollection !== CORE_AUTHOR_OPTION_ID && selectedCollection !== "all" && !collections.some((c) => c.id === selectedCollection)) {
       return reply.code(400).send("Unknown collection. Choose a collection from IRIS Archive.");
     }
-    const hasRetail = selectedCollection !== CORE_AUTHOR_OPTION_ID && await retailSchemaReady(prisma);
-    const q = query.q?.trim();
-    const statusParam = query.status?.toLowerCase() ?? "all";
+    const hasRetail = await retailSchemaReady(prisma);
+    const q = readSingleValue(query.q).trim();
+    const statusParam = query.status === "activated" || query.status === "unactivated" ? query.status : "all";
     const statuses: ArtworkStatus[] =
       statusParam === "activated"
         ? ["activated"]
@@ -10436,32 +10446,37 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const hasPrev = page > 1;
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId(slice.map((item) => item.iris_id));
 
-    reply
-      .code(200)
-      .type("text/html; charset=utf-8")
-      .send(
-        buildAdminAllHtml(
-          slice.map((item) => ({
-            iris_id: item.iris_id,
-            display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
-            status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
-            order_date: item.status === "retail_stock" ? null : orderDateById.get(item.iris_id) ?? null,
-            owner_email: item.owner_email,
-            activated_at: item.activated_at,
-            image_url: item.image_url,
-            pin_code: item.pin_code,
-            weight_grams: item.weight_grams,
-            rarity_code: item.rarity_code
-          })),
-          q ?? "",
-          statusParam,
-          page,
-          hasPrev,
-          hasNext,
-          selectedCollection,
-          collections
-        )
-      );
+    const archiveBody = buildAdminArchiveBody(
+      slice.map((item) => ({
+        iris_id: item.iris_id,
+        display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
+        status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
+        order_date: item.status === "retail_stock" ? null : orderDateById.get(item.iris_id) ?? null,
+        owner_email: item.owner_email,
+        activated_at: item.activated_at,
+        image_url: item.image_url,
+        pin_code: item.pin_code,
+        weight_grams: item.weight_grams,
+        rarity_code: item.rarity_code
+      })),
+      q,
+      statusParam,
+      page,
+      hasPrev,
+      hasNext,
+      selectedCollection,
+      collections,
+      detail ? { collectionId: detail.collection.id, basePath: `/admin/collections/${encodeURIComponent(detail.collection.id)}` } : {}
+    );
+    return reply.header("Cache-Control", "private, no-store").type("text/html; charset=utf-8").send(buildAdminShell(
+      detail ? `${escapeHtml(detail.collection.name)} - IRIS Admin` : "IRIS Admin", `${detail?.prefix ?? ""}${archiveBody}`, q,
+      detail ? "collections" : "all-iris"
+    ));
+  };
+  app.get("/admin", (req, reply) => handleAdminArchive(req, reply));
+  registerAdminCollectionDetail(app, {
+    db: prisma, secret: env.adminBasicPass, authorize: requireAdmin, escape: escapeHtml,
+    renderArchive: (req, reply, collection, prefix) => handleAdminArchive(req, reply, { collection, prefix })
   });
 
   app.get("/admin/activities", async (req, reply) => {
@@ -10629,13 +10644,13 @@ export const createServer = async (): Promise<FastifyInstance> => {
       orderBy: { created_at: "desc" }
     });
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId([item.iris_id]);
-    const archiveQuery = req.query as { collection?: string; q?: string; status?: string };
+    const archiveQuery = req.query as { collection?: string; q?: string; status?: string; from_collection?: string };
     const archiveCollection = parseArchiveCollection(archiveQuery.collection ?? item.collection_id ?? CORE_AUTHOR_OPTION_ID);
     const archiveSearch = typeof archiveQuery.q === "string" ? archiveQuery.q.trim() : "";
     const archiveStatus = archiveQuery.status === "activated" || archiveQuery.status === "unactivated" ? archiveQuery.status : "all";
     const navigationStatuses: ArtworkStatus[] = archiveStatus === "activated" ? ["activated"] :
       archiveStatus === "unactivated" ? ["assigned", "shopify_failed"] : ["assigned", "activated", "shopify_failed"];
-    if (archiveStatus !== "activated" && archiveCollection !== CORE_AUTHOR_OPTION_ID && await retailSchemaReady(prisma)) navigationStatuses.push("retail_stock");
+    if (archiveStatus !== "activated" && await retailSchemaReady(prisma)) navigationStatuses.push("retail_stock");
     const archiveNavigationItems = await prisma.artwork.findMany({
       where: {
         ...archiveCollectionScope(archiveCollection),
@@ -10703,7 +10718,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
           next_iris_id: nextIrisId,
           archive_collection: archiveCollection,
           archive_search: archiveSearch,
-          archive_status: archiveStatus
+          archive_status: archiveStatus,
+          archive_from_collection: typeof archiveQuery.from_collection === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(archiveQuery.from_collection) ? archiveQuery.from_collection : undefined
         })
       );
   });

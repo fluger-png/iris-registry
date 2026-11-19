@@ -23,9 +23,9 @@ export const buildAdminCollectionsBody = (views: PartnerCollectionView[], order:
         <button type="button" class="collection-icon" data-up title="Move up" aria-label="Move ${h(c.name)} up">&#8593;</button>
         <button type="button" class="collection-icon" data-down title="Move down" aria-label="Move ${h(c.name)} down">&#8595;</button>
       </div></td>
-      <td><div class="collection-admin-identity">${image ? `<img src="${h(image)}" alt="" width="96" height="54" />` : `<span class="collection-admin-placeholder" aria-hidden="true"></span>`}
+      <td><a class="collection-admin-identity" href="/admin/collections/${encodeURIComponent(c.id)}" aria-label="View ${h(p?.display_name ?? c.name)}">${image ? `<img src="${h(image)}" alt="" width="96" height="54" />` : `<span class="collection-admin-placeholder" aria-hidden="true"></span>`}
         <div><strong>${h(p?.display_name ?? c.name)}</strong><span class="muted">${h(c.artist_name ?? "")}</span></div>
-      </div></td>
+      </a></td>
       <td>${number(c.edition_size)}</td><td>${number(view.purchased)}</td><td>${number(view.activated)}</td><td class="collection-admin-price">${h(price)}</td>
       <td><label class="collection-switch"><input type="checkbox" role="switch" data-visibility data-revision="${p?.revision ?? -1}" aria-label="Show ${h(c.name)} on storefront"${p?.visible === false ? "" : " checked"}${view.presentation.available ? "" : " disabled"} /><span></span></label></td>
     </tr>`;
@@ -40,6 +40,8 @@ export const buildAdminCollectionsBody = (views: PartnerCollectionView[], order:
     .collection-admin-identity img,.collection-admin-placeholder{width:96px;height:54px;object-fit:cover;background:var(--bg);flex:none;}
     .collection-admin-identity strong{display:block;font-size:14px;}
     .collection-admin-identity .muted{display:block;margin-top:5px;}
+    .collection-admin-identity:hover strong{color:var(--brand);text-decoration:underline;}
+    .collection-admin-identity:focus-visible{outline:2px solid var(--brand);outline-offset:4px;}
     .collection-admin-price{white-space:nowrap;font-weight:700;}
     .collection-order-tools{display:flex;align-items:center;gap:3px;}
     .collection-icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:34px;padding:0;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--muted);font:inherit;font-size:18px;cursor:pointer;flex:none;}

@@ -73,6 +73,8 @@ npm run dev
 
 - Apply `npx prisma migrate deploy` after deploying the retail release. The migration adds `retail_stock` and two additive batch tables; it does not allocate artworks or change existing orders.
 - Global admin: `/admin/retail`. Partners: `/partner/retail`, restricted to their explicitly granted collections. PIN / NFC CSV exports are global-admin only and never cached.
+- In global Collections, click a mini-banner/name to open `/admin/collections/:id`: collection statistics, a Retail Stock quantity form, and the shared archive table of issued works. Availability counts only eligible, unreserved artworks. The form is capped by availability (and 1,000 per batch); the transaction rechecks under row locks, never creating a partial batch. Each form has a stable reference, so retries do not allocate twice. The UI writes the same private pre-change backups as the CLI and displays a separate Shopify-inventory warning after allocation.
+- Main IRIS uses its metadata collection for batch ownership/grants, but selects artwork from the legacy `collection_id = NULL` pool. Other collections always select only their own pool. Retail sales are included in collection sales statistics for both storage layouts.
 - `/admin` defaults to the legacy main collection (`collection_id = NULL`). Select a collection or All collections; search, status tabs and detail navigation preserve this selection.
 - Allocate existing, clean, unreserved artworks without replacement; do not mint new serials. In the active Render Shell, preview the batch:
 

@@ -8,10 +8,10 @@ export const archiveCollectionScope = (selection: string): Prisma.ArtworkWhereIn
   selection === "all" ? {} : selection === CORE_AUTHOR_OPTION_ID || selection === CORE_AUTHOR_COLLECTION_SLUG
     ? { collection_id: null } : { collection_id: selection };
 
-export const archiveHref = (selection: string, search = "", status = "all", page = 1) => {
+export const archiveHref = (selection: string, search = "", status = "all", page = 1, basePath = "/admin") => {
   const params = new URLSearchParams({ collection: selection });
   if (search) params.set("q", search);
   if (status !== "all") params.set("status", status);
   if (page > 1) params.set("page", String(page));
-  return `/admin?${params}`;
+  return `${basePath}?${params}`;
 };

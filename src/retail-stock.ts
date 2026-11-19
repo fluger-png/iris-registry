@@ -1,5 +1,13 @@
 import crypto from "node:crypto";
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Collection, Prisma, PrismaClient } from "@prisma/client";
+import { collectionArtworkId, CORE_AUTHOR_COLLECTION_SLUG } from "./collaborator-access.js";
+
+export const MAX_RETAIL_BATCH_SIZE = 1000;
+export const retailEligibleWhere = (collection: Pick<Collection, "id" | "slug">): Prisma.ArtworkWhereInput => ({
+  collection_id: collectionArtworkId(collection), status: "available", assigned_order_id: null,
+  assigned_customer_email: null, owner_email: null, activated_at: null, pin_code: null, activation_token: null,
+  retail_entry: null, reservations: { none: { status: "active" } }
+});
 
 export class RetailStockError extends Error {
   constructor(message: string, public status = 409) { super(message); }
@@ -20,10 +28,9 @@ export const retailSchemaReady = async (db: PrismaClient): Promise<boolean> => {
 };
 
 export const loadRetailSoldIds = async (db: PrismaClient, collectionId: string | null): Promise<string[]> => {
-  if (!collectionId) return [];
   try {
     return (await db.retailBatchItem.findMany({
-      where: { sold_at: { not: null }, batch: { collection_id: collectionId } }, select: { iris_id: true }
+      where: { sold_at: { not: null }, batch: collectionId ? { collection_id: collectionId } : { collection: { slug: CORE_AUTHOR_COLLECTION_SLUG } } }, select: { iris_id: true }
     })).map((item) => item.iris_id);
   } catch (error) { if (isMissingRetailSchema(error)) return []; throw error; }
 };
@@ -35,7 +42,7 @@ export type RetailBatchRequest = {
 export const validateRetailBatchRequest = (request: RetailBatchRequest) => {
   if (!/^[A-Z0-9][A-Z0-9-]{2,63}$/.test(request.reference) || !request.collectionId ||
       !request.retailer.trim() || request.retailer.length > 120 || !request.actor.trim() ||
-      !Number.isSafeInteger(request.quantity) || request.quantity < 1 || request.quantity > 1000) {
+      !Number.isSafeInteger(request.quantity) || request.quantity < 1 || request.quantity > MAX_RETAIL_BATCH_SIZE) {
     throw new RetailStockError("Invalid batch reference, collection, retailer or quantity.", 400);
   }
 };
@@ -55,9 +62,11 @@ export const createRetailBatch = async (db: PrismaClient, request: RetailBatchRe
     }
     const collection = await tx.collection.findUnique({ where: { id: request.collectionId } });
     if (!collection) throw new RetailStockError("Collection not found.", 404);
+    const poolId = collectionArtworkId(collection);
+    const poolScope = poolId === null ? Prisma.sql`a."collection_id" IS NULL` : Prisma.sql`a."collection_id" = ${poolId}`;
     const selected = await tx.$queryRaw<Array<{ iris_id: string }>>`
       SELECT a."iris_id" FROM "Artwork" a
-      WHERE a."collection_id" = ${request.collectionId} AND a."status" = 'available'
+      WHERE ${poolScope} AND a."status" = 'available'
         AND a."assigned_order_id" IS NULL AND a."assigned_customer_email" IS NULL
         AND a."owner_email" IS NULL AND a."activated_at" IS NULL
         AND a."pin_code" IS NULL AND a."activation_token" IS NULL

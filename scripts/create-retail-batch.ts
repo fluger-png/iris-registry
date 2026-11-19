@@ -2,7 +2,7 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "../src/db.js";
-import { createRetailBatch, retailBatchCsv, retailSchemaReady } from "../src/retail-stock.js";
+import { createRetailBatch, retailBatchCsv, retailSchemaReady, retailEligibleWhere } from "../src/retail-stock.js";
 
 const args = process.argv.slice(2);
 const value = (flag: string) => args[args.indexOf(flag) + 1];
@@ -32,9 +32,7 @@ const run = async () => {
   const { validateRetailBatchRequest } = await import("../src/retail-stock.js");
   validateRetailBatchRequest(request);
   const existing = await prisma.retailBatch.findUnique({ where: { id: request.reference }, include: { items: true } });
-  const eligible = await prisma.artwork.count({ where: { collection_id: collection.id, status: "available", assigned_order_id: null,
-    assigned_customer_email: null, owner_email: null, activated_at: null, pin_code: null, activation_token: null,
-    retail_entry: null, reservations: { none: { status: "active" } } } });
+  const eligible = await prisma.artwork.count({ where: retailEligibleWhere(collection) });
   console.log(JSON.stringify({ mode: apply ? "apply" : "dry-run", database_host: host, collection: collection.name,
     reference: request.reference, quantity: request.quantity, existing_batch_size: existing?.items.length ?? 0,
     eligible_artworks: eligible, selection: "Random, without replacement, when applied", shopify_inventory_changed: false }, null, 2));
