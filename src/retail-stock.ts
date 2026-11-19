@@ -123,7 +123,7 @@ export const loadRetailStock = (db: PrismaClient, collectionIds?: string[]) => d
   orderBy: [{ created_at: "desc" }, { id: "asc" }],
   include: { collection: { select: { name: true } }, items: {
     orderBy: { iris_id: "asc" }, include: { artwork: { select: {
-      iris_id: true, status: true, image_url: true, activated_at: true, owner_email: true
+      iris_id: true, status: true, image_url: true, activated_at: true, owner_email: true, weight_grams: true
     } } }
   } }
 });

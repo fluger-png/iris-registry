@@ -20,6 +20,7 @@ export const buildRetailStockBody = (batches: RetailStockView, partner: boolean,
     .retail-table th{font-size:12px;}
     .retail-table img{width:50px;height:50px;object-fit:cover;display:block;}
     .retail-table form{margin:0;}
+    .retail-weight{white-space:nowrap;font-variant-numeric:tabular-nums;}
     .retail-summary{display:flex;gap:24px;flex-wrap:wrap;margin:24px 0;}
     .retail-summary div{display:flex;flex-direction:column;gap:8px;}
     .retail-summary strong{font-family:var(--font-heading,inherit);font-size:24px;font-weight:500;color:var(--gold-bright,var(--ink));}
@@ -36,12 +37,13 @@ export const buildRetailStockBody = (batches: RetailStockView, partner: boolean,
   ${numberRetailBatches(batches).map((batch) => `<section class="retail-section">
     <div class="retail-heading"><div><h2>${h(batch.collection.name)} &middot; Batch ${batch.batch_number}</h2><p>${h(formatRetailBatchDate(batch.created_at))} &middot; ${batch.items.length} IRIS<br />${h(batch.id)} &middot; ${h(batch.retailer)}</p></div>
       ${partner ? "" : `<a class="btn secondary" href="${base}/${encodeURIComponent(batch.id)}/labels.csv">Download PIN / NFC CSV</a>`}</div>
-    <div class="retail-table"><table><thead><tr><th>Image</th><th>IRIS</th><th>Status</th><th>Sold</th><th>Owner</th><th>Action</th></tr></thead><tbody>
+    <div class="retail-table"><table><thead><tr><th>Image</th><th>IRIS</th>${partner ? "<th>Gold weight (g)</th>" : ""}<th>Status</th><th>Sold</th><th>Owner</th><th>Action</th></tr></thead><tbody>
     ${batch.items.map((item) => {
       const work = item.artwork;
       const state = work.status === "activated" ? "Activated" : item.sold_at ? "Sold / awaiting activation" : "In store";
       return `<tr><td>${work.image_url ? `<img src="${h(work.image_url)}" alt="" width="50" height="50" loading="lazy" />` : "-"}</td>
         <td>${partner ? h(item.iris_id) : `<a class="iris-link" href="/admin/iris/${encodeURIComponent(item.iris_id)}">${h(item.iris_id)}</a>`}</td>
+        ${partner ? `<td class="retail-weight">${work.weight_grams != null && Number.isFinite(work.weight_grams) ? work.weight_grams.toFixed(2) : "-"}</td>` : ""}
         <td>${state}</td><td>${item.sold_at ? h(item.sold_at.toLocaleDateString("en-US", { timeZone: "America/New_York" })) : "-"}</td>
         <td>${h(work.owner_email ?? "-")}</td><td>${!item.sold_at && work.status === "retail_stock" ? `<form method="POST" action="${base}/${encodeURIComponent(item.iris_id)}/sold" data-retail-sale>
           <input type="hidden" name="csrf_token" value="${retailCsrf(secret, item.iris_id)}" />

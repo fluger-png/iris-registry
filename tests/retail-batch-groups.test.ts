@@ -36,4 +36,16 @@ describe("retail batch labels", () => {
     }
     expect(formatRetailBatchDate(new Date("2026-11-19T02:30:00Z"))).toContain("Nov 18, 2026");
   });
+  it.each([[0.4, "0.40"], [0.416, "0.42"], [0, "0.00"], [null, "-"], [NaN, "-"], [Infinity, "-"]])(
+    "renders gold weight %s in grams only in the partner stock table", (weight, expected) => {
+      const batches = [{ ...a, retailer: "OKG Jewelry", collection: { name: "OKG" }, items: [{ iris_id: "OKG004", sold_at: null,
+        artwork: { status: "retail_stock", image_url: null, owner_email: null, weight_grams: weight } }] }];
+      const partner = buildRetailStockBody(batches as never, true, "secret", (s) => s);
+      expect(partner).toContain("<th>IRIS</th><th>Gold weight (g)</th><th>Status</th>");
+      expect(partner).toContain(`<td class="retail-weight">${expected}</td>`);
+      const admin = buildRetailStockBody(batches as never, false, "secret", (s) => s);
+      expect(admin).not.toContain("<th>Gold weight (g)</th>");
+      expect(admin).not.toContain('<td class="retail-weight">');
+    }
+  );
 });

@@ -110,6 +110,17 @@ describe("retail stock access and activation", () => {
     expect(response.headers["cache-control"]).toBe("private, no-store");
     expect(db.retailBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { collection_id: { in: ["ararat", "sayat"] } } }));
   });
+  it("loads and displays the current gold weight in partner retail stock", async () => {
+    db.retailBatch.findMany.mockResolvedValue([{ id: "AR-RETAIL-001", collection_id: "ararat", created_at: new Date("2026-11-19T12:00:00Z"),
+      retailer: "Gugoco", collection: { name: "Ararat Heart" }, items: [{ iris_id: "AR-0048", sold_at: null,
+        artwork: { status: "retail_stock", image_url: null, owner_email: null, weight_grams: 0.42 } }] }]);
+    const response = await app.inject({ url: "/partner/retail", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("<th>Gold weight (g)</th>");
+    expect(response.body).toContain('<td class="retail-weight">0.42</td>');
+    expect(db.retailBatch.findMany.mock.calls[0][0].include.items.include.artwork.select.weight_grams).toBe(true);
+    expect(db.retailBatch.findMany.mock.calls[0][0].where.collection_id.in).toEqual(["ararat", "sayat"]);
+  });
   it("requires session CSRF and cannot mark a foreign collection sold", async () => {
     const url = "/partner/retail/OKG089/sold";
     const headers = { ...partnerCookie, ...form };
