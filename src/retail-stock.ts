@@ -129,6 +129,31 @@ export const loadRetailStock = (db: PrismaClient, collectionIds?: string[]) => d
 });
 export type RetailStockView = Awaited<ReturnType<typeof loadRetailStock>>;
 
+export const numberRetailBatches = <T extends { id: string; collection_id: string; created_at: Date }>(batches: T[]) => {
+  const counts = new Map<string, number>();
+  return [...batches].sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id))
+    .map((batch) => {
+      const number = (counts.get(batch.collection_id) ?? 0) + 1;
+      counts.set(batch.collection_id, number);
+      return { ...batch, batch_number: number };
+    }).reverse();
+};
+
+export const formatRetailBatchDate = (date: Date) => new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short"
+}).format(date);
+
+export const loadRetailBatchGroups = async (db: PrismaClient, collectionId: string) => {
+  try {
+    const batches = await db.retailBatch.findMany({ where: { collection_id: collectionId },
+      select: { id: true, collection_id: true, created_at: true, items: { select: { iris_id: true } } } });
+    return numberRetailBatches(batches).map((batch) => ({
+      id: batch.id, number: batch.batch_number, createdAt: batch.created_at, irisIds: batch.items.map((item) => item.iris_id)
+    }));
+  } catch (error) { if (isMissingRetailSchema(error)) return []; throw error; }
+};
+export type RetailBatchGroup = Awaited<ReturnType<typeof loadRetailBatchGroups>>[number];
+
 export const retailBatchCsv = (items: Array<{ iris_id: string; pin_code: string | null; activation_token: string | null }>, origin: string) => {
   const cell = (value: string) => `"${(/^[=+@\-\t\r]/.test(value) ? "'" : "") + value.replace(/"/g, '""')}"`;
   return ["IRIS ID,PIN,NFC URL", ...items.map((item) => {

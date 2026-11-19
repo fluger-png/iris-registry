@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { loadRetailStock, markRetailSold, retailBatchCsv, retailCsrf, retailSchemaReady, RetailStockError,
-  RetailStockView, validRetailCsrf } from "./retail-stock.js";
+  RetailStockView, validRetailCsrf, numberRetailBatches, formatRetailBatchDate } from "./retail-stock.js";
 
 type Escape = (value: string) => string;
 export const buildRetailStockBody = (batches: RetailStockView, partner: boolean, secret: string, h: Escape) => {
@@ -12,6 +12,7 @@ export const buildRetailStockBody = (batches: RetailStockView, partner: boolean,
     .retail-section{margin-top:32px;min-width:0;}
     .retail-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
     .retail-heading h2{margin:0;font-size:20px;}
+    .retail-heading > div{min-width:0;max-width:100%;overflow-wrap:anywhere;}
     .retail-heading > .btn{width:auto;height:auto;min-height:34px;padding:8px 12px;white-space:nowrap;line-height:1.4;}
     .retail-table{overflow-x:auto;max-width:100%;}
     .retail-table table{width:100%;min-width:650px;border-collapse:collapse;}
@@ -32,8 +33,8 @@ export const buildRetailStockBody = (batches: RetailStockView, partner: boolean,
     <div><span>Sold</span><strong>${entries.filter((item) => item.sold_at).length}</strong></div>
     <div><span>Activated</span><strong>${entries.filter((item) => item.artwork.status === "activated").length}</strong></div>
   </div>
-  ${batches.map((batch) => `<section class="retail-section">
-    <div class="retail-heading"><div><h2>${h(batch.collection.name)}</h2><p>${h(batch.id)} &middot; ${h(batch.retailer)} &middot; ${batch.items.length} IRIS</p></div>
+  ${numberRetailBatches(batches).map((batch) => `<section class="retail-section">
+    <div class="retail-heading"><div><h2>${h(batch.collection.name)} &middot; Batch ${batch.batch_number}</h2><p>${h(formatRetailBatchDate(batch.created_at))} &middot; ${batch.items.length} IRIS<br />${h(batch.id)} &middot; ${h(batch.retailer)}</p></div>
       ${partner ? "" : `<a class="btn secondary" href="${base}/${encodeURIComponent(batch.id)}/labels.csv">Download PIN / NFC CSV</a>`}</div>
     <div class="retail-table"><table><thead><tr><th>Image</th><th>IRIS</th><th>Status</th><th>Sold</th><th>Owner</th><th>Action</th></tr></thead><tbody>
     ${batch.items.map((item) => {

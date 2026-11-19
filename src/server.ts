@@ -24,8 +24,9 @@ import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-col
 import { COLLECTION_VIDEO_MAX_BYTES, isCollectionMp4, loadCollectionProductMedia } from "./collection-product-media.js";
 import { canRedeemIrisPromo, IrisPromoError, irisPromo, irisPromoCsrf, validIrisPromoCsrf } from "./iris-promo.js";
 import { buildIrisPromoDialog } from "./iris-promo-dialog.js";
-import { archiveCollectionScope, archiveHref, parseArchiveCollection } from "./admin-archive.js";
-import { retailSchemaReady, loadRetailSoldIds, isMissingRetailSchema } from "./retail-stock.js";
+import { archiveCollectionScope, archiveHref, parseArchiveCollection, archiveBatchScope, sortArchiveItemsByBatch } from "./admin-archive.js";
+import { retailSchemaReady, loadRetailSoldIds, isMissingRetailSchema, loadRetailBatchGroups, formatRetailBatchDate } from "./retail-stock.js";
+import type { RetailBatchGroup } from "./retail-stock.js";
 import { registerRetailStockPages } from "./retail-stock-pages.js";
 import { registerAdminCollectionDetail } from "./admin-collection-detail.js";
 
@@ -1769,18 +1770,29 @@ const buildAdminArchiveBody = (
   hasNext: boolean,
   selectedCollection: string,
   collections: Array<{ id: string; name: string }>,
-  options: { collectionId?: string; basePath?: string } = {}
+  options: { collectionId?: string; basePath?: string; batches?: RetailBatchGroup[]; selectedBatch?: string } = {}
 ) => {
   const basePath = options.basePath ?? "/admin";
+  const selectedBatch = options.selectedBatch ?? "";
+  const batchByIris = new Map((options.batches ?? []).flatMap((batch) => batch.irisIds.map((id) => [id, batch] as const)));
   const detailParams = new URLSearchParams({ collection: selectedCollection, status: statusParam, q: searchValue });
   if (options.collectionId) detailParams.set("from_collection", options.collectionId);
+  if (selectedBatch) detailParams.set("batch", selectedBatch);
   const rows = items
-    .map((item) => {
+    .map((item, index) => {
+      const batch = batchByIris.get(item.iris_id);
+      const previousBatch = index ? batchByIris.get(items[index - 1].iris_id) : undefined;
+      const newGroup = options.batches?.length && (index === 0 || batch?.id !== previousBatch?.id);
+      const groupHeader = newGroup ? `<tr class="archive-batch-heading"${batch ? ` data-batch-id="${escapeHtml(batch.id)}"` : ""}><td colspan="10"><div>
+        <span>${batch ? `<strong>Batch ${batch.number}</strong> &middot; ${escapeHtml(formatRetailBatchDate(batch.createdAt))} &middot; ${batch.irisIds.length} IRIS` : "<strong>Online orders</strong>"}</span>
+        ${batch ? `<a href="/admin/retail/${encodeURIComponent(batch.id)}/labels.csv">PIN / NFC CSV</a>` : ""}
+      </div></td></tr>` : "";
       const imageCell = item.image_url
         ? `<img class="thumb" src="${item.image_url}" alt="${item.iris_id}" />`
         : `<div class="thumb" style="display:flex;align-items:center;justify-content:center;color:#94A3B8;">—</div>`;
       const fileId = `file-${item.iris_id}`;
       return `
+        ${groupHeader}
         <tr>
           <td><a class="iris-link" href="/admin/iris/${item.iris_id}?${escapeHtml(detailParams.toString())}">${item.display_iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
@@ -1807,16 +1819,25 @@ const buildAdminArchiveBody = (
     .join("");
 
   const statusHidden = statusParam !== "all" ? `<input type="hidden" name="status" value="${escapeHtml(statusParam)}" />` : "";
-  const prevHref = hasPrev ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page - 1, basePath)) : "#";
-  const nextHref = hasNext ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page + 1, basePath)) : "#";
+  const prevHref = hasPrev ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page - 1, basePath, selectedBatch)) : "#";
+  const nextHref = hasNext ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page + 1, basePath, selectedBatch)) : "#";
 
   const body = `
-    <style>.main{min-width:0;}.card.table{max-width:100%;overflow-x:auto;}.card.table table{min-width:980px;}</style>
+    <style>.main{min-width:0;}.card.table{max-width:100%;overflow-x:auto;}.card.table table{min-width:980px;}
+      .archive-batch-heading td{background:var(--pill);border-top:1px solid var(--line);padding:14px 12px;}
+      .archive-batch-heading td > div{display:flex;align-items:center;justify-content:space-between;gap:20px;}
+      .archive-batch-heading a{color:var(--brand);text-decoration:underline;white-space:nowrap;}
+      .archive-batch-filter{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0;}
+      .archive-batch-filter select{font:inherit;max-width:100%;min-height:34px;padding:8px;border:1px solid var(--line);border-radius:4px;}
+      .archive-batch-filter .btn{height:34px;}
+      @media(max-width:520px){.archive-batch-filter{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;}.archive-batch-filter label{grid-column:1/-1;}.archive-batch-filter select{width:100%;min-width:0;}}
+    </style>
     <div class="title-row">
       ${options.collectionId ? '<h2 style="margin:0;font-size:16px;">IRIS Archive</h2>' : "<h1>IRIS Archive</h1>"}
       <form class="search" method="GET" action="${escapeHtml(basePath)}">
         ${statusHidden}
         <input type="hidden" name="collection" value="${escapeHtml(selectedCollection)}" />
+        ${selectedBatch ? `<input type="hidden" name="batch" value="${escapeHtml(selectedBatch)}" />` : ""}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS number, order or email" value="${escapeHtml(searchValue)}" />
       </form>
@@ -1830,9 +1851,16 @@ const buildAdminArchiveBody = (
         ${collections.map((c) => `<option value="${escapeHtml(c.id)}"${selectedCollection === c.id ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
       </select><button class="btn secondary" type="submit">Filter</button>
     </form>`}
+    ${options.batches?.length ? `<form class="archive-batch-filter" method="GET" action="${escapeHtml(basePath)}">
+      ${statusHidden}<input type="hidden" name="q" value="${escapeHtml(searchValue)}" />
+      <label for="archive-batch">Batch</label><select id="archive-batch" name="batch">
+        <option value=""${!selectedBatch ? " selected" : ""}>All batches</option>
+        ${options.batches.map((batch) => `<option value="${escapeHtml(batch.id)}"${selectedBatch === batch.id ? " selected" : ""}>Batch ${batch.number} &middot; ${batch.irisIds.length} IRIS</option>`).join("")}
+        <option value="__online__"${selectedBatch === "__online__" ? " selected" : ""}>Online orders</option>
+      </select><button class="btn secondary" type="submit">Filter</button></form>` : ""}
     <div class="tabs">
       ${[["all", "All"], ["activated", "Activated"], ["unactivated", "Unactivated"]].map(([key, label]) =>
-        `<a class="tab ${statusParam === key ? "active" : ""}" href="${escapeHtml(archiveHref(selectedCollection, searchValue, key, 1, basePath))}">${label}</a>`).join("")}
+        `<a class="tab ${statusParam === key ? "active" : ""}" href="${escapeHtml(archiveHref(selectedCollection, searchValue, key, 1, basePath, selectedBatch))}">${label}</a>`).join("")}
     </div>
     <div class="card table">
       <table>
@@ -6141,9 +6169,11 @@ const buildAdminDetailHtml = (item: {
   archive_search: string;
   archive_status: string;
   archive_from_collection?: string;
+  archive_batch?: string;
 }) => {
   const archiveParams = new URLSearchParams({ collection: item.archive_collection, q: item.archive_search, status: item.archive_status });
   if (item.archive_from_collection) archiveParams.set("from_collection", item.archive_from_collection);
+  if (item.archive_batch) archiveParams.set("batch", item.archive_batch);
   const archiveBasePath = item.archive_from_collection ? `/admin/collections/${encodeURIComponent(item.archive_from_collection)}` : "/admin";
   const displayId = item.display_iris_id.toUpperCase().startsWith("IRIS-")
     ? item.display_iris_id.replace(/^IRIS-/i, "#")
@@ -6164,6 +6194,7 @@ const buildAdminDetailHtml = (item: {
     <div class="title-row" style="justify-content:center;margin-bottom:18px;">
       <form class="search" method="GET" action="${escapeHtml(archiveBasePath)}">
         <input type="hidden" name="collection" value="${escapeHtml(item.archive_collection)}" />
+        ${item.archive_batch ? `<input type="hidden" name="batch" value="${escapeHtml(item.archive_batch)}" />` : ""}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
         <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" />
       </form>
@@ -6205,7 +6236,7 @@ const buildAdminDetailHtml = (item: {
           <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
         </dl>
         <div style="margin-top:16px;">
-          <a class="btn primary" href="${escapeHtml(archiveHref(item.archive_collection, item.archive_search, item.archive_status, 1, archiveBasePath))}">Back</a>
+          <a class="btn primary" href="${escapeHtml(archiveHref(item.archive_collection, item.archive_search, item.archive_status, 1, archiveBasePath, item.archive_batch))}">Back</a>
         </div>
       </div>
       <div>
@@ -6223,7 +6254,7 @@ const buildAdminDetailHtml = (item: {
       </div>
     </div>
   `;
-  return buildAdminShell(`IRIS ${item.iris_id}`, body, "", "all-iris");
+  return buildAdminShell(`IRIS ${item.iris_id}`, body, "", item.archive_from_collection ? "collections" : "all-iris");
 };
 
 const extractCustomerEmail = (order: Record<string, unknown>): string | null => {
@@ -10369,7 +10400,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
   const handleAdminArchive = async (req: any, reply: any, detail?: { collection: Collection; prefix: string }) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const query = req.query as { q?: string; page?: string; status?: string; collection?: string };
+    const query = req.query as { q?: string; page?: string; status?: string; collection?: string; batch?: string; retail_batch?: string };
     const collections = (await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }))
       .filter((c) => !isCoreAuthorCollection(c));
     const selectedCollection = detail
@@ -10379,6 +10410,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
       return reply.code(400).send("Unknown collection. Choose a collection from IRIS Archive.");
     }
     const hasRetail = await retailSchemaReady(prisma);
+    const batches = detail && hasRetail ? await loadRetailBatchGroups(prisma, detail.collection.id) : [];
+    const selectedBatch = detail ? readSingleValue(query.batch ?? query.retail_batch).trim() : "";
+    const batchScope = archiveBatchScope(batches, selectedBatch);
+    if (!batchScope) return reply.code(400).send("Batch not found in this collection.");
     const q = readSingleValue(query.q).trim();
     const statusParam = query.status === "activated" || query.status === "unactivated" ? query.status : "all";
     const statuses: ArtworkStatus[] =
@@ -10389,6 +10424,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           : ["assigned", "activated", "shopify_failed", ...(hasRetail ? [ArtworkStatus.retail_stock] : [])];
     const where: Prisma.ArtworkWhereInput = {
       ...archiveCollectionScope(selectedCollection),
+      ...batchScope,
       status: { in: statuses }
     };
 
@@ -10438,10 +10474,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
       }
     }
 
-    items.sort((a, b) => compareAdminArchiveItemsByOrderDate(a, b, orderDateById));
+    const compare = (a: typeof items[number], b: typeof items[number]) => compareAdminArchiveItemsByOrderDate(a, b, orderDateById);
+    const orderedItems = detail ? sortArchiveItemsByBatch(items, batches, compare) : items.sort(compare);
 
     const start = (page - 1) * take;
-    const slice = items.slice(start, start + take);
+    const slice = orderedItems.slice(start, start + take);
     const hasNext = items.length > start + take;
     const hasPrev = page > 1;
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId(slice.map((item) => item.iris_id));
@@ -10466,7 +10503,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
       hasNext,
       selectedCollection,
       collections,
-      detail ? { collectionId: detail.collection.id, basePath: `/admin/collections/${encodeURIComponent(detail.collection.id)}` } : {}
+      detail ? { collectionId: detail.collection.id, basePath: `/admin/collections/${encodeURIComponent(detail.collection.id)}`, batches, selectedBatch } : {}
     );
     return reply.header("Cache-Control", "private, no-store").type("text/html; charset=utf-8").send(buildAdminShell(
       detail ? `${escapeHtml(detail.collection.name)} - IRIS Admin` : "IRIS Admin", `${detail?.prefix ?? ""}${archiveBody}`, q,
@@ -10644,16 +10681,21 @@ export const createServer = async (): Promise<FastifyInstance> => {
       orderBy: { created_at: "desc" }
     });
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId([item.iris_id]);
-    const archiveQuery = req.query as { collection?: string; q?: string; status?: string; from_collection?: string };
+    const archiveQuery = req.query as { collection?: string; q?: string; status?: string; from_collection?: string; batch?: string };
+    const archiveFromCollection = typeof archiveQuery.from_collection === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(archiveQuery.from_collection) ? archiveQuery.from_collection : undefined;
     const archiveCollection = parseArchiveCollection(archiveQuery.collection ?? item.collection_id ?? CORE_AUTHOR_OPTION_ID);
     const archiveSearch = typeof archiveQuery.q === "string" ? archiveQuery.q.trim() : "";
     const archiveStatus = archiveQuery.status === "activated" || archiveQuery.status === "unactivated" ? archiveQuery.status : "all";
     const navigationStatuses: ArtworkStatus[] = archiveStatus === "activated" ? ["activated"] :
       archiveStatus === "unactivated" ? ["assigned", "shopify_failed"] : ["assigned", "activated", "shopify_failed"];
-    if (archiveStatus !== "activated" && await retailSchemaReady(prisma)) navigationStatuses.push("retail_stock");
+    const hasRetail = await retailSchemaReady(prisma);
+    if (archiveStatus !== "activated" && hasRetail) navigationStatuses.push("retail_stock");
+    const navigationBatches = archiveFromCollection && hasRetail ? await loadRetailBatchGroups(prisma, archiveFromCollection) : [];
+    const archiveBatch = archiveFromCollection ? readSingleValue(archiveQuery.batch).trim() : "";
     const archiveNavigationItems = await prisma.artwork.findMany({
       where: {
         ...archiveCollectionScope(archiveCollection),
+        ...(archiveBatchScope(navigationBatches, archiveBatch) ?? { iris_id: { in: [] } }),
         status: { in: navigationStatuses },
         ...(archiveSearch ? { OR: [
           { iris_id: { contains: archiveSearch, mode: "insensitive" as const } },
@@ -10686,14 +10728,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
         archiveNavigationOrderDateById.set(navItem.iris_id, navItem.created_at);
       }
     }
-    archiveNavigationItems.sort((a, b) =>
-      compareAdminArchiveItemsByOrderDate(a, b, archiveNavigationOrderDateById)
-    );
-    const archiveIndex = archiveNavigationItems.findIndex((navItem) => navItem.iris_id === item.iris_id);
-    const previousIrisId = archiveIndex > 0 ? archiveNavigationItems[archiveIndex - 1]?.iris_id ?? null : null;
+    const compareNavigation = (a: typeof archiveNavigationItems[number], b: typeof archiveNavigationItems[number]) =>
+      compareAdminArchiveItemsByOrderDate(a, b, archiveNavigationOrderDateById);
+    const orderedNavigation = archiveFromCollection ? sortArchiveItemsByBatch(archiveNavigationItems, navigationBatches, compareNavigation) : archiveNavigationItems.sort(compareNavigation);
+    const archiveIndex = orderedNavigation.findIndex((navItem) => navItem.iris_id === item.iris_id);
+    const previousIrisId = archiveIndex > 0 ? orderedNavigation[archiveIndex - 1]?.iris_id ?? null : null;
     const nextIrisId =
-      archiveIndex >= 0 && archiveIndex < archiveNavigationItems.length - 1
-        ? archiveNavigationItems[archiveIndex + 1]?.iris_id ?? null
+      archiveIndex >= 0 && archiveIndex < orderedNavigation.length - 1
+        ? orderedNavigation[archiveIndex + 1]?.iris_id ?? null
         : null;
 
     reply
@@ -10719,7 +10761,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
           archive_collection: archiveCollection,
           archive_search: archiveSearch,
           archive_status: archiveStatus,
-          archive_from_collection: typeof archiveQuery.from_collection === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(archiveQuery.from_collection) ? archiveQuery.from_collection : undefined
+          archive_from_collection: archiveFromCollection,
+          archive_batch: archiveBatch
         })
       );
   });

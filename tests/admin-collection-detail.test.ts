@@ -10,7 +10,7 @@ const db = vi.hoisted(() => ({
   collection: { findUnique: vi.fn(), findMany: vi.fn() },
   collectionPresentation: { findUnique: vi.fn() }, collectionProductMedia: { findUnique: vi.fn() },
   collaboratorUser: { findMany: vi.fn() },
-  retailBatch: { count: vi.fn(), findUnique: vi.fn(), create: vi.fn() }, retailBatchItem: { findMany: vi.fn() },
+  retailBatch: { count: vi.fn(), findUnique: vi.fn(), create: vi.fn(), findMany: vi.fn() }, retailBatchItem: { findMany: vi.fn() },
   artwork: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   event: { findMany: vi.fn(), create: vi.fn(), findFirst: vi.fn() }, ownershipTransfer: { findMany: vi.fn() },
   $queryRaw: vi.fn(), $transaction: vi.fn(), $disconnect: vi.fn()
@@ -47,6 +47,7 @@ beforeEach(async () => {
   db.collectionProductMedia.findUnique.mockResolvedValue(null);
   db.collaboratorUser.findMany.mockResolvedValue([]);
   db.retailBatch.count.mockResolvedValue(1);
+  db.retailBatch.findMany.mockResolvedValue([]);
   db.retailBatch.findUnique.mockResolvedValue(null);
   db.retailBatch.create.mockResolvedValue({ id: reference, items: selected });
   db.retailBatchItem.findMany.mockResolvedValue([]);
@@ -151,9 +152,69 @@ describe("retail requests from collection details", () => {
   });
   it("shows successful allocation and a Shopify inventory warning without exposing credentials", async () => {
     db.retailBatch.findUnique.mockResolvedValue({ id: reference, collection_id: "okg", _count: { items: 25 } });
+    db.retailBatch.findMany.mockResolvedValue([{ id: reference, collection_id: "okg", created_at: new Date("2026-11-19T10:00:00Z"), items: selected }]);
     const response = await get(`/admin/collections/okg?retail_batch=${reference}`);
     expect(response.body).toContain(`${reference}</strong>: 25 IRIS allocated`);
     expect(response.body).toContain("Shopify inventory was not updated");
     expect(response.body).toContain(`/admin/retail/${reference}/labels.csv`);
+    expect(response.body).toContain(`value="${reference}" selected`);
+    const archive = db.artwork.findMany.mock.calls.find(([args]) => args.include?.collection);
+    expect(archive?.[0].where.iris_id).toEqual({ in: selected.map((item) => item.iris_id) });
+  });
+});
+
+describe("collection batch grouping", () => {
+  const first = { id: "OKG-RETAIL-001", collection_id: "okg", created_at: new Date("2026-11-18T20:00:00Z"),
+    items: Array.from({ length: 25 }, (_, i) => ({ iris_id: `OKG${String(i + 1).padStart(3, "0")}` })) };
+  const second = { id: "RETAIL-20261119-AAA", collection_id: "okg", created_at: new Date("2026-11-19T20:00:00Z"),
+    items: ["OKG095", "OKG042", "OKG061"].map((iris_id) => ({ iris_id })) };
+  const seed = () => {
+    db.retailBatch.findMany.mockResolvedValue([second, first]);
+    db.artwork.findMany.mockImplementation(({ select, where }) => {
+      if (select?.status) return Promise.resolve([]);
+      let ids = [...first.items, ...second.items].map((item) => item.iris_id);
+      if (where?.iris_id?.in) ids = ids.filter((id) => where.iris_id.in.includes(id));
+      if (where?.iris_id?.notIn) ids = ids.filter((id) => !where.iris_id.notIn.includes(id));
+      return Promise.resolve(ids.map(work));
+    });
+  };
+  it("shows the newest group first with its three serials and stable batch numbers", async () => {
+    seed();
+    const response = await get("/admin/collections/okg");
+    expect(response.statusCode).toBe(200);
+    expect(response.body.indexOf(`data-batch-id="${second.id}"`)).toBeLessThan(response.body.indexOf(`data-batch-id="${first.id}"`));
+    expect(response.body).toContain("<strong>Batch 2</strong>");
+    expect(response.body).toContain("<strong>Batch 1</strong>");
+    const rows = [...response.body.matchAll(/<td><a class="iris-link"[^>]+>([^<]+)<\/a><\/td>/g)].map((match) => match[1]);
+    expect(rows.slice(0, 3)).toEqual(["OKG042", "OKG061", "OKG095"]);
+    expect(response.body).toContain("3 IRIS");
+    expect(response.body).toContain('/admin/retail/RETAIL-20261119-AAA/labels.csv');
+  });
+  it("opens a newly created batch immediately and can switch back to all batches", async () => {
+    seed();
+    const response = await get(`/admin/collections/okg?retail_batch=${second.id}`);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(`value="${second.id}" selected`);
+    expect(response.body).toContain("<strong>Batch 2</strong>");
+    expect(response.body).not.toContain("<strong>Batch 1</strong>");
+    const all = await get(`/admin/collections/okg?retail_batch=${second.id}&batch=`);
+    expect(all.body).toContain("<strong>Batch 1</strong>");
+  });
+  it("preserves filters on tabs, pagination, detail arrows and back links", async () => {
+    seed();
+    const response = await get(`/admin/collections/okg?batch=${first.id}&q=OKG&status=unactivated`);
+    expect(response.body).toContain(`status=unactivated&amp;page=2&amp;batch=${first.id}`);
+    expect(response.body).toContain(`status=activated&amp;batch=${first.id}`);
+    expect(response.body).toContain(`name="batch" value="${first.id}"`);
+    db.artwork.findUnique.mockResolvedValue(work("OKG004"));
+    const detail = await get(`/admin/iris/OKG004?collection=okg&from_collection=okg&batch=${first.id}`);
+    expect(detail.body).toContain(`href="/admin/collections/okg?collection=okg&amp;batch=${first.id}">Back`);
+    expect(detail.body).toContain(`from_collection=okg&amp;batch=${first.id}`);
+  });
+  it("does not renumber on search and rejects a batch outside this collection", async () => {
+    seed();
+    const response = await get(`/admin/collections/okg?batch=${second.id}&q=095`);
+    expect(response.body).toContain("<strong>Batch 2</strong>");
+    expect((await get("/admin/collections/okg?batch=FOREIGN-BATCH")).statusCode).toBe(400);
   });
 });
