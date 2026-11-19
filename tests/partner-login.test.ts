@@ -8,6 +8,7 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { collaboratorProfileCsrf } from "../src/collaborator-profile.js";
 import { collectionCsrf } from "../src/partner-collections.js";
 import { adminCollectionsCsrf } from "../src/storefront-collections.js";
+import { retailCsrf } from "../src/retail-stock.js";
 import { collectionPricing, CollectionPriceError, priceRevision, ReadyPrice } from "../src/shopify-product-pricing.js";
 
 const db = vi.hoisted(() => ({
@@ -18,10 +19,12 @@ const db = vi.hoisted(() => ({
   collectionPresentation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collectionStorefrontOrder: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   collectionProductMedia: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  retailBatch: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
+  retailBatchItem: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   collaboratorSession: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   collaboratorInvite: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   collection: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), upsert: vi.fn() },
-  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  artwork: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   webhookReceipt: { create: vi.fn() }, shopifyOrder: { upsert: vi.fn() }, event: { create: vi.fn() },
   $transaction: vi.fn(), $queryRaw: vi.fn(), $disconnect: vi.fn()
 }));
@@ -30,6 +33,7 @@ vi.mock("../src/db.js", () => ({ prisma: db }));
 vi.mock("../src/env.js", () => ({ env: {
   adminBasicUser: "test-admin", adminBasicPass: "test-password", adminTimezone: "America/New_York",
   baseUrl: "https://partner.test", partnerPortalBaseUrl: "https://partner.test",
+  baseStorefrontUrl: "https://irisnyc.store",
   partnerInviteTtlHours: 24, partnerSessionTtlDays: 30, releaseIntervalMinutes: 60,
   r2AccountId: "test", r2AccessKeyId: "test", r2SecretAccessKey: "test",
   r2Bucket: "test", r2PublicBaseUrl: "https://images.example.test",
@@ -60,6 +64,9 @@ beforeEach(async () => {
   vi.resetAllMocks();
   db.$transaction.mockImplementation((fn) => fn(db));
   db.$queryRaw.mockResolvedValue([{ locked: true }]);
+  db.retailBatchItem.findMany.mockResolvedValue([]);
+  db.retailBatch.count.mockResolvedValue(1);
+  db.retailBatch.findMany.mockResolvedValue([]);
   inspectPrice.mockResolvedValue({ ready: false, message: "Shopify pricing is temporarily unavailable." });
   readPrice.mockResolvedValue(readyPrice);
   updatePrice.mockResolvedValue({ ...readyPrice, priceCents: 13000 });
@@ -92,6 +99,75 @@ beforeEach(async () => {
     { collection_id: "sayat", _count: { _all: 4 } }
   ]);
   app = await createServer();
+});
+
+describe("retail stock access and activation", () => {
+  it("requires login and scopes the partner list to granted collections", async () => {
+    expect((await app.inject("/partner/retail")).statusCode).toBe(302);
+    expect(db.retailBatch.findMany).not.toHaveBeenCalled();
+    const response = await app.inject({ url: "/partner/retail", headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(db.retailBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { collection_id: { in: ["ararat", "sayat"] } } }));
+  });
+  it("requires session CSRF and cannot mark a foreign collection sold", async () => {
+    const url = "/partner/retail/OKG089/sold";
+    const headers = { ...partnerCookie, ...form };
+    expect((await app.inject({ method: "POST", url, headers, payload: "csrf_token=bad" })).statusCode).toBe(403);
+    expect(db.retailBatchItem.findFirst).not.toHaveBeenCalled();
+    db.retailBatchItem.findFirst.mockResolvedValue(null);
+    const response = await app.inject({ method: "POST", url, headers,
+      payload: new URLSearchParams({ csrf_token: retailCsrf(sessionHash, "OKG089") }).toString() });
+    expect(response.statusCode).toBe(404);
+    expect(db.retailBatchItem.findFirst.mock.calls[0][0].where.batch.collection_id.in).toEqual(["ararat", "sayat"]);
+    expect(db.artwork.updateMany).not.toHaveBeenCalled();
+  });
+  it("exports production credentials only for the global admin and with no caching", async () => {
+    const url = "/admin/retail/OKG-RETAIL-001/labels.csv";
+    expect((await app.inject({ url, headers: partnerCookie })).statusCode).toBe(401);
+    expect(db.retailBatch.findUnique).not.toHaveBeenCalled();
+    db.retailBatch.findUnique.mockResolvedValue({ items: [{ artwork: { iris_id: "OKG089", pin_code: "123456", activation_token: "secret-nfc" } }] });
+    const response = await app.inject({ url, headers: auth });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["content-disposition"]).toContain('attachment; filename="OKG-RETAIL-001-labels.csv"');
+    expect(response.body).toContain('"OKG089","123456"');
+    expect((await app.inject({ url: "/partner/retail/OKG-RETAIL-001/labels.csv", headers: partnerCookie })).statusCode).toBe(404);
+  });
+  it("rejects activation of in-store stock before sale and blocks the legacy shortcut for retail works", async () => {
+    db.artwork.findUnique.mockResolvedValue({ iris_id: "OKG089", status: "retail_stock", pin_code: "123456", activation_token: "nfc-token" });
+    const response = await app.inject({ method: "POST", url: "/apps/iris/activate-verify",
+      payload: { iris_id: "OKG089", email: "buyer@example.test", pin: "123456", token: "nfc-token" } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe("not_assigned");
+    expect(db.artwork.update).not.toHaveBeenCalled();
+    db.retailBatchItem.findUnique.mockResolvedValue({ iris_id: "OKG089" });
+    expect((await app.inject({ method: "POST", url: "/activate", payload: { iris_id: "OKG089", pin: "anything" } })).json().error).toBe("use_activation_verify");
+    expect(db.artwork.update).not.toHaveBeenCalled();
+  });
+  it("online reservations select only available artworks, never retail stock", async () => {
+    db.collection.findFirst.mockResolvedValue(ararat);
+    db.$queryRaw.mockResolvedValue([]);
+    const response = await app.inject({ method: "POST", url: "/apps/iris/reserve-random", payload: { collection_slug: "ararat-heart" } });
+    expect(response.statusCode).toBe(409);
+    expect(db.$queryRaw.mock.calls[0][0].join("?")).toContain('WHERE "status" = \'available\'');
+    expect(db.artwork.update).not.toHaveBeenCalled();
+  });
+  it("enables the normal buyer activation after a recorded retail sale", async () => {
+    db.retailBatchItem.findFirst.mockResolvedValue({ iris_id: "AR-0048", batch_id: "AR-RETAIL-001", sold_at: null });
+    db.artwork.updateMany.mockResolvedValue({ count: 1 });
+    db.retailBatchItem.updateMany.mockResolvedValue({ count: 1 });
+    const sale = await app.inject({ method: "POST", url: "/partner/retail/AR-0048/sold", headers: { ...partnerCookie, ...form },
+      payload: new URLSearchParams({ csrf_token: retailCsrf(sessionHash, "AR-0048") }).toString() });
+    expect(sale.statusCode).toBe(303);
+    db.artwork.findUnique.mockResolvedValue({ iris_id: "AR-0048", status: "assigned", pin_code: "123456", activation_token: "nfc-token",
+      collection: { slug: "ararat-heart", edition_size: 100 } });
+    const activated = await app.inject({ method: "POST", url: "/apps/iris/activate-verify",
+      payload: { iris_id: "AR-0048", email: "buyer@example.test", pin: "123456", token: "nfc-token" } });
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json().status).toBe("ok");
+    expect(db.artwork.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "activated", owner_email: "buyer@example.test" }) }));
+  });
 });
 
 const boundary = "partner-profile-test-boundary";

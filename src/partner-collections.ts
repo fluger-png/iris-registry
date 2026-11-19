@@ -4,6 +4,7 @@ import { collectionPricing, CollectionPriceState } from "./shopify-product-prici
 import { collectionArtworkId } from "./collaborator-access.js";
 import { CollectionProductMediaView, loadCollectionProductMedia } from "./collection-product-media.js";
 import { emptyPartnerSocialLinks, loadCollaboratorSocialLinks } from "./collaborator-social-links.js";
+import { loadRetailSoldIds } from "./retail-stock.js";
 
 export const COLLECTION_DESCRIPTION_MAX = 5000;
 export const COLLECTION_NAME_MAX = 120;
@@ -70,9 +71,9 @@ export type PartnerCollectionView = {
   weighed: number;
 };
 
-export const purchasedArtworkWhere = (collectionId: string | null): Prisma.ArtworkWhereInput => ({
+export const purchasedArtworkWhere = (collectionId: string | null, retailSoldIds: string[] = []): Prisma.ArtworkWhereInput => ({
   collection_id: collectionId,
-  assigned_order_id: { not: null },
+  ...(retailSoldIds.length ? { OR: [{ assigned_order_id: { not: null } }, { iris_id: { in: retailSoldIds } }] } : { assigned_order_id: { not: null } }),
   status: { in: ["assigned", "activated"] }
 });
 
@@ -102,8 +103,10 @@ export const loadPartnerCollection = async (db: PrismaClient, collection: Collec
   const product = priceState.ready
     ? { priceCents: priceState.priceCents, currency: priceState.currency, imageUrl: storefrontProduct?.imageUrl ?? null }
     : storefrontProduct;
+  const artworkCollectionId = collectionArtworkId(collection);
+  const retailSoldIds = await loadRetailSoldIds(db, artworkCollectionId);
   const works = await db.artwork.findMany({
-    where: purchasedArtworkWhere(collectionArtworkId(collection)),
+    where: purchasedArtworkWhere(artworkCollectionId, retailSoldIds),
     select: { status: true, weight_grams: true }
   });
   const weights = works.map((work) => work.weight_grams).filter((weight): weight is number => weight !== null && Number.isFinite(weight) && weight > 0);

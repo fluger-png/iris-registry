@@ -69,6 +69,24 @@ npm run dev
 - A code is created only after clicking Redeem My Discount. It is restricted to the matching Shopify customer, one checkout, with no discount combinations. Reopening the modal looks up the same code; an expired/deactivated or used code is not automatically replaced.
 - No database migration. The code is derived from the Shopify client secret for this pilot. If rotating that secret or ending the pilot, deactivate the existing discount in Shopify to prevent it from remaining usable. Keep the record when deactivating; deleting it permits a fresh issue.
 
+## Retail Batches
+
+- Apply `npx prisma migrate deploy` after deploying the retail release. The migration adds `retail_stock` and two additive batch tables; it does not allocate artworks or change existing orders.
+- Global admin: `/admin/retail`. Partners: `/partner/retail`, restricted to their explicitly granted collections. PIN / NFC CSV exports are global-admin only and never cached.
+- `/admin` defaults to the legacy main collection (`collection_id = NULL`). Select a collection or All collections; search, status tabs and detail navigation preserve this selection.
+- Allocate existing, clean, unreserved artworks without replacement; do not mint new serials. In the active Render Shell, preview the batch:
+
+```bash
+npm run retail:batch -- --collection the-art-of-adornment --quantity 25 --reference OKG-RETAIL-001 --retailer "OKG Jewelry"
+```
+
+- The preview does not select or change serials. After reviewing the count, append `--apply` to allocate randomly in one transaction. The script writes a scoped pre-change backup before mutation and exports production credentials into ignored, private `retail-private/` files. Render's filesystem is ephemeral: retain the backup securely outside Render before redeployment. The label CSV can be downloaded again from global admin.
+- Retry using the SAME batch reference: it returns the existing batch and does not issue another 25 artworks or regenerate PINs/tokens. Changed settings for an existing reference are rejected.
+- Allocation changes `available` to `retail_stock`, generating PIN and NFC URL but not ownership, activation, a fake Shopify order, or a buyer email. Online allocation selects only `available`. In-store stock cannot activate until a sale is recorded. The legacy `/activate` shortcut rejects all retail-batch works; customers must use the NFC + PIN verification endpoint.
+- Before handing over the batch, reconcile Shopify's online inventory separately. This release DOES NOT adjust Shopify quantities or require new inventory scopes. Reduce the current available online quantity by the newly allocated count (100 -> 75 only if the current quantity really is 100); keep inventory tracking on and overselling off. Do not reduce it again on an idempotent retry or on the subsequent retail sale.
+- Mark sold at the physical checkout in Retail Stock. This moves the artwork to `assigned` and records a dated retail sale; then the buyer uses the normal activation flow and becomes its owner. Repeated sale submissions do not create additional sale events. Allocated stock is not included in purchased counts/average weights; recorded retail sales are.
+- This is stock and sale-channel tracking, not wholesale payment/consignment accounting. No customer purchase emails or Shopify paid-order events are fabricated.
+
 ## Rarity Commitment (Merkle Proof)
 
 We pre-assign rarity to all 10,000 IRIS using a deterministic seed and publish a Merkle root.

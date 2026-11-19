@@ -13,6 +13,7 @@ enum ArtworkStatus {
   assigned
   activated
   shopify_failed
+  retail_stock
 }
 
 enum ReservationStatus {
@@ -53,6 +54,7 @@ model Collection {
   collaborator_access CollaboratorCollectionAccess[]
   presentation        CollectionPresentation?
   product_media       CollectionProductMedia?
+  retail_batches      RetailBatch[]
 
   @@index([status])
 }
@@ -110,12 +112,37 @@ model Artwork {
   reservations            Reservation[]
   ownership_transfers     OwnershipTransfer[]
   likes                   ArtworkLike[]
+  retail_entry            RetailBatchItem?
 
   @@index([status])
   @@index([collection_id, status])
   @@index([assigned_customer_email])
   @@index([owner_email])
   @@index([activated_at])
+}
+
+model RetailBatch {
+  id            String   @id
+  collection_id String
+  retailer      String
+  created_by    String
+  created_at    DateTime @default(now())
+  collection    Collection @relation(fields: [collection_id], references: [id], onDelete: Restrict)
+  items         RetailBatchItem[]
+
+  @@index([collection_id])
+}
+
+model RetailBatchItem {
+  iris_id       String   @id
+  batch_id      String
+  sold_at       DateTime?
+  sold_by       String?
+  batch         RetailBatch @relation(fields: [batch_id], references: [id], onDelete: Restrict)
+  artwork       Artwork @relation(fields: [iris_id], references: [iris_id], onDelete: Restrict)
+
+  @@index([batch_id])
+  @@index([sold_at])
 }
 
 model Event {

@@ -24,6 +24,9 @@ import { loadStorefrontOrder, sortStorefrontCollections } from "./storefront-col
 import { COLLECTION_VIDEO_MAX_BYTES, isCollectionMp4, loadCollectionProductMedia } from "./collection-product-media.js";
 import { canRedeemIrisPromo, IrisPromoError, irisPromo, irisPromoCsrf, validIrisPromoCsrf } from "./iris-promo.js";
 import { buildIrisPromoDialog } from "./iris-promo-dialog.js";
+import { archiveCollectionScope, archiveHref, parseArchiveCollection } from "./admin-archive.js";
+import { retailSchemaReady, loadRetailSoldIds, isMissingRetailSchema } from "./retail-stock.js";
+import { registerRetailStockPages } from "./retail-stock-pages.js";
 
 const MAX_PAGE_SIZE = 100;
 const GOLD_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
@@ -1135,6 +1138,7 @@ const statusPill = (status: string) => {
     activated: { bg: "#DAFFE9", fg: "#33CC70", label: "Activated" },
     pending_transfer: { bg: "#DBEAFE", fg: "#2563EB", label: "Pending transfer" },
     assigned: { bg: "#FFF9D5", fg: "#D8C029", label: "Assigned" },
+    retail_stock: { bg: "#E0E7FF", fg: "#4338CA", label: "Retail stock" },
     shopify_failed: { bg: "#FEE2E2", fg: "#991B1B", label: "Shopify Failed" }
   };
   const style = map[key] ?? { bg: "#E5E7EB", fg: "#374151", label: status };
@@ -1595,6 +1599,7 @@ const buildAdminShell = (title: string, body: string, _searchValue: string, acti
             <a class="${ordersActive ? "active" : ""}" href="/admin/orders">Orders</a>
             <a class="${ownersActive ? "active" : ""}" href="/admin/owners">IRIS Owners</a>
             <a class="${collectionsActive ? "active" : ""}" href="/admin/collections">Collections</a>
+            <a class="${activeTab === "retail" ? "active" : ""}" href="/admin/retail">Retail Stock</a>
             <a class="${activitiesActive ? "active" : ""}" href="/admin/activities">Activities</a>
             <a class="${logsActive ? "active" : ""}" href="/admin/activation-logs">Activation Logs</a>
             <a class="${collaboratorsActive ? "active" : ""}" href="/admin/collaborators">Collaborators</a>
@@ -1760,8 +1765,11 @@ const buildAdminAllHtml = (
   statusParam: string,
   page: number,
   hasPrev: boolean,
-  hasNext: boolean
+  hasNext: boolean,
+  selectedCollection: string,
+  collections: Array<{ id: string; name: string }>
 ) => {
+  const detailParams = new URLSearchParams({ collection: selectedCollection, status: statusParam, q: searchValue });
   const rows = items
     .map((item) => {
       const imageCell = item.image_url
@@ -1770,7 +1778,7 @@ const buildAdminAllHtml = (
       const fileId = `file-${item.iris_id}`;
       return `
         <tr>
-          <td><a class="iris-link" href="/admin/iris/${item.iris_id}">${item.display_iris_id}</a></td>
+          <td><a class="iris-link" href="/admin/iris/${item.iris_id}?${escapeHtml(detailParams.toString())}">${item.display_iris_id}</a></td>
           <td>${statusPill(item.status)}</td>
           <td>${item.order_date ? formatDate(item.order_date) : "-"}</td>
           <td>${item.owner_email ?? "-"}</td>
@@ -1794,29 +1802,33 @@ const buildAdminAllHtml = (
     })
     .join("");
 
-  const statusHidden = statusParam !== "all" ? `<input type="hidden" name="status" value="${statusParam}" />` : "";
-  const baseParams = [
-    statusParam !== "all" ? `status=${encodeURIComponent(statusParam)}` : "",
-    searchValue ? `q=${encodeURIComponent(searchValue)}` : ""
-  ].filter(Boolean);
-  const prevParams = baseParams.concat(`page=${page - 1}`).join("&");
-  const nextParams = baseParams.concat(`page=${page + 1}`).join("&");
-  const prevHref = hasPrev ? `/admin?${prevParams}` : "#";
-  const nextHref = hasNext ? `/admin?${nextParams}` : "#";
+  const statusHidden = statusParam !== "all" ? `<input type="hidden" name="status" value="${escapeHtml(statusParam)}" />` : "";
+  const prevHref = hasPrev ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page - 1)) : "#";
+  const nextHref = hasNext ? escapeHtml(archiveHref(selectedCollection, searchValue, statusParam, page + 1)) : "#";
 
   const body = `
+    <style>.main{min-width:0;}.card.table{max-width:100%;overflow-x:auto;}.card.table table{min-width:980px;}</style>
     <div class="title-row">
       <h1>IRIS Archive</h1>
       <form class="search" method="GET" action="/admin">
         ${statusHidden}
+        <input type="hidden" name="collection" value="${escapeHtml(selectedCollection)}" />
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16.5" y2="16.5"></line></svg>
-        <input type="text" name="q" placeholder="Search by IRIS-####, order id or owner email" value="${searchValue ?? ""}" />
+        <input type="text" name="q" placeholder="Search by IRIS number, order or email" value="${escapeHtml(searchValue)}" />
       </form>
     </div>
+    <form method="GET" action="/admin" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+      ${statusHidden}<input type="hidden" name="q" value="${escapeHtml(searchValue)}" />
+      <label for="archive-collection">Collection</label>
+      <select id="archive-collection" name="collection" style="font:inherit;max-width:100%;padding:8px;border:1px solid var(--line);border-radius:4px;">
+        <option value="${CORE_AUTHOR_OPTION_ID}"${selectedCollection === CORE_AUTHOR_OPTION_ID ? " selected" : ""}>${CORE_AUTHOR_COLLECTION_NAME}</option>
+        <option value="all"${selectedCollection === "all" ? " selected" : ""}>All collections</option>
+        ${collections.map((c) => `<option value="${escapeHtml(c.id)}"${selectedCollection === c.id ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+      </select><button class="btn secondary" type="submit">Filter</button>
+    </form>
     <div class="tabs">
-      <a class="tab ${statusParam === "all" ? "active" : ""}" href="/admin">All</a>
-      <a class="tab ${statusParam === "activated" ? "active" : ""}" href="/admin?status=activated">Activated</a>
-      <a class="tab ${statusParam === "unactivated" ? "active" : ""}" href="/admin?status=unactivated">Unactivated</a>
+      ${[["all", "All"], ["activated", "Activated"], ["unactivated", "Unactivated"]].map(([key, label]) =>
+        `<a class="tab ${statusParam === key ? "active" : ""}" href="${escapeHtml(archiveHref(selectedCollection, searchValue, key))}">${label}</a>`).join("")}
     </div>
     <div class="card table">
       <table>
@@ -2785,7 +2797,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
           .partner-workspace .brand-identity { gap:12px; }
           .partner-workspace .brand-identity h1 { font-size:24px; }
           .brand-avatar { width:48px; height:48px; flex-basis:48px; }
-          .partner-nav { gap:20px; }
+          .partner-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 20px; }
           .partner-nav a { display:flex; align-items:center; font-size:12px; line-height:1.4; white-space:normal; }
           .collection-list { grid-template-columns:1fr; gap:24px; }
           .collection-card-body { padding:20px; }
@@ -2897,10 +2909,11 @@ const buildPartnerAvatar = (identity: PartnerWorkspaceIdentity) => identity.prof
   ? `<img class="brand-avatar" src="${escapeHtml(identity.profile.avatarUrl)}" alt="${escapeHtml(identity.fullName)}" width="64" height="64" />`
   : `<span class="brand-avatar brand-avatar-placeholder" aria-hidden="true">${escapeHtml(identity.fullName.charAt(0).toUpperCase())}</span>`;
 
-const buildPartnerWorkspaceHtml = (identity: PartnerWorkspaceIdentity, active: "collections" | "irises" | "profile", content: string) => {
+const buildPartnerWorkspaceHtml = (identity: PartnerWorkspaceIdentity, active: "collections" | "irises" | "profile" | "retail", content: string) => {
   const tabs = [
     { key: "collections", label: "Collections", url: "/partner" },
     { key: "irises", label: "All IRIS", url: "/partner/irises" },
+    { key: "retail", label: "Retail Stock", url: "/partner/retail" },
     { key: "profile", label: "Brand Profile", url: "/partner/profile" }
   ];
   return buildPartnerShell("IRIS Partner Dashboard", `<div class="body workspace">
@@ -6120,7 +6133,11 @@ const buildAdminDetailHtml = (item: {
   activation_token: string | null;
   previous_iris_id: string | null;
   next_iris_id: string | null;
+  archive_collection: string;
+  archive_search: string;
+  archive_status: string;
 }) => {
+  const archiveParams = new URLSearchParams({ collection: item.archive_collection, q: item.archive_search, status: item.archive_status });
   const displayId = item.display_iris_id.toUpperCase().startsWith("IRIS-")
     ? item.display_iris_id.replace(/^IRIS-/i, "#")
     : item.display_iris_id;
@@ -6130,7 +6147,7 @@ const buildAdminDetailHtml = (item: {
     : `${env.baseStorefrontUrl}/pages/activate?iris=${item.iris_id}`;
   const navButton = (label: string, targetIrisId: string | null) =>
     targetIrisId
-      ? `<a class="btn secondary" href="/admin/iris/${encodeURIComponent(targetIrisId)}" style="width:34px;height:28px;padding:0;font-size:14px;">${label}</a>`
+      ? `<a class="btn secondary" href="/admin/iris/${encodeURIComponent(targetIrisId)}?${escapeHtml(archiveParams.toString())}" style="width:34px;height:28px;padding:0;font-size:14px;">${label}</a>`
       : `<span class="btn secondary" style="width:34px;height:28px;padding:0;font-size:14px;opacity:.35;pointer-events:none;">${label}</span>`;
   const imageBox = item.image_url
     ? `<img src="${item.image_url}" alt="${item.iris_id}" />`
@@ -6180,7 +6197,7 @@ const buildAdminDetailHtml = (item: {
           <dt>Owner</dt><dd>${item.owner_email ?? "-"}</dd>
         </dl>
         <div style="margin-top:16px;">
-          <a class="btn primary" href="/admin">Back</a>
+          <a class="btn primary" href="${escapeHtml(archiveHref(item.archive_collection, item.archive_search, item.archive_status))}">Back</a>
         </div>
       </div>
       <div>
@@ -6674,6 +6691,22 @@ export const createServer = async (): Promise<FastifyInstance> => {
   );
 
   registerAdminCollections(app, { db: prisma, secret: env.adminBasicPass, authorize: requireAdmin, shell: buildAdminShell, escape: escapeHtml });
+  registerRetailStockPages(app, {
+    db: prisma, origin: env.baseStorefrontUrl, escape: escapeHtml,
+    adminContext: async (req, reply) => {
+      if (!await requireAdmin(req, reply)) return null;
+      return { actor: "admin", secret: env.adminBasicPass,
+        render: (body) => buildAdminShell("Retail Stock - IRIS Admin", body, "", "retail") };
+    },
+    partnerContext: async (req, reply) => {
+      const session = await requireCollaborator(req, reply);
+      if (!session) return null;
+      const collections = await loadCollaboratorCollections(prisma, session.user);
+      const identity = await loadPartnerIdentity(session.user);
+      return { actor: session.user.id, secret: session.token_hash, collectionIds: collections.map((c) => c.id),
+        render: (body) => buildPartnerWorkspaceHtml(identity, "retail", body) };
+    }
+  });
 
   app.post("/apps/iris/reserve-random", async (req, reply) => {
     const body = (req.body as Record<string, unknown> | null) ?? {};
@@ -7376,6 +7409,11 @@ export const createServer = async (): Promise<FastifyInstance> => {
     }
 
     try {
+      // Retail works must always use the NFC + PIN verification flow, including after an in-store sale.
+      let retailEntry;
+      try { retailEntry = await prisma.retailBatchItem.findUnique({ where: { iris_id: body.iris_id }, select: { iris_id: true } }); }
+      catch (error) { if (!isMissingRetailSchema(error)) throw error; }
+      if (retailEntry) return reply.code(409).send({ error: "use_activation_verify" });
       const updated = await prisma.artwork.update({
         where: { iris_id: body.iris_id },
         data: {
@@ -7730,7 +7768,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     const presentation = collection ? await loadCollectionPresentation(prisma, collection.id) : { available: true, record: null };
     if (!presentation.available) return reply.code(503).send({ error: "temporarily_unavailable" });
     const record = presentation.record;
-    const soldWhere = purchasedArtworkWhere(core ? null : collection?.id ?? null);
+    const artworkCollectionId = core ? null : collection?.id ?? null;
+    const soldWhere = purchasedArtworkWhere(artworkCollectionId, await loadRetailSoldIds(prisma, artworkCollectionId));
     const [soldCount, soldWeight, brand, productMedia] = await Promise.all([
       prisma.artwork.count({ where: soldWhere }),
       prisma.artwork.aggregate({ where: { ...soldWhere, weight_grams: { gt: 0 } }, _avg: { weight_grams: true } }),
@@ -10322,16 +10361,24 @@ export const createServer = async (): Promise<FastifyInstance> => {
   app.get("/admin", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return;
 
-    const query = req.query as { q?: string; page?: string; status?: string };
+    const query = req.query as { q?: string; page?: string; status?: string; collection?: string };
+    const collections = (await prisma.collection.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }))
+      .filter((c) => !isCoreAuthorCollection(c));
+    const selectedCollection = parseArchiveCollection(query.collection);
+    if (selectedCollection !== CORE_AUTHOR_OPTION_ID && selectedCollection !== "all" && !collections.some((c) => c.id === selectedCollection)) {
+      return reply.code(400).send("Unknown collection. Choose a collection from IRIS Archive.");
+    }
+    const hasRetail = selectedCollection !== CORE_AUTHOR_OPTION_ID && await retailSchemaReady(prisma);
     const q = query.q?.trim();
     const statusParam = query.status?.toLowerCase() ?? "all";
     const statuses: ArtworkStatus[] =
       statusParam === "activated"
         ? ["activated"]
         : statusParam === "unactivated"
-          ? ["assigned", "shopify_failed"]
-          : ["assigned", "activated", "shopify_failed"];
+          ? ["assigned", "shopify_failed", ...(hasRetail ? [ArtworkStatus.retail_stock] : [])]
+          : ["assigned", "activated", "shopify_failed", ...(hasRetail ? [ArtworkStatus.retail_stock] : [])];
     const where: Prisma.ArtworkWhereInput = {
+      ...archiveCollectionScope(selectedCollection),
       status: { in: statuses }
     };
 
@@ -10343,7 +10390,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
       ];
     }
 
-    const page = Math.max(1, Number(query.page ?? 1));
+    const requestedPage = Number(query.page ?? 1);
+    const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
     const take = 20;
     const fetchLimit = Math.max(12000, page * take + take + 1);
 
@@ -10397,7 +10445,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
             iris_id: item.iris_id,
             display_iris_id: formatDisplayIrisId(item.iris_id, item.collection),
             status: pendingTransfersByIrisId.has(item.iris_id) ? "pending_transfer" : item.status,
-            order_date: orderDateById.get(item.iris_id) ?? null,
+            order_date: item.status === "retail_stock" ? null : orderDateById.get(item.iris_id) ?? null,
             owner_email: item.owner_email,
             activated_at: item.activated_at,
             image_url: item.image_url,
@@ -10409,7 +10457,9 @@ export const createServer = async (): Promise<FastifyInstance> => {
           statusParam,
           page,
           hasPrev,
-          hasNext
+          hasNext,
+          selectedCollection,
+          collections
         )
       );
   });
@@ -10579,9 +10629,22 @@ export const createServer = async (): Promise<FastifyInstance> => {
       orderBy: { created_at: "desc" }
     });
     const pendingTransfersByIrisId = await getPendingTransfersByIrisId([item.iris_id]);
+    const archiveQuery = req.query as { collection?: string; q?: string; status?: string };
+    const archiveCollection = parseArchiveCollection(archiveQuery.collection ?? item.collection_id ?? CORE_AUTHOR_OPTION_ID);
+    const archiveSearch = typeof archiveQuery.q === "string" ? archiveQuery.q.trim() : "";
+    const archiveStatus = archiveQuery.status === "activated" || archiveQuery.status === "unactivated" ? archiveQuery.status : "all";
+    const navigationStatuses: ArtworkStatus[] = archiveStatus === "activated" ? ["activated"] :
+      archiveStatus === "unactivated" ? ["assigned", "shopify_failed"] : ["assigned", "activated", "shopify_failed"];
+    if (archiveStatus !== "activated" && archiveCollection !== CORE_AUTHOR_OPTION_ID && await retailSchemaReady(prisma)) navigationStatuses.push("retail_stock");
     const archiveNavigationItems = await prisma.artwork.findMany({
       where: {
-        status: { in: ["assigned", "activated", "shopify_failed"] }
+        ...archiveCollectionScope(archiveCollection),
+        status: { in: navigationStatuses },
+        ...(archiveSearch ? { OR: [
+          { iris_id: { contains: archiveSearch, mode: "insensitive" as const } },
+          { assigned_order_id: { contains: archiveSearch, mode: "insensitive" as const } },
+          { owner_email: { contains: archiveSearch, mode: "insensitive" as const } }
+        ] } : {})
       },
       select: {
         iris_id: true,
@@ -10637,7 +10700,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
           pin_code: item.pin_code,
           activation_token: item.activation_token,
           previous_iris_id: previousIrisId,
-          next_iris_id: nextIrisId
+          next_iris_id: nextIrisId,
+          archive_collection: archiveCollection,
+          archive_search: archiveSearch,
+          archive_status: archiveStatus
         })
       );
   });
