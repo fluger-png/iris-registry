@@ -2780,15 +2780,8 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .collection-banner-editor { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:28px; align-items:center; }
         .collection-banner-editor .field { display:grid; gap:12px; }
         .collection-form label.remove-image { display:flex; align-items:center; gap:10px; font-family:var(--font-body); font-size:18px; color:var(--muted); text-transform:none; }
-        .collection-gallery { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:20px; }
-        .collection-gallery .field { min-width:0; gap:12px; }
-        .collection-gallery img, .collection-gallery .image-placeholder { width:100%; height:auto; aspect-ratio:4/3; object-fit:cover; background:#151515; }
-        .collection-gallery .image-placeholder { display:grid; place-items:center; font-family:var(--font-heading); font-size:24px; color:var(--muted); }
-        .collection-gallery input[type="file"] { font-size:16px; padding:8px; }
-        .collection-gallery input::file-selector-button { display:block; margin:0 0 8px; }
         .collection-form input:disabled { color:var(--muted); cursor:not-allowed; }
         @media (max-width:820px) {
-          .collection-gallery { grid-template-columns:repeat(2,minmax(0,1fr)); }
           .collection-banner-editor { grid-template-columns:minmax(0,1fr); gap:16px; }
         }
         .iris-filters { display:grid; grid-template-columns:minmax(180px,250px) minmax(200px,1fr) auto; align-items:end; gap:16px; margin-bottom:24px; }
@@ -3018,7 +3011,6 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
   const { view } = params;
   const record = view.presentation.record;
   const image = record?.banner_url || view.product?.imageUrl || IRIS_ACCOUNT_DEFAULT_IMAGE;
-  const gallery = record?.gallery_urls || [];
   const media = view.productMedia;
   return buildPartnerWorkspaceHtml(params, "collections", `<section>
     <div class="section-heading"><h2>${escapeHtml(record?.display_name || view.collection.name)}</h2><a href="/partner">Back</a></div>
@@ -3057,12 +3049,6 @@ const buildPartnerCollectionHtml = (params: PartnerWorkspaceIdentity & {
         </div>` : `<input id="collection-price" value="${partnerCollectionPrice(view)}" disabled /><p class="hint">${escapeHtml(view.priceState.ready ? "Reload to edit this price." : view.priceState.message)}</p>`}
       </div>
       <div class="field"><label for="collection-description">Collection description</label><textarea id="collection-description" name="description" maxlength="${COLLECTION_DESCRIPTION_MAX}" rows="7">${escapeHtml(record?.description || "")}</textarea></div>
-      <div class="collection-gallery">${Array.from({ length: 4 }, (_, index) => `<div class="field">
-        <label for="collection-image-${index}">Image ${index + 1}</label>
-        ${gallery[index] ? `<img src="${escapeHtml(gallery[index])}" alt="Collection image ${index + 1}" width="320" height="240" />` : `<div class="image-placeholder" aria-hidden="true">${index + 1}</div>`}
-        <input id="collection-image-${index}" type="file" name="image_${index}" accept="image/png,image/jpeg,image/webp" />
-        ${gallery[index] ? `<label class="remove-image"><input type="checkbox" name="remove_image_${index}" value="1" /> Remove image</label>` : ""}
-      </div>`).join("")}</div>
       <button class="btn" type="submit"${view.presentation.available ? "" : " disabled"}>Save Collection</button>
     </form>
     ${view.priceState.ready && params.priceRevision ? `<form id="collection-price-form" method="POST" action="/partner/collections/${encodeURIComponent(view.collection.id)}/price">
@@ -9803,10 +9789,10 @@ export const createServer = async (): Promise<FastifyInstance> => {
     if (!req.isMultipart()) return fail(400, "Please submit the collection form.");
     const fields: Record<string, string> = {};
     const files: Record<string, Buffer> = {};
-    const allowedFiles = ["banner", "image_0", "image_1", "image_2", "image_3"];
-    const allowedFields = ["csrf_token", "revision", "display_name", "visible", "description", "remove_banner", ...Array.from({ length: 4 }, (_, i) => `remove_image_${i}`)];
+    const allowedFiles = ["banner"];
+    const allowedFields = ["csrf_token", "revision", "display_name", "visible", "description", "remove_banner"];
     try {
-      for await (const part of req.parts({ limits: { fileSize: COLLECTION_BANNER_MAX_BYTES, files: 5, fields: 10, parts: 15, fieldSize: 25_000 } })) {
+      for await (const part of req.parts({ limits: { fileSize: COLLECTION_BANNER_MAX_BYTES, files: 1, fields: 6, parts: 7, fieldSize: 25_000 } })) {
         if (part.type === "file") {
           const buffer = await part.toBuffer();
           if (!allowedFiles.includes(part.fieldname) || files[part.fieldname]) return fail(400, "Unexpected or duplicate image field.");
@@ -9816,7 +9802,7 @@ export const createServer = async (): Promise<FastifyInstance> => {
           fields[part.fieldname] = part.value;
         }
       }
-    } catch { return fail(400, "Use JPG, PNG or WebP. Maximum 3 MB for the banner and 2 MB per preview image. Maximum one banner and four images."); }
+    } catch { return fail(400, "Use one JPG, PNG or WebP banner. Maximum 3 MB."); }
     if (!validCollectionCsrf(fields.csrf_token, session.token_hash, id)) return fail(403, "Your form expired. Reload this page and try again.");
     const name = fields.display_name?.trim();
     if (!name || name.length > COLLECTION_NAME_MAX || fields.description === undefined || fields.description.length > COLLECTION_DESCRIPTION_MAX) return fail(400, "Check the collection name and description length.");
@@ -9825,9 +9811,8 @@ export const createServer = async (): Promise<FastifyInstance> => {
     for (const key of allowedFiles) {
       if (fields[`remove_${key}`] !== undefined && fields[`remove_${key}`] !== "1") return fail(400, "Invalid image removal value.");
       if (files[key] && fields[`remove_${key}`] === "1") return fail(400, "Upload or remove an image, not both.");
-      const maxBytes = key === "banner" ? COLLECTION_BANNER_MAX_BYTES : PARTNER_AVATAR_MAX_BYTES;
-      if (files[key]?.length > maxBytes) return fail(400, key === "banner" ? "The collection banner must be 3 MB or smaller." : "Preview images must be 2 MB or smaller.");
-      if (files[key] && !detectPartnerAvatarType(files[key], maxBytes)) return fail(400, "Only JPG, PNG or WebP images are supported.");
+      if (files[key]?.length > COLLECTION_BANNER_MAX_BYTES) return fail(400, "The collection banner must be 3 MB or smaller.");
+      if (files[key] && !detectPartnerAvatarType(files[key], COLLECTION_BANNER_MAX_BYTES)) return fail(400, "Only JPG, PNG or WebP images are supported.");
     }
     try {
       const imageUrls: Record<string, string | null> = {};
@@ -9835,16 +9820,14 @@ export const createServer = async (): Promise<FastifyInstance> => {
         if (fields[`remove_${key}`] === "1") imageUrls[key] = null;
         if (!files[key]) continue;
         if (!env.r2Bucket || !env.r2PublicBaseUrl) return fail(503, "Image uploads are temporarily unavailable.");
-        const type = detectPartnerAvatarType(files[key], key === "banner" ? COLLECTION_BANNER_MAX_BYTES : PARTNER_AVATAR_MAX_BYTES)!;
+        const type = detectPartnerAvatarType(files[key], COLLECTION_BANNER_MAX_BYTES)!;
         const objectKey = `collections/${id}/${crypto.randomUUID()}.${type.extension}`;
         await r2.send(new PutObjectCommand({ Bucket: env.r2Bucket, Key: objectKey, Body: files[key], ContentType: type.contentType, CacheControl: "public, max-age=31536000, immutable" }));
         imageUrls[key] = `${env.r2PublicBaseUrl.replace(/\/$/, "")}/${objectKey}`;
       }
-      const gallery = Array.from({ length: 4 }, (_, i) => imageUrls[`image_${i}`] !== undefined ? imageUrls[`image_${i}`] || "" : view.presentation.record?.gallery_urls[i] || "");
       const data = {
         display_name: name, description: fields.description.trim(), visible: fields.visible === "1",
-        banner_url: imageUrls.banner !== undefined ? imageUrls.banner : view.presentation.record?.banner_url ?? null,
-        gallery_urls: gallery
+        banner_url: imageUrls.banner !== undefined ? imageUrls.banner : view.presentation.record?.banner_url ?? null
       };
       // An optimistic revision prevents one editor from silently overwriting another.
       if (view.presentation.record) {

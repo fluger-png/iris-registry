@@ -585,8 +585,10 @@ describe("partner collection editor", () => {
     expect(detail.body).toContain("0.500 g");
     expect(detail.body).toContain("Gold weight recorded for 2 of 3");
     expect(detail.body).toContain('id="collection-price" value="Unavailable" disabled');
-    expect(detail.body).toContain('name="image_3"');
-    expect(detail.body).not.toContain('name="image_4"');
+    expect(detail.body).toContain('name="banner"');
+    expect(detail.body).toContain('name="video"');
+    for (let i = 0; i < 4; i++) expect(detail.body).not.toContain(`name="image_${i}"`);
+    expect(detail.body).not.toContain('class="collection-gallery"');
   });
 
   it("requires login on both collection routes", async () => {
@@ -612,7 +614,7 @@ describe("partner collection editor", () => {
     expect(response.statusCode).toBe(303);
     expect(response.headers.location).toBe("/partner/collections/ararat?saved=1");
     expect(db.collectionPresentation.create).toHaveBeenCalledWith({ data: {
-      collection_id: "ararat", display_name: "Ararat <New>", description: "The collection story.", visible: true, banner_url: null, gallery_urls: ["", "", "", ""]
+      collection_id: "ararat", display_name: "Ararat <New>", description: "The collection story.", visible: true, banner_url: null
     } });
     expect(db.collection.create).not.toHaveBeenCalled();
   });
@@ -626,13 +628,13 @@ describe("partner collection editor", () => {
     expect(db.collectionPresentation.create).not.toHaveBeenCalled();
   });
 
-  it("uploads a banner and four images to the authorized collection only", async () => {
+  it("uploads a banner to the authorized collection without editing legacy gallery images", async () => {
     const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
-      payload: collectionPayload(collectionFields, ["banner", "image_0", "image_1", "image_2", "image_3"].map((field) => ({ field, data: png }))) });
+      payload: collectionPayload(collectionFields, [{ field: "banner", data: png }]) });
     expect(response.statusCode).toBe(303);
-    expect(upload).toHaveBeenCalledTimes(5);
+    expect(upload).toHaveBeenCalledTimes(1);
     for (const [command] of upload.mock.calls) expect((command as { input: { Key: string } }).input.Key).toMatch(/^collections\/ararat\/[a-f0-9-]+\.png$/);
-    expect(db.collectionPresentation.create.mock.calls[0][0].data.gallery_urls).toHaveLength(4);
+    expect(db.collectionPresentation.create.mock.calls[0][0].data).not.toHaveProperty("gallery_urls");
   });
 
   it("accepts a collection banner up to exactly 3 MB", async () => {
@@ -645,23 +647,22 @@ describe("partner collection editor", () => {
     expect((upload.mock.calls[0][0] as { input: { Body: Buffer } }).input.Body.length).toBe(image.length);
   });
 
-  it("rejects banners over 3 MB and preserves the 2 MB preview limit", async () => {
-    for (const [field, size] of [["banner", 3 * 1024 * 1024 + 1], ["image_0", 2 * 1024 * 1024 + 1]] as const) {
-      const image = Buffer.alloc(size);
-      png.copy(image);
-      const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
-        payload: collectionPayload(collectionFields, [{ field, data: image }]) });
-      expect(response.statusCode).toBe(400);
-    }
+  it("rejects banners over 3 MB", async () => {
+    const image = Buffer.alloc(3 * 1024 * 1024 + 1);
+    png.copy(image);
+    const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
+      payload: collectionPayload(collectionFields, [{ field: "banner", data: image }]) });
+    expect(response.statusCode).toBe(400);
     expect(upload).not.toHaveBeenCalled();
     expect(db.collectionPresentation.create).not.toHaveBeenCalled();
   });
 
-  it("rejects unexpected editable fields, a fifth preview, duplicate files, and SVGs", async () => {
+  it("rejects removed preview uploads, unexpected editable fields, duplicate files, and SVGs", async () => {
     for (const payload of [
       collectionPayload({ ...collectionFields, price_cents: "1" } as typeof collectionFields),
       collectionPayload({ ...collectionFields, collection_id: "sayat" } as typeof collectionFields),
-      collectionPayload(collectionFields, [{ field: "image_4", data: png }]),
+      ...Array.from({ length: 5 }, (_, i) => collectionPayload(collectionFields, [{ field: `image_${i}`, data: png }])),
+      ...Array.from({ length: 4 }, (_, i) => collectionPayload({ ...collectionFields, [`remove_image_${i}`]: "1" } as typeof collectionFields)),
       collectionPayload(collectionFields, [{ field: "banner", data: png }, { field: "banner", data: png }]),
       collectionPayload(collectionFields, [{ field: "banner", data: Buffer.from('<svg onload="alert(1)"></svg>') }]),
       collectionPayload(collectionFields, [{ field: "banner", data: Buffer.alloc(2 * 1024 * 1024 + 1) }])
@@ -672,12 +673,13 @@ describe("partner collection editor", () => {
     expect(db.collectionPresentation.create).not.toHaveBeenCalled();
   });
 
-  it("preserves empty file inputs and removes only requested images", async () => {
+  it("resets the banner without deleting or changing legacy gallery images", async () => {
     db.collectionPresentation.findUnique.mockResolvedValue({ revision: 2, display_name: "Name", banner_url: "https://images.test/banner.png", gallery_urls: ["a", "b", "c", "d"], visible: true, description: "old" });
     const response = await app.inject({ method: "POST", url: "/partner/collections/ararat", headers: profileHeaders,
-      payload: collectionPayload({ ...collectionFields, revision: "2", remove_image_1: "1", remove_banner: "1" } as typeof collectionFields, [{ field: "image_0", data: Buffer.alloc(0), name: "" }]) });
+      payload: collectionPayload({ ...collectionFields, revision: "2", remove_banner: "1" } as typeof collectionFields, [{ field: "banner", data: Buffer.alloc(0), name: "" }]) });
     expect(response.statusCode).toBe(303);
-    expect(db.collectionPresentation.updateMany.mock.calls[0][0].data).toMatchObject({ banner_url: null, gallery_urls: ["a", "", "c", "d"], revision: { increment: 1 } });
+    expect(db.collectionPresentation.updateMany.mock.calls[0][0].data).toMatchObject({ banner_url: null, revision: { increment: 1 } });
+    expect(db.collectionPresentation.updateMany.mock.calls[0][0].data).not.toHaveProperty("gallery_urls");
     expect(upload).not.toHaveBeenCalled();
   });
 
