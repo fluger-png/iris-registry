@@ -3448,10 +3448,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           --iris-black:#000000;
           --iris-surface:#070707;
           --iris-surface-2:#101010;
-          --iris-line:rgba(201,168,76,.18);
-          --iris-line-strong:rgba(201,168,76,.36);
-          --iris-gold:#c9a84c;
-          --iris-gold-bright:#eabf50;
+          --iris-gold:#C5A959;
+          --iris-gold-rgb:197,169,89;
+          --iris-line:rgba(var(--iris-gold-rgb),.18);
+          --iris-line-strong:rgba(var(--iris-gold-rgb),.36);
+          --iris-gold-bright:var(--iris-gold);
           --iris-text:#ede8df;
           --iris-muted:#a89f90;
           --iris-soft:#746d62;
@@ -3477,7 +3478,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .site-header {
           background:var(--iris-black);
-          border-bottom:1px solid rgba(201,168,76,.14);
+          border-bottom:1px solid rgba(var(--iris-gold-rgb),.14);
           position:sticky;
           top:0;
           z-index:20;
@@ -3547,7 +3548,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           opacity:1 !important;
           overflow:hidden;
           isolation:isolate;
-          box-shadow:0 0 0 1px rgba(234,191,80,.18), 0 1rem 2.6rem rgba(0,0,0,.34);
+          box-shadow:0 0 0 1px rgba(var(--iris-gold-rgb),.18), 0 1rem 2.6rem rgba(0,0,0,.34);
         }
         .main-nav .header-shop-button span {
           position:relative;
@@ -3567,13 +3568,13 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           background:conic-gradient(
             from 0deg,
             rgba(255,255,255,0) 0deg,
-            #c9a84c 42deg,
-            #fff6cf 82deg,
+            var(--iris-gold) 42deg,
+            var(--iris-gold) 82deg,
             rgba(255,255,255,0) 132deg,
-            #eabf50 190deg,
+            var(--iris-gold) 190deg,
             #ffffff 244deg,
             rgba(255,255,255,0) 306deg,
-            #c9a84c 360deg
+            var(--iris-gold) 360deg
           );
           animation:iris-shop-gold-spin 8s cubic-bezier(.56,.15,.28,.86) infinite;
         }
@@ -3582,7 +3583,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           z-index:1;
           border-radius:1rem;
           background:
-            radial-gradient(circle at 50% 0%, rgba(234,191,80,.25), rgba(234,191,80,0) 46%),
+            radial-gradient(circle at 50% 0%, rgba(var(--iris-gold-rgb),.25), rgba(var(--iris-gold-rgb),0) 46%),
             linear-gradient(180deg, #161616 0%, #090909 100%);
         }
         .main-nav .header-shop-button:hover,
@@ -3642,7 +3643,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .account-avatar {
           width:4.8rem;
           height:4.8rem;
-          border:1px solid rgba(201,168,76,.32);
+          border:1px solid rgba(var(--iris-gold-rgb),.32);
           border-radius:50%;
           display:block;
           overflow:hidden;
@@ -3684,7 +3685,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           width:100%;
           min-height:4.2rem;
           border:0;
-          border-bottom:1px solid rgba(201,168,76,.12);
+          border-bottom:1px solid rgba(var(--iris-gold-rgb),.12);
           background:transparent;
           color:var(--iris-muted);
           padding:1.1rem 1.2rem;
@@ -3699,7 +3700,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .account-menu__dropdown button:hover,
         .account-menu__dropdown button:focus {
           color:var(--iris-gold);
-          background:rgba(201,168,76,.06);
+          background:rgba(var(--iris-gold-rgb),.06);
         }
         .account-menu__dropdown button:last-child { border-bottom:0; }
         .page {
@@ -3870,7 +3871,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .visibility-option input:checked + .visibility-option__panel {
           border-color:var(--iris-gold-bright);
-          background:rgba(201,168,76,.08);
+          background:rgba(var(--iris-gold-rgb),.08);
         }
         .visibility-option__title {
           display:block;
@@ -3903,7 +3904,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
         }
         .btn:hover,
-        .btn:focus { background:#f0c95c; border-color:#f0c95c; }
+        .btn:focus { background:var(--iris-gold); border-color:var(--iris-gold); }
         .btn.secondary {
           background:transparent;
           color:var(--iris-text);
@@ -3911,7 +3912,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .btn.secondary:hover,
         .btn.secondary:focus {
-          background:rgba(201,168,76,.08);
+          background:rgba(var(--iris-gold-rgb),.08);
           border-color:var(--iris-gold-bright);
           color:var(--iris-text);
         }
@@ -3936,12 +3937,12 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           gap:1.2rem;
         }
         .v2-iris-archive {
-          --v2-archive-gold:#c9a84c;
-          --v2-archive-gold-dim:#7a6330;
+          --v2-archive-gold:var(--iris-gold);
+          --v2-archive-gold-dim:var(--iris-gold);
           --v2-archive-bg:#000000;
           --v2-archive-surface:#171717;
           --v2-archive-surface-2:#1d1d1d;
-          --v2-archive-border:rgba(201,168,76,.16);
+          --v2-archive-border:rgba(var(--iris-gold-rgb),.16);
           --v2-archive-text:#ede8df;
           --v2-archive-text-mid:#a89f90;
           --v2-archive-text-soft:rgba(237,232,223,.62);
@@ -4012,7 +4013,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           min-height:4.6rem;
           padding:1.2rem 1.9rem;
           border:1px solid var(--v2-archive-border);
-          background:rgba(201,168,76,.03);
+          background:rgba(var(--iris-gold-rgb),.03);
           color:var(--v2-archive-text-mid);
           text-decoration:none;
           text-transform:uppercase;
@@ -4023,8 +4024,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .v2-iris-archive__filter:hover,
         .v2-iris-archive__filter.is-active {
           color:var(--v2-archive-gold);
-          border-color:rgba(201,168,76,.45);
-          background:rgba(201,168,76,.07);
+          border-color:rgba(var(--iris-gold-rgb),.45);
+          background:rgba(var(--iris-gold-rgb),.07);
         }
         .v2-iris-archive__status {
           min-height:2.4rem;
@@ -4055,7 +4056,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           transition:border-color .25s ease, transform .25s ease;
         }
         .v2-iris-archive__card:hover {
-          border-color:rgba(201,168,76,.4);
+          border-color:rgba(var(--iris-gold-rgb),.4);
           transform:translateY(-2px);
         }
         .v2-iris-archive__media {
@@ -4119,15 +4120,15 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .v2-iris-archive__placeholder {
           position:absolute;
           inset:10%;
-          background:linear-gradient(145deg, rgba(201,168,76,.1), rgba(255,255,255,.03));
+          background:linear-gradient(145deg, rgba(var(--iris-gold-rgb),.1), rgba(255,255,255,.03));
         }
         .v2-passport-page {
-          --v2-gold:#c9a84c;
-          --v2-gold-dim:#7a6330;
+          --v2-gold:var(--iris-gold);
+          --v2-gold-dim:var(--iris-gold);
           --v2-surface:#000000;
           --v2-surface-2:#101010;
           --v2-surface-3:#171717;
-          --v2-border:rgba(201,168,76,.16);
+          --v2-border:rgba(var(--iris-gold-rgb),.16);
           --v2-text:#ede8df;
           --v2-text-mid:#a89f90;
           background:var(--v2-surface);
@@ -4267,7 +4268,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           min-height:5.6rem;
           padding:1.6rem 2.8rem;
           border:1px solid var(--v2-border);
-          background:rgba(201,168,76,.04);
+          background:rgba(var(--iris-gold-rgb),.04);
           color:var(--v2-gold);
           text-decoration:none;
           text-transform:uppercase;
@@ -4279,8 +4280,8 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           transition:all .25s ease;
         }
         .v2-passport-button:hover {
-          border-color:rgba(201,168,76,.5);
-          background:rgba(201,168,76,.08);
+          border-color:rgba(var(--iris-gold-rgb),.5);
+          background:rgba(var(--iris-gold-rgb),.08);
         }
         .v2-passport-button:disabled {
           opacity:.52;
@@ -4289,7 +4290,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .v2-passport-button.is-active:disabled {
           opacity:1;
           color:var(--v2-gold);
-          background:rgba(201,168,76,.08);
+          background:rgba(var(--iris-gold-rgb),.08);
         }
         .v2-passport-button--ghost,
         .v2-passport-button--ghost:visited {
@@ -4547,7 +4548,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           font-size:.95rem;
         }
         .site-footer {
-          border-top:1px solid rgba(201,168,76,.14);
+          border-top:1px solid rgba(var(--iris-gold-rgb),.14);
           background:var(--iris-black);
           color:var(--iris-muted);
         }
@@ -4590,7 +4591,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         .footer-links a:hover,
         .footer-links a:focus { color:var(--iris-gold); }
         .footer-bottom {
-          border-top:1px solid rgba(201,168,76,.14);
+          border-top:1px solid rgba(var(--iris-gold-rgb),.14);
           min-height:56px;
           display:flex;
           align-items:center;

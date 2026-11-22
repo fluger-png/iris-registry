@@ -7,7 +7,7 @@ import path from "node:path";
 const db = vi.hoisted(() => ({
   irisAccountSession: { findFirst: vi.fn(), update: vi.fn() },
   shopifyOrder: { findMany: vi.fn() },
-  event: { findMany: vi.fn() }, artwork: { findMany: vi.fn() }, $disconnect: vi.fn()
+  event: { findMany: vi.fn() }, artwork: { findMany: vi.fn(), findFirst: vi.fn() }, $disconnect: vi.fn()
 }));
 vi.mock("../src/db.js", () => ({ prisma: db }));
 vi.mock("../src/env.js", () => ({ env: { releaseIntervalMinutes: 60, googleAnalyticsId: "" } }));
@@ -76,6 +76,33 @@ describe("My Collection labels", () => {
     expect(response.body).toContain('href="/apps/iris/v3/account?session=other">My Collection</a>');
     expect(response.body).not.toContain("Back to My IRIS");
     await savePreview(section, response.body);
+  });
+});
+
+describe("Account accent palette", () => {
+  it.each([
+    ["account", "<h1>My Collection</h1>"],
+    ["profile", "<h1>@test</h1>"],
+    ["orders", "<h1>My Orders</h1>"],
+    ["marketplace", '<h1 class="v2-iris-archive__title">IRIS <em>Marketplace</em></h1>'],
+    ["passport?iris_id=IRIS-0001", '<h1 class="v2-passport-page__title">IRIS Passport</h1>']
+  ])("shares one gold accent on %s", async (section, heading) => {
+    db.artwork.findFirst.mockResolvedValue({
+      iris_id: "IRIS-0001", status: "activated", collection: null,
+      image_url: "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244",
+      rarity_code: "Common", weight_grams: 0.4, activated_at: new Date("2026-11-19T12:00:00Z")
+    });
+    const response = await app.inject({ url: `/apps/iris/v3/${section}`, headers: { cookie: "iris_account_session=other" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(heading);
+    expect(response.body).toContain("--iris-gold:#C5A959;");
+    expect(response.body).toContain("--iris-gold-rgb:197,169,89;");
+    expect(response.body).toContain("--iris-gold-bright:var(--iris-gold);");
+    expect(response.body).toContain("--v2-archive-gold:var(--iris-gold);");
+    expect(response.body).toContain("--v2-gold:var(--iris-gold);");
+    expect(response.body).not.toMatch(/#(?:c9a84c|eabf50|fff6cf|f0c95c|7a6330)|(?:201,168,76|234,191,80)/i);
+    expect(redeem).not.toHaveBeenCalled();
+    await savePreview(`palette-${section.split("?")[0]}`, response.body);
   });
 });
 
