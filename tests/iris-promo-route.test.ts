@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 const db = vi.hoisted(() => ({
   irisAccountSession: { findFirst: vi.fn(), update: vi.fn() },
@@ -18,6 +20,12 @@ const hash = (token: string) => crypto.createHash("sha256").update(token).digest
 const csrf = (token: string) => irisPromoCsrf(hash(token));
 const url = "/apps/iris/v3/promo/redeem";
 let app: FastifyInstance;
+const savePreview = async (name: string, html: string) => {
+  const directory = process.env.IRIS_ACCOUNT_LAYOUT_PREVIEW_DIR;
+  if (!directory) return;
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(path.join(directory, `${name}.html`), html);
+};
 
 beforeEach(async () => {
   vi.resetAllMocks();
@@ -35,6 +43,24 @@ beforeEach(async () => {
 afterEach(async () => { await app.close(); vi.unstubAllGlobals(); });
 
 describe("My Collection labels", () => {
+  it("uses the shared account container with separate summary and artwork zones", async () => {
+    db.artwork.findMany.mockResolvedValue(Array.from({ length: 8 }, (_, i) => ({
+      iris_id: `IRIS-${String(i + 1).padStart(4, "0")}`, status: "activated", collection: null,
+      image_url: "https://cdn.shopify.com/s/files/1/0710/5239/4589/files/P1.png?v=1769584244",
+      rarity_code: i % 2 ? "Rare" : "Common", weight_grams: 0.4, activated_at: new Date("2026-11-19T12:00:00Z")
+    })));
+    for (const session of ["pilot", "other"]) {
+      const response = await app.inject({ url: "/apps/iris/v3/account", headers: { cookie: `iris_account_session=${session}` } });
+      expect(response.body).toMatch(/<main class="page">\s*<div class="wrap">\s*<section class="hero iris-library-hero">/);
+      expect(response.body).toMatch(/<\/section>\s*<section class="body iris-library-body">/);
+      expect(response.body).toContain('<div class="iris-library-summary">');
+      expect(response.body).toContain('id="iris-v3-library-grid"');
+      expect(response.body).not.toContain('<div class="wrap wrap--flush">');
+      expect(response.body.match(/<li data-rarity=/g)).toHaveLength(8);
+      await savePreview(`collection-${session}`, response.body);
+    }
+    expect(redeem).not.toHaveBeenCalled();
+  });
   it("renames the signed-in collection heading, menu and browser title without changing URLs", async () => {
     const response = await app.inject({ url: "/apps/iris/v3/account", headers: { cookie: "iris_account_session=other" } });
     expect(response.statusCode).toBe(200);
@@ -49,21 +75,23 @@ describe("My Collection labels", () => {
     expect(response.body).toContain('href="/apps/iris/v3/account?session=other">Back to My Collection</a>');
     expect(response.body).toContain('href="/apps/iris/v3/account?session=other">My Collection</a>');
     expect(response.body).not.toContain("Back to My IRIS");
+    await savePreview(section, response.body);
   });
 });
 
 describe("My IRIS promo access", () => {
-  it("only embeds the button for the signed-in pilot user, under the stats", async () => {
+  it("only embeds the button for the signed-in pilot user, in the announcements zone", async () => {
     for (const session of ["pilot", "other", "expired"]) {
       const response = await app.inject({ url: "/apps/iris/v3/account", headers: { cookie: `iris_account_session=${session}` } });
       expect(response.statusCode).toBe(200);
       expect(response.headers["cache-control"]).toBe("private, no-store");
       if (session === "pilot") {
-        expect(response.body).toMatch(/<p class="iris-library-stats">[\s\S]+id="iris-promo-open"/);
+        expect(response.body).toMatch(/<aside class="iris-library-announcements" aria-label="Discount announcements">[\s\S]+id="iris-promo-open"/);
         expect(response.body).toContain("Redeem My Discount");
         expect(response.body).toContain(csrf("pilot"));
       } else {
-        expect(response.body).not.toContain("iris-promo-open");
+        expect(response.body).not.toContain('id="iris-promo-open"');
+        expect(response.body).not.toContain('<aside class="iris-library-announcements"');
       }
     }
     expect(redeem).not.toHaveBeenCalled();

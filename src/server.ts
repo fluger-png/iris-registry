@@ -3716,9 +3716,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           padding:0;
         }
         .account-notice-wrap {
-          width:min(100%, var(--page-width));
-          margin:0 auto;
-          padding:3.2rem 2.4rem 0;
+          margin:0 0 24px;
         }
         .hero {
           padding:58px 0 44px;
@@ -3762,18 +3760,26 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         }
         .hero p:not(.eyebrow) { margin-bottom:0; }
         .iris-library-hero {
-          display:block;
-          text-align:center;
-          border-bottom:0;
-          padding-bottom:2.8rem;
+          text-align:left;
         }
+        .iris-library-summary { min-width:0; }
         .iris-library-hero h1 {
-          max-width:none;
-          margin:0 auto;
+          max-width:100%;
+          margin:0;
+        }
+        .iris-library-announcements {
+          min-width:0;
+          max-width:34rem;
+          justify-self:end;
+          align-self:center;
+          text-align:right;
+        }
+        .iris-library-announcements .iris-promo-open {
+          margin-top:0;
         }
         .iris-library-stats {
           max-width:none;
-          margin:1.7rem auto 0;
+          margin:1.7rem 0 0;
           color:var(--iris-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
           font-size:1.9rem;
@@ -3948,9 +3954,13 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin-left:calc(50% - 50vw);
           margin-right:calc(50% - 50vw);
         }
+        .v2-iris-archive--library { border:0; }
         .v2-iris-archive--library .v2-iris-archive__wrap {
-          padding-top:5rem;
+          max-width:none;
+          margin:0;
+          padding:0;
         }
+        .v2-iris-archive--library .v2-iris-archive__filters { justify-content:flex-start; }
         .v2-iris-archive__wrap {
           max-width:144rem;
           margin:0 auto;
@@ -4709,6 +4719,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           .grid, .iris-grid { grid-template-columns:1fr; }
           .card { padding:22px; }
           .account-top-actions { justify-content:flex-start; margin-top:2rem; }
+          .iris-library-announcements { max-width:100%;margin-top:24px;text-align:left; }
           .v2-iris-archive__wrap { padding:7rem 2rem 8rem; }
           .v2-iris-archive__grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
           .v2-iris-archive__description {
@@ -4965,21 +4976,21 @@ const buildIrisAccountLibraryHtml = (params: {
   const acquisitionTotalUsd = Number.isFinite(goldPriceUsdG) && goldPriceUsdG > 0 ? totalGoldGrams * goldPriceUsdG : null;
   const acquisitionTotalLabel =
     acquisitionTotalUsd == null ? "-" : formatIrisAccountCurrencyUsd(acquisitionTotalUsd);
+  const discountAnnouncements = params.sessionToken && canRedeemIrisPromo(params.user.email)
+    ? `<aside class="iris-library-announcements" aria-label="Discount announcements">${buildIrisPromoDialog(params.sessionToken, irisPromoCsrf(hashOpaqueToken(params.sessionToken)))}</aside>`
+    : "";
   const body = `
-    ${noticeHtml}
-    <div class="wrap">
       <section class="hero iris-library-hero">
-        <div>
+        <div class="iris-library-summary">
           <h1>My Collection</h1>
           <p class="iris-library-stats">
             <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold<span class="iris-library-acquisition-total" hidden> · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total</span>
           </p>
-          ${params.sessionToken && canRedeemIrisPromo(params.user.email)
-            ? buildIrisPromoDialog(params.sessionToken, irisPromoCsrf(hashOpaqueToken(params.sessionToken)))
-            : ""}
         </div>
+        ${discountAnnouncements}
       </section>
-    </div>
+    <section class="body iris-library-body">
+    ${noticeHtml}
     <section class="v2-iris-archive v2-iris-archive--library">
         <div class="v2-iris-archive__wrap">
           <div class="v2-iris-archive__filters" id="iris-v3-library-filters">
@@ -5005,12 +5016,12 @@ const buildIrisAccountLibraryHtml = (params: {
         emptyFiltered: "No IRIS found for this rarity."
       })}
       ${buildIrisAccountSessionScript(params.sessionToken)}
+    </section>
   `;
   return buildIrisAccountShell("My Collection - IRIS NYC", body, {
     user: params.user,
     sessionToken: params.sessionToken,
-    avatarUrl,
-    wrapClass: "wrap--flush"
+    avatarUrl
   });
 };
 
