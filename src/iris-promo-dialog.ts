@@ -3,7 +3,7 @@ export const buildIrisPromoDialog = (session: string, csrf: string): string => `
     .iris-promo-open{margin-top:2.2rem;max-width:100%;}
     .iris-promo-dialog{position:fixed;width:min(440px,calc(100% - 32px));max-height:calc(100% - 32px);margin:auto;padding:26px;border:1px solid var(--iris-line-strong);border-radius:8px;background:var(--iris-surface);color:var(--iris-text);text-align:left;}
     .iris-promo-dialog::backdrop{background:rgba(0,0,0,.72);}
-    .iris-promo-dialog h2{font-size:20px;margin:0;}
+    .iris-promo-dialog h2{font-size:10px;margin:0;}
     .iris-promo-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
     .iris-promo-close{display:grid;place-items:center;width:36px;height:36px;padding:0;border:1px solid transparent;border-radius:4px;background:none;color:var(--iris-text);cursor:pointer;}
     .iris-promo-close:hover{border-color:var(--iris-line-strong);}

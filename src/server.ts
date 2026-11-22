@@ -3744,12 +3744,12 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
         h1 {
           margin:0;
           max-width:820px;
-          font-size:66px;
+          font-size:33px;
           line-height:.98;
         }
         h2 {
           margin:0 0 14px;
-          font-size:28px;
+          font-size:14px;
           line-height:1.12;
         }
         p {
@@ -3981,7 +3981,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0;
           color:var(--v2-archive-text) !important;
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:clamp(3.2rem, 5vw, 6rem);
+          font-size:3rem;
           line-height:1.06;
           letter-spacing:.03em;
           font-weight:400;
@@ -4159,7 +4159,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0;
           color:var(--v2-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:clamp(3rem, 4.2vw, 5.6rem);
+          font-size:2.8rem;
           line-height:1.04;
           letter-spacing:.03em;
           font-weight:400;
@@ -4219,7 +4219,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0;
           color:var(--v2-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:clamp(2.8rem, 3.4vw, 4.6rem);
+          font-size:2.3rem;
           line-height:1.02;
           font-weight:400;
         }
@@ -4449,7 +4449,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
           margin:0;
           color:var(--iris-text);
           font-family:"Unbounded", -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size:2.4rem;
+          font-size:1.2rem;
           line-height:1.12;
           font-weight:400;
         }
@@ -4713,8 +4713,11 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             display:block;
             padding:34px 0 30px;
           }
-          h1 { font-size:44px; }
-          h2 { font-size:24px; }
+          h1 { font-size:22px; }
+          h2 { font-size:12px; }
+          .v2-iris-archive__title { font-size:1.6rem; }
+          .v2-passport-page__title { font-size:1.5rem; }
+          .v2-passport-panel__title { font-size:1.4rem; }
           p { font-size:18px; }
           .grid, .iris-grid { grid-template-columns:1fr; }
           .card { padding:22px; }
@@ -4774,7 +4777,7 @@ const buildIrisAccountShell = (title: string, body: string, options: IrisAccount
             font-size:1rem;
           }
           .main-nav .header-shop-button::after { border-radius:.72rem; }
-          h1 { font-size:36px; }
+          h1 { font-size:18px; }
           .account-menu__trigger { font-size:1rem; }
           .account-avatar { width:3.85rem; height:3.85rem; }
           .iris-order-card__meta { grid-template-columns:1fr; }
