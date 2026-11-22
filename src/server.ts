@@ -3417,7 +3417,7 @@ const buildIrisAccountHeaderAccountHtml = (options: IrisAccountShellOptions): st
         </button>
         <div class="account-menu__dropdown">
           <a href="${escapeHtml(profileHref)}">My Profile</a>
-          <a href="${escapeHtml(libraryHref)}">My IRIS</a>
+          <a href="${escapeHtml(libraryHref)}">My Collection</a>
           <a href="${escapeHtml(ordersHref)}">My Orders</a>
           <button type="submit">Log Out</button>
         </div>
@@ -4970,7 +4970,7 @@ const buildIrisAccountLibraryHtml = (params: {
     <div class="wrap">
       <section class="hero iris-library-hero">
         <div>
-          <h1>My IRIS</h1>
+          <h1>My Collection</h1>
           <p class="iris-library-stats">
             <strong>${escapeHtml(irisCountLabel)}</strong> IRIS · <strong>${escapeHtml(totalGoldLabel)}</strong> of 24K gold<span class="iris-library-acquisition-total" hidden> · <strong>${escapeHtml(acquisitionTotalLabel)}</strong> acquisition total</span>
           </p>
@@ -5006,7 +5006,7 @@ const buildIrisAccountLibraryHtml = (params: {
       })}
       ${buildIrisAccountSessionScript(params.sessionToken)}
   `;
-  return buildIrisAccountShell("IRIS Account", body, {
+  return buildIrisAccountShell("My Collection - IRIS NYC", body, {
     user: params.user,
     sessionToken: params.sessionToken,
     avatarUrl,
@@ -5037,7 +5037,7 @@ const buildIrisAccountSettingsHtml = (params: {
         <p>${escapeHtml(params.user.email)}</p>
       </div>
       <div class="account-top-actions">
-        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My IRIS</a>
+        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My Collection</a>
       </div>
     </section>
     <section class="body">
@@ -5636,7 +5636,7 @@ const buildIrisAccountOrdersHtml = (params: {
         <p>Orders connected by verified email. Ownership remains anchored in each IRIS passport.</p>
       </div>
       <div class="account-top-actions">
-        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My IRIS</a>
+        <a class="btn secondary" href="${escapeHtml(libraryHref)}">Back to My Collection</a>
       </div>
     </section>
     <section class="body">

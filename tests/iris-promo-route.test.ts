@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 const db = vi.hoisted(() => ({
   irisAccountSession: { findFirst: vi.fn(), update: vi.fn() },
+  shopifyOrder: { findMany: vi.fn() },
   event: { findMany: vi.fn() }, artwork: { findMany: vi.fn() }, $disconnect: vi.fn()
 }));
 vi.mock("../src/db.js", () => ({ prisma: db }));
@@ -26,11 +27,30 @@ beforeEach(async () => {
   });
   db.event.findMany.mockResolvedValue([]);
   db.artwork.findMany.mockResolvedValue([]);
+  db.shopifyOrder.findMany.mockResolvedValue([]);
   redeem.mockResolvedValue({ code: "IRIS-TEST", percent: 10 });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ price: 4000 }))));
   app = await createServer();
 });
 afterEach(async () => { await app.close(); vi.unstubAllGlobals(); });
+
+describe("My Collection labels", () => {
+  it("renames the signed-in collection heading, menu and browser title without changing URLs", async () => {
+    const response = await app.inject({ url: "/apps/iris/v3/account", headers: { cookie: "iris_account_session=other" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("<h1>My Collection</h1>");
+    expect(response.body).toContain("<title>My Collection - IRIS NYC</title>");
+    expect(response.body).toContain('href="/apps/iris/v3/account?session=other">My Collection</a>');
+    expect(response.body).not.toContain(">My IRIS<");
+  });
+  it.each(["profile", "orders"])("updates the return link and menu on %s", async (section) => {
+    const response = await app.inject({ url: `/apps/iris/v3/${section}`, headers: { cookie: "iris_account_session=other" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('href="/apps/iris/v3/account?session=other">Back to My Collection</a>');
+    expect(response.body).toContain('href="/apps/iris/v3/account?session=other">My Collection</a>');
+    expect(response.body).not.toContain("Back to My IRIS");
+  });
+});
 
 describe("My IRIS promo access", () => {
   it("only embeds the button for the signed-in pilot user, under the stats", async () => {
