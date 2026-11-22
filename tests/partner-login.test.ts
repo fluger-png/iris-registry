@@ -101,6 +101,16 @@ beforeEach(async () => {
   app = await createServer();
 });
 
+describe("partner brand palette", () => {
+  it.each(["/partner", "/partner/profile", "/partner/retail"])("uses the shared gold accent on %s", async (url) => {
+    const response = await app.inject({ url, headers: partnerCookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("--gold:#C5A959;");
+    expect(response.body).toContain("--gold-bright:var(--gold);");
+    expect(response.body).not.toMatch(/#(?:c9a84c|eabf50|f0c95c)|201,168,76/i);
+  });
+});
+
 describe("retail stock access and activation", () => {
   it("requires login and scopes the partner list to granted collections", async () => {
     expect((await app.inject("/partner/retail")).statusCode).toBe(302);
@@ -908,7 +918,8 @@ describe("partner workspace", () => {
       expect(response.body).toContain("family=Abel&family=Unbounded:wght@400;500;600;700");
       expect(response.body).toContain('--font-body:"Abel"');
       expect(response.body).toContain('--font-heading:"Unbounded"');
-      expect(response.body).toContain("--gold-bright:#eabf50");
+      expect(response.body).toContain("--gold:#C5A959");
+      expect(response.body).toContain("--gold-bright:var(--gold)");
       expect(response.body).toContain("--text:#ede8df");
       expect(response.body).toContain("font-size:14px;");
       expect(response.body).toContain("font-weight:700;");

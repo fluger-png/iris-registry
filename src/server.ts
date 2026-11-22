@@ -2550,10 +2550,11 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         :root {
           --bg:#000000;
           --bg-soft:#070707;
-          --line:rgba(201,168,76,.18);
-          --line-strong:rgba(201,168,76,.36);
-          --gold:#c9a84c;
-          --gold-bright:#eabf50;
+          --gold:#C5A959;
+          --gold-rgb:197,169,89;
+          --line:rgba(var(--gold-rgb),.18);
+          --line-strong:rgba(var(--gold-rgb),.36);
+          --gold-bright:var(--gold);
           --text:#ede8df;
           --muted:#a89f90;
           --font-body:"Abel", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -2661,7 +2662,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
           line-height:1.4;
           padding:14px 20px;
         }
-        .btn:not(:disabled):hover, .btn:not(:disabled):focus-visible { background:#f0c95c; border-color:#f0c95c; }
+        .btn:not(:disabled):hover, .btn:not(:disabled):focus-visible { background:var(--gold); border-color:var(--gold); }
         a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--gold); outline-offset:4px; }
         .ghost {
           display:inline-flex;
@@ -2796,7 +2797,7 @@ const buildPartnerShell = (title: string, body: string, workspace = false) => `<
         .partner-table th, .partner-table td { padding:14px 16px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
         .partner-table th { color:var(--gold); background:var(--bg-soft); font-family:var(--font-heading); font-size:12px; font-weight:400; text-transform:uppercase; }
         .partner-table tr:last-child td { border-bottom:0; }
-        .partner-table tbody tr:hover { background:rgba(201,168,76,.06); }
+        .partner-table tbody tr:hover { background:rgba(var(--gold-rgb),.06); }
         .partner-table td { overflow-wrap:anywhere; }
         .partner-table .serial { white-space:nowrap; color:var(--text); font-family:var(--font-heading); font-size:16px; font-weight:500; }
         .partner-table .owner { max-width:300px; }
